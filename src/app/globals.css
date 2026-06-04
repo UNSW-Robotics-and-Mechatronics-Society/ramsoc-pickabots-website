@@ -1,26 +1,70 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
+/* ----------------------------------------
+   Theme
+   Dark base sits under the ShaderGradient bg.
+   Fonts are wired from next/font (see layout.tsx).
+---------------------------------------- */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-background: #06080b;
+  --color-foreground: #f4f7fb;
+
+  --font-display: var(--font-audiowide);
+  --font-body: var(--font-anta);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* ----------------------------------------
+   Glassmorphism utilities
+---------------------------------------- */
+@utility glass {
+  background: color-mix(in srgb, white 7%, transparent);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  border: 1px solid color-mix(in srgb, white 14%, transparent);
+  box-shadow:
+    0 8px 32px -8px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 0 color-mix(in srgb, white 18%, transparent);
+}
+
+/* Slightly more opaque variant for primary surfaces */
+@utility glass-strong {
+  background: color-mix(in srgb, white 11%, transparent);
+  backdrop-filter: blur(28px) saturate(160%);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  border: 1px solid color-mix(in srgb, white 18%, transparent);
+  box-shadow:
+    0 16px 48px -12px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 0 color-mix(in srgb, white 22%, transparent);
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  &::-webkit-scrollbar {
+    display: none;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ----------------------------------------
+   Base
+---------------------------------------- */
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-body), system-ui, sans-serif;
+    min-height: 100dvh;
+    overscroll-behavior-y: none;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display), system-ui, sans-serif;
+    letter-spacing: 0.01em;
+  }
 }
