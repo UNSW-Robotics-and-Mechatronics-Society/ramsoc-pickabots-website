@@ -2,10 +2,12 @@
 // Clerk's helper is unchanged — it just needs to be the file's default export.
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
-const isProtectedRoute = createRouteMatcher(["/dashboard(.*)"]);
+// Everything is private except the auth routes. Any unauthenticated request to
+// a non-public route is redirected straight to sign-in by auth.protect().
+const isPublicRoute = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)"]);
 
 export default clerkMiddleware(async (auth, req) => {
-  if (isProtectedRoute(req)) {
+  if (!isPublicRoute(req)) {
     await auth.protect();
   }
 });

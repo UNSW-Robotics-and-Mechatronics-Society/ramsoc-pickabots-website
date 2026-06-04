@@ -17,24 +17,32 @@
    Glassmorphism utilities
 ---------------------------------------- */
 @utility glass {
-  background: color-mix(in srgb, white 7%, transparent);
-  backdrop-filter: blur(18px) saturate(150%);
-  -webkit-backdrop-filter: blur(18px) saturate(150%);
-  border: 1px solid color-mix(in srgb, white 14%, transparent);
+  /* lighter-tinted frosted slate — blur driven by Tailwind's backdrop-blur
+     (emits both -webkit- and unprefixed backdrop-filter, so it works in every browser) */
+  @apply border border-white/[0.18] backdrop-blur-[72px] backdrop-saturate-150;
+  background: color-mix(in srgb, #262c35 60%, transparent);
   box-shadow:
-    0 8px 32px -8px rgba(0, 0, 0, 0.45),
-    inset 0 1px 0 0 color-mix(in srgb, white 18%, transparent);
+    0 8px 32px -8px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 0 color-mix(in srgb, white 22%, transparent);
 }
 
-/* Slightly more opaque variant for primary surfaces */
+/* Frostier variant for primary surfaces (hero, panels) */
 @utility glass-strong {
-  background: color-mix(in srgb, white 11%, transparent);
-  backdrop-filter: blur(28px) saturate(160%);
-  -webkit-backdrop-filter: blur(28px) saturate(160%);
-  border: 1px solid color-mix(in srgb, white 18%, transparent);
+  @apply border border-white/[0.22] backdrop-blur-[72px] backdrop-saturate-150;
+  background: color-mix(in srgb, var(--color-background) 48%, transparent);
   box-shadow:
-    0 16px 48px -12px rgba(0, 0, 0, 0.55),
-    inset 0 1px 0 0 color-mix(in srgb, white 22%, transparent);
+    0 16px 48px -12px rgba(0, 0, 0, 0.65),
+    inset 0 1px 0 0 color-mix(in srgb, white 26%, transparent);
+}
+
+/* Bottom nav — heavily opaque so it reads as a solid frosted bar */
+@utility glass-nav {
+  @apply border border-white/[0.26] backdrop-blur-[64px] backdrop-saturate-150;
+  background: color-mix(in srgb, var(--color-background) 66%, transparent);
+  box-shadow:
+    0 -10px 44px -10px rgba(0, 0, 0, 0.75),
+    0 20px 48px -16px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 0 color-mix(in srgb, white 32%, transparent);
 }
 
 @utility no-scrollbar {
