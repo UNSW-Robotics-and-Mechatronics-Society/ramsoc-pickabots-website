@@ -1,8 +1,10 @@
 import type { Metadata, Viewport } from "next";
 import { Audiowide, Anta } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
+import { Suspense } from "react";
 import ShaderBackground from "@/components/ShaderBackground";
 import BottomNav from "@/components/BottomNav";
+import AdminSidePanel from "@/components/AdminSidePanel";
 import "./globals.css";
 
 const audiowide = Audiowide({
@@ -49,6 +51,10 @@ export default function RootLayout({
             {children}
           </main>
           <BottomNav />
+          {/* Suspense required because AdminSidePanel uses useSearchParams() */}
+          <Suspense>
+            <AdminSidePanel />
+          </Suspense>
         </body>
       </html>
     </ClerkProvider>
