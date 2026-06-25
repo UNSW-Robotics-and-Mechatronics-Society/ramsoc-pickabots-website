@@ -45,7 +45,7 @@ export default function RootLayout({
         <body className="min-h-dvh antialiased">
           <ShaderBackground />
           {/* pb leaves room for the fixed glass bottom nav */}
-          <main className="relative z-10 mx-auto flex min-h-dvh w-full max-w-md flex-col px-4 pb-32 pt-6">
+          <main className="relative mx-auto flex min-h-dvh w-full max-w-md flex-col">
             {children}
           </main>
           <BottomNav />

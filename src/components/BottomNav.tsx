@@ -2,8 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Coins, Trophy, Swords, LogIn, type LucideIcon } from "lucide-react";
-import { UserButton, useAuth } from "@clerk/nextjs";
+import { Coins, Trophy, Swords, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 type Item = {
@@ -13,17 +12,16 @@ type Item = {
 };
 
 const ITEMS: Item[] = [
-  { href: "/bid", label: "Bid", Icon: Coins },
+  { href: "/voting", label: "Bid", Icon: Coins },
   { href: "/leaderboard", label: "Leaderboard", Icon: Trophy },
   { href: "/competition", label: "Bracket", Icon: Swords },
 ];
 
 export default function BottomNav() {
   const pathname = usePathname();
-  const { isSignedIn } = useAuth();
 
   // The nav only makes sense once you're inside the app.
-  if (pathname.startsWith("/sign-in") || pathname.startsWith("/sign-up")) {
+  if (pathname.startsWith("/sign-in") || pathname.startsWith("/sign-up") || pathname.startsWith("/standby")) {
     return null;
   }
 
@@ -56,27 +54,6 @@ export default function BottomNav() {
           );
         })}
 
-        {/* Account slot */}
-        <div className="flex flex-1 flex-col items-center gap-1 px-1 py-1.5 text-[0.6rem] tracking-wide text-foreground/55">
-          {isSignedIn ? (
-            <>
-              <span className="flex h-9 w-9 items-center justify-center">
-                <UserButton appearance={{ elements: { avatarBox: "h-8 w-8" } }} />
-              </span>
-              Account
-            </>
-          ) : (
-            <Link
-              href="/sign-in"
-              className="flex flex-col items-center gap-1 hover:text-foreground/80"
-            >
-              <span className="flex h-9 w-9 items-center justify-center rounded-full">
-                <LogIn className="h-5 w-5" strokeWidth={2} />
-              </span>
-              Sign in
-            </Link>
-          )}
-        </div>
       </div>
     </nav>
   );
