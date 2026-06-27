@@ -5,6 +5,7 @@ import { Suspense } from "react";
 import ShaderBackground from "@/components/ShaderBackground";
 import BottomNav from "@/components/BottomNav";
 import AdminSidePanel from "@/components/AdminSidePanel";
+import { AdminPanelProvider } from "@/components/admin/AdminPanelContext";
 import "./globals.css";
 
 const audiowide = Audiowide({
@@ -45,16 +46,18 @@ export default function RootLayout({
     <ClerkProvider>
       <html lang="en" className={`${audiowide.variable} ${anta.variable}`}>
         <body className="min-h-dvh antialiased" suppressHydrationWarning>
-          <ShaderBackground />
-          {/* pb leaves room for the fixed glass bottom nav */}
-          <main className="relative z-10 mx-auto flex min-h-dvh w-full max-w-md flex-col px-4 pb-32 pt-6">
-            {children}
-          </main>
-          <BottomNav />
-          {/* Suspense required because AdminSidePanel uses useSearchParams() */}
-          <Suspense>
-            <AdminSidePanel />
-          </Suspense>
+          <AdminPanelProvider>
+            <ShaderBackground />
+            {/* pb leaves room for the fixed glass bottom nav */}
+            <main className="relative z-10 mx-auto flex min-h-dvh w-full max-w-md flex-col px-4 pb-32 pt-6">
+              {children}
+            </main>
+            <BottomNav />
+            {/* Suspense required because AdminSidePanel uses useSearchParams() */}
+            <Suspense>
+              <AdminSidePanel />
+            </Suspense>
+          </AdminPanelProvider>
         </body>
       </html>
     </ClerkProvider>

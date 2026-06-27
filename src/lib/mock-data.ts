@@ -1,4 +1,6 @@
-export type Division = 'standards' | 'open';
+export type Division   = 'standards' | 'open';
+export type TeamCount  = 4 | 8 | 16 | 32 | 64;
+export type BracketSide = 'winners' | 'losers' | 'grand-final';
 
 export type Team = {
   id: string;
@@ -16,20 +18,178 @@ export type MatchSlot = { teamName: string; score: number };
 export type BracketMatch = {
   id: string;
   division: Division;
-  round: number; // 1=R16, 2=QF, 3=SF, 4=Final
-  matchNumber: number;
+  side: BracketSide;
+  round: number;       // 1-based per side
+  matchNumber: number; // 1-based within round
   slotA: MatchSlot;
   slotB: MatchSlot;
   targetScore: number;
   status: MatchStatus;
 };
 
-export const ROUND_NAMES: Record<number, string> = {
-  1: 'Round of 16',
-  2: 'Quarterfinals',
-  3: 'Semifinals',
-  4: 'Final',
-};
+// ── round count helpers ────────────────────────────────────────────────────────
+
+export function wbRoundsFor(n: TeamCount): number { return Math.log2(n); }
+export function lbRoundsFor(n: TeamCount): number { return 2 * Math.log2(n) - 2; }
+
+function lbMatchCountForRound(lbRound: number, teamCount: TeamCount): number {
+  // LB R1,R2: N/4 matches; R3,R4: N/8; R5,R6: N/16 …
+  return Math.max(1, (teamCount / 4) / Math.pow(2, Math.floor((lbRound - 1) / 2)));
+}
+
+// ── round label helpers ────────────────────────────────────────────────────────
+
+export function wbRoundLabel(round: number, total: number): string {
+  const rem = total - round;
+  if (rem === 0) return 'WB Final';
+  if (rem === 1) return 'WB Semis';
+  if (rem === 2) return 'WB Quarters';
+  return `WB R${round}`;
+}
+
+export function lbRoundLabel(round: number, total: number): string {
+  if (round === total) return 'LB Final';
+  if (round === total - 1) return 'LB Semis';
+  return `LB R${round}`;
+}
+
+// ── advancement mappings ───────────────────────────────────────────────────────
+
+/** Returns where a WB match's LOSER drops into the losers bracket. */
+export function wbLossToLBEntry(wbRound: number, wbMatchNum: number): { round: number; match: number; slot: 'a' | 'b' } {
+  if (wbRound === 1) {
+    return {
+      round: 1,
+      match: Math.ceil(wbMatchNum / 2),
+      slot: wbMatchNum % 2 === 1 ? 'a' : 'b',
+    };
+  }
+  return { round: 2 * (wbRound - 1), match: wbMatchNum, slot: 'b' };
+}
+
+/** Returns where a LB match's WINNER advances. Returns null if it's the LB Final (→ GF). */
+export function lbWinnerNext(
+  lbRound: number,
+  lbMatchNum: number,
+  totalLbRounds: number,
+): { round: number; match: number; slot: 'a' | 'b' } | null {
+  if (lbRound === totalLbRounds) return null; // LB Final → GF slot B
+  if (lbRound % 2 === 1) {
+    // odd round → even (drop-in): same match number, slot A
+    return { round: lbRound + 1, match: lbMatchNum, slot: 'a' };
+  }
+  // even round → odd (consolidation): half the match count
+  return {
+    round: lbRound + 1,
+    match: Math.ceil(lbMatchNum / 2),
+    slot: lbMatchNum % 2 === 1 ? 'a' : 'b',
+  };
+}
+
+// ── generator ──────────────────────────────────────────────────────────────────
+
+export function generateDoubleElimBracket(teamCount: TeamCount, division: Division): BracketMatch[] {
+  const wbRounds = wbRoundsFor(teamCount);
+  const lbRounds = lbRoundsFor(teamCount);
+  const matches: BracketMatch[] = [];
+
+  // Winners bracket
+  for (let r = 1; r <= wbRounds; r++) {
+    const count = teamCount / Math.pow(2, r);
+    for (let m = 1; m <= count; m++) {
+      matches.push({
+        id: `${division}-wb-r${r}-m${m}`,
+        division,
+        side: 'winners',
+        round: r,
+        matchNumber: m,
+        slotA: { teamName: '', score: 0 },
+        slotB: { teamName: '', score: 0 },
+        targetScore: 2,
+        status: 'todo',
+      });
+    }
+  }
+
+  // Losers bracket
+  for (let r = 1; r <= lbRounds; r++) {
+    const count = lbMatchCountForRound(r, teamCount);
+    for (let m = 1; m <= count; m++) {
+      matches.push({
+        id: `${division}-lb-r${r}-m${m}`,
+        division,
+        side: 'losers',
+        round: r,
+        matchNumber: m,
+        slotA: { teamName: '', score: 0 },
+        slotB: { teamName: '', score: 0 },
+        targetScore: 2,
+        status: 'todo',
+      });
+    }
+  }
+
+  // Grand Final
+  matches.push({
+    id: `${division}-gf`,
+    division,
+    side: 'grand-final',
+    round: 1,
+    matchNumber: 1,
+    slotA: { teamName: '', score: 0 },
+    slotB: { teamName: '', score: 0 },
+    targetScore: 2,
+    status: 'todo',
+  });
+
+  // Seed first two WB R1 matches as active / next
+  const wbR1 = matches.filter(m => m.side === 'winners' && m.round === 1);
+  if (wbR1[0]) wbR1[0].status = 'active';
+  if (wbR1[1]) wbR1[1].status = 'next';
+
+  return matches;
+}
+
+// ── size transfer ──────────────────────────────────────────────────────────────
+
+/**
+ * Transfers existing bracket data to a new bracket size, keeping the top
+ * (later-round) matches and discarding early rounds that don't fit.
+ */
+export function transferBracket(
+  oldMatches: BracketMatch[],
+  division: Division,
+  oldCount: TeamCount,
+  newCount: TeamCount,
+): BracketMatch[] {
+  const newMatches = generateDoubleElimBracket(newCount, division);
+
+  const wbOffset = wbRoundsFor(newCount) - wbRoundsFor(oldCount);
+  const lbOffset = lbRoundsFor(newCount) - lbRoundsFor(oldCount);
+
+  for (const old of oldMatches.filter(m => m.division === division)) {
+    let newRound = old.round;
+    if (old.side === 'winners')     newRound = old.round + wbOffset;
+    else if (old.side === 'losers') newRound = old.round + lbOffset;
+    // grand-final round is always 1, no offset needed
+
+    if (newRound < 1) continue;
+
+    const target = newMatches.find(
+      m => m.side === old.side && m.round === newRound && m.matchNumber === old.matchNumber,
+    );
+    if (target) {
+      target.slotA       = { ...old.slotA };
+      target.slotB       = { ...old.slotB };
+      target.targetScore = old.targetScore;
+      target.status      = old.status;
+    }
+  }
+
+  return newMatches;
+}
+
+// ── mock teams ─────────────────────────────────────────────────────────────────
 
 const STANDARDS_NAMES = [
   'Iron Fist', 'Steel Storm', 'Crusher MkII', 'Vortex Pro',
@@ -64,34 +224,9 @@ export const MOCK_TEAMS: Team[] = [
   })),
 ];
 
-function makeBracketMatches(division: Division): BracketMatch[] {
-  const config = [
-    { round: 1, count: 8 },
-    { round: 2, count: 4 },
-    { round: 3, count: 2 },
-    { round: 4, count: 1 },
-  ];
-  const matches: BracketMatch[] = [];
-  for (const { round, count } of config) {
-    for (let m = 1; m <= count; m++) {
-      const isFirst = round === 1 && m === 1;
-      const isSecond = round === 1 && m === 2;
-      matches.push({
-        id: `${division}-r${round}-m${m}`,
-        division,
-        round,
-        matchNumber: m,
-        slotA: { teamName: '', score: 0 },
-        slotB: { teamName: '', score: 0 },
-        targetScore: 2,
-        status: isFirst ? 'active' : isSecond ? 'next' : 'todo',
-      });
-    }
-  }
-  return matches;
-}
+export const DEFAULT_TEAM_COUNT: TeamCount = 16;
 
 export const MOCK_BRACKET_MATCHES: BracketMatch[] = [
-  ...makeBracketMatches('standards'),
-  ...makeBracketMatches('open'),
+  ...generateDoubleElimBracket(DEFAULT_TEAM_COUNT, 'standards'),
+  ...generateDoubleElimBracket(DEFAULT_TEAM_COUNT, 'open'),
 ];

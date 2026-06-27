@@ -22,8 +22,12 @@ export default function BottomNav() {
   const pathname = usePathname();
   const { isSignedIn } = useAuth();
 
-  // The nav only makes sense once you're inside the app.
-  if (pathname.startsWith("/sign-in") || pathname.startsWith("/sign-up")) {
+  // Hide on sign-in/sign-up and admin (admin has its own inline nav)
+  if (
+    pathname.startsWith("/sign-in") ||
+    pathname.startsWith("/sign-up") ||
+    pathname.startsWith("/admin")
+  ) {
     return null;
   }
 

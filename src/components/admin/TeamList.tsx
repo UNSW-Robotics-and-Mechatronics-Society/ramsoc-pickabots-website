@@ -22,6 +22,7 @@ export default function TeamList({ teams: initialTeams, division, eliminatedTeam
   const [wildcard, setWildcard]     = useState<Record<string, boolean>>({});
   const [sortMode, setSortMode]     = useState<SortMode>('points');
   const [filterMode, setFilterMode] = useState<FilterMode>('all');
+  const [search, setSearch]         = useState('');
   const [autoScale, setAutoScale]   = useState(1);
   const [manualScale, setManual]    = useState<number | null>(null);
   const [naturalH, setNaturalH]     = useState(800);
@@ -46,7 +47,9 @@ export default function TeamList({ teams: initialTeams, division, eliminatedTeam
   // derive sorted+filtered list before layout measurement
   const divTeams = teams.filter(t => t.division === division);
 
+  const searchLower = search.toLowerCase();
   const filtered = divTeams.filter(t => {
+    if (searchLower && !t.name.toLowerCase().includes(searchLower)) return false;
     const isElim    = eliminatedTeams.has(t.name);
     const isPresent = present[t.id] ?? false;
     const isWild    = wildcard[t.id] ?? false;
@@ -101,6 +104,13 @@ export default function TeamList({ teams: initialTeams, division, eliminatedTeam
     <div className="flex h-full flex-col">
       {/* filter / sort toolbar */}
       <div className="shrink-0 space-y-1 border-b border-white/10 px-3 py-2">
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search teams…"
+          className="w-full rounded border border-white/10 bg-white/5 px-2 py-1 text-xs text-foreground placeholder:text-foreground/30 outline-none focus:border-white/30"
+        />
         <div className="flex items-center gap-1">
           <span className="w-8 shrink-0 text-[0.55rem] text-foreground/50">Sort</span>
           {SORT_OPTIONS.map(o => (

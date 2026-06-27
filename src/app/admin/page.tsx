@@ -3,13 +3,20 @@ import { currentUser } from "@clerk/nextjs/server";
 import { isAdminUser } from "@/lib/auth";
 import { type Division } from "@/lib/mock-data";
 import AdminPageClient from "@/components/admin/AdminPageClient";
+import AdminNavBar from "@/components/admin/AdminNavBar";
 
 type Props = {
   searchParams: Promise<{ division?: string }>;
 };
 
 export default async function AdminPage({ searchParams }: Props) {
-  const user = await currentUser();
+  let user;
+  try {
+    user = await currentUser();
+  } catch {
+    // Clerk API unreachable (e.g. network error in dev) — fail safe
+    redirect("/bid");
+  }
 
   if (!isAdminUser(user)) {
     redirect("/bid");
@@ -19,14 +26,20 @@ export default async function AdminPage({ searchParams }: Props) {
   const division: Division = raw === "open" ? "open" : "standards";
 
   return (
-    <div className="fixed inset-0 z-20 flex flex-col pt-6 pb-24">
-      <header className="shrink-0 px-6 pb-3">
-        <h1 className="text-2xl">Admin</h1>
-        <p className="text-xs text-foreground/50">
-          {division === "standards" ? "Standards" : "Open"} division
-        </p>
+    <div className="fixed inset-0 z-20 flex flex-col">
+      {/* Header row — aligns with the AdminSidePanel's division toggle (top-6) */}
+      <header className="shrink-0 flex items-center gap-4 px-6 pt-6 pb-2">
+        <span className="text-lg font-semibold uppercase tracking-widest text-foreground/80">
+          Admin
+        </span>
+        <AdminNavBar />
       </header>
-      <div className="min-h-0 flex-1">
+
+      {/*
+        pt-12 clears the AdminSidePanel's second row (view toggle) which sits
+        below the division toggle that aligns with the header row above.
+      */}
+      <div className="min-h-0 flex-1 pt-12">
         <AdminPageClient division={division} />
       </div>
     </div>
