@@ -44,7 +44,7 @@ export default function RootLayout({
   return (
     <ClerkProvider>
       <html lang="en" className={`${audiowide.variable} ${anta.variable}`}>
-        <body className="min-h-dvh antialiased">
+        <body className="min-h-dvh antialiased" suppressHydrationWarning>
           <ShaderBackground />
           {/* pb leaves room for the fixed glass bottom nav */}
           <main className="relative z-10 mx-auto flex min-h-dvh w-full max-w-md flex-col px-4 pb-32 pt-6">
