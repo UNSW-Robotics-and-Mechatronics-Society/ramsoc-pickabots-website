@@ -2,10 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  type BracketMatch, type BracketSide, type Division,
+  type BracketMatch, type Division,
   type MatchStatus, type Team, type TeamCount,
   wbRoundsFor, lbRoundsFor, wbRoundLabel, lbRoundLabel,
-  wbLossToLBEntry, lbWinnerNext,
+  winner, applyStatusChange,
 } from "@/lib/mock-data";
 import { cn } from "@/lib/cn";
 
@@ -19,9 +19,6 @@ const SLOT_H       = MATCH_H + 14; // vertical space each match occupies in a co
 const SECTION_GAP  = 36;           // pixels between WB and LB strips
 
 function sectionH(r1Matches: number) { return r1Matches * SLOT_H; }
-
-// statuses that auto-complete when score hits target
-const AUTO_COMPLETE_FROM: MatchStatus[] = ['todo', 'next', 'active'];
 
 // ── status styling ─────────────────────────────────────────────────────────────
 const STATUS_BORDER: Record<MatchStatus, string> = {
@@ -39,81 +36,7 @@ const STATUS_TEXT: Record<MatchStatus, string> = {
   completed: 'text-white/50', skipped: 'text-red-400',
 };
 
-// ── helpers ────────────────────────────────────────────────────────────────────
-function winner(m: BracketMatch): 'a' | 'b' | null {
-  if (m.slotA.score >= m.targetScore && m.slotA.teamName) return 'a';
-  if (m.slotB.score >= m.targetScore && m.slotB.teamName) return 'b';
-  return null;
-}
-
-// ── advancement logic ──────────────────────────────────────────────────────────
-function applyStatusChange(
-  all: BracketMatch[],
-  changed: BracketMatch,
-  newStatus: MatchStatus,
-  teamCount: TeamCount,
-): BracketMatch[] {
-  const wbRounds = wbRoundsFor(teamCount);
-  const lbRounds = lbRoundsFor(teamCount);
-
-  let next = all.map(m => m.id === changed.id ? { ...changed, status: newStatus } : m);
-
-  function setSlot(side: BracketSide, round: number, matchNum: number, slot: 'a' | 'b', name: string) {
-    next = next.map(m => {
-      if (m.division !== changed.division || m.side !== side || m.round !== round || m.matchNumber !== matchNum) return m;
-      return slot === 'a'
-        ? { ...m, slotA: { ...m.slotA, teamName: name, score: 0 } }
-        : { ...m, slotB: { ...m.slotB, teamName: name, score: 0 } };
-    });
-  }
-
-  if (newStatus === 'completed') {
-    const w = winner({ ...changed, status: 'completed' });
-    if (w) {
-      const winnerName = w === 'a' ? changed.slotA.teamName : changed.slotB.teamName;
-      const loserName  = w === 'a' ? changed.slotB.teamName : changed.slotA.teamName;
-
-      if (changed.side === 'winners') {
-        if (changed.round === wbRounds) {
-          setSlot('grand-final', 1, 1, 'a', winnerName);
-        } else {
-          const nr = changed.round + 1;
-          const nm = Math.ceil(changed.matchNumber / 2);
-          const ns = changed.matchNumber % 2 === 1 ? 'a' : 'b' as 'a' | 'b';
-          setSlot('winners', nr, nm, ns, winnerName);
-        }
-        if (loserName) {
-          const lb = wbLossToLBEntry(changed.round, changed.matchNumber);
-          setSlot('losers', lb.round, lb.match, lb.slot, loserName);
-        }
-      } else if (changed.side === 'losers') {
-        const adv = lbWinnerNext(changed.round, changed.matchNumber, lbRounds);
-        if (adv) {
-          setSlot('losers', adv.round, adv.match, adv.slot, winnerName);
-        } else {
-          setSlot('grand-final', 1, 1, 'b', winnerName);
-        }
-      }
-    }
-  }
-
-  // Promote next match in same bracket side to active/next
-  if (newStatus === 'completed' || newStatus === 'skipped') {
-    const sideMates = next
-      .filter(m => m.division === changed.division && m.side === changed.side)
-      .sort((a, b) => a.round !== b.round ? a.round - b.round : a.matchNumber - b.matchNumber);
-    const idx      = sideMates.findIndex(m => m.id === changed.id);
-    const promote  = sideMates[idx + 1];
-    const upcoming = sideMates[idx + 2];
-    next = next.map(m => {
-      if (promote  && m.id === promote.id  && (m.status === 'todo' || m.status === 'next')) return { ...m, status: 'active' };
-      if (upcoming && m.id === upcoming.id && m.status === 'todo')                          return { ...m, status: 'next' };
-      return m;
-    });
-  }
-
-  return next;
-}
+const AUTO_COMPLETE_FROM: MatchStatus[] = ['todo', 'next', 'active'];
 
 // ── MatchTeamInput — local state fixes the one-letter-at-a-time bug ────────────
 // Root cause: SlotRow was an inline component inside MatchCard, so React

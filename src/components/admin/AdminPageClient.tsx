@@ -191,9 +191,11 @@ export default function AdminPageClient({ division }: Props) {
           division={division}
           teamCount={teamCount}
           schedule={schedules[division]}
+          teams={MOCK_TEAMS}
           onScheduleChange={s =>
             setSchedules(prev => ({ ...prev, [division]: s }))
           }
+          onMatchesChange={setMatches}
         />
       ),
     }));
