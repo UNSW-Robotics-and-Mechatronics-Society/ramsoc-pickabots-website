@@ -9,6 +9,8 @@ export type Team = {
   points: number;
   seed: number | null;
   comment: string;
+  present?: boolean;
+  wildcard?: boolean;
 };
 
 export type MatchStatus = 'todo' | 'next' | 'active' | 'completed' | 'skipped';

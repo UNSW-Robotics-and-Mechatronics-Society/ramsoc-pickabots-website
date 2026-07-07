@@ -14,23 +14,6 @@ interface ModalCtx {
   compType: string
 }
 
-const BETS_KEY = 'pickabots_bets'
-
-function loadBets(): Record<string, Bet> {
-  try {
-    const raw = localStorage.getItem(BETS_KEY)
-    return raw ? JSON.parse(raw) : {}
-  } catch {
-    return {}
-  }
-}
-
-function saveBets(bets: Record<string, Bet>) {
-  try {
-    localStorage.setItem(BETS_KEY, JSON.stringify(bets))
-  } catch {}
-}
-
 export default function VotePage() {
   const [matches, setMatches]   = useState<Match[]>([])
   const [tokens, setTokens]     = useState<number | null>(null)
@@ -44,24 +27,25 @@ export default function VotePage() {
 
   // ── Load on mount ────────────────────────────────────────────────────────────
   useEffect(() => {
-    const savedBets = loadBets()
-    setBets(savedBets)
-
     async function load() {
       try {
-        const [matchRes, userRes] = await Promise.all([
+        const [matchRes, userRes, betsRes] = await Promise.all([
           fetch('/api/matches'),
           fetch('/api/user'),
+          fetch('/api/bets'),
         ])
         if (!matchRes.ok) throw new Error('Failed to load matches')
         if (!userRes.ok)  throw new Error('Failed to load user data')
+        if (!betsRes.ok)  throw new Error('Failed to load bets')
 
-        const [matchData, userData] = await Promise.all([matchRes.json(), userRes.json()])
+        const [matchData, userData, betsData] = await Promise.all([matchRes.json(), userRes.json(), betsRes.json()])
         setMatches(matchData)
         if (userData._supabaseError) console.error('[VotePage] Supabase error:', userData._supabaseError)
+        setTokens(userData.tokens)
 
-        const outstanding = Object.values(savedBets).reduce((sum, b) => sum + b.amount, 0)
-        setTokens(Math.max(0, userData.tokens - outstanding))
+        const betsByMatch: Record<string, Bet> = {}
+        for (const b of betsData as Bet[]) betsByMatch[b.match_id] = b
+        setBets(betsByMatch)
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : 'Unknown error')
       } finally {
@@ -71,21 +55,6 @@ export default function VotePage() {
     load()
   }, [])
 
-  // ── Persist tokens to Supabase ───────────────────────────────────────────────
-  async function syncTokens(newTokens: number) {
-    setTokens(newTokens)
-    const res = await fetch('/api/user', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tokens: newTokens }),
-    })
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      console.error('[syncTokens] failed:', res.status, body)
-      showToast(`⚠️ Token sync failed: ${body.error ?? res.status}`)
-    }
-  }
-
   // ── Open bet modal ────────────────────────────────────────────────────────────
   function handleVote(matchId: string, side: 'left' | 'right', botName: string, compType: string) {
     if (bets[matchId])      { showToast(`Already bet on ${bets[matchId].botName}! Undo to change.`); return }
@@ -94,7 +63,10 @@ export default function VotePage() {
   }
 
   // ── Confirm bet ───────────────────────────────────────────────────────────────
-  function handleConfirm(amount: number) {
+  // Token accounting happens server-side in POST /api/bets (deduct + validate
+  // atomically) — this only optimistically reflects it, then reconciles with
+  // the server's returned balance (or reverts on failure).
+  async function handleConfirm(amount: number) {
     if (!modalCtx) return
     const { matchId, side, botName } = modalCtx
     setModalCtx(null)
@@ -102,30 +74,49 @@ export default function VotePage() {
     const current = tokens ?? 0
     if (current < amount) { showToast('Not enough tokens!'); return }
 
-    const bet: Bet = { id: `local-${matchId}`, match_id: matchId, side, amount, botName }
-    const newBets  = { ...bets, [matchId]: bet }
-    const newTokens = current - amount
-
-    setBets(newBets)
-    saveBets(newBets)
-    syncTokens(newTokens)
+    const optimisticBet: Bet = { id: `pending-${matchId}`, match_id: matchId, side, amount, botName }
+    setBets(prev => ({ ...prev, [matchId]: optimisticBet }))
+    setTokens(current - amount)
     triggerFlash()
     showToast(`🪙 ${amount} locked on ${botName}!`)
+
+    try {
+      const res = await fetch('/api/bets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ match_id: matchId, side, amount }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body.error ?? 'Bet failed')
+      setBets(prev => ({ ...prev, [matchId]: { ...optimisticBet, id: body.bet.id } }))
+      setTokens(body.tokens)
+    } catch (e: unknown) {
+      setBets(prev => { const next = { ...prev }; delete next[matchId]; return next })
+      setTokens(current)
+      showToast(`⚠️ ${e instanceof Error ? e.message : 'Bet failed'}`)
+    }
   }
 
   // ── Undo bet ──────────────────────────────────────────────────────────────────
-  function handleUndo(matchId: string) {
+  async function handleUndo(matchId: string) {
     const bet = bets[matchId]
     if (!bet) return
 
-    const newBets   = { ...bets }
-    delete newBets[matchId]
-    const newTokens = (tokens ?? 0) + bet.amount
-
-    setBets(newBets)
-    saveBets(newBets)
-    syncTokens(newTokens)
+    const refunded = (tokens ?? 0) + bet.amount
+    setBets(prev => { const next = { ...prev }; delete next[matchId]; return next })
+    setTokens(refunded)
     showToast('Bet undone ↩️')
+
+    try {
+      const res = await fetch(`/api/bets?bet_id=${bet.id}`, { method: 'DELETE' })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body.error ?? 'Undo failed')
+      setTokens(body.tokens)
+    } catch (e: unknown) {
+      setBets(prev => ({ ...prev, [matchId]: bet }))
+      setTokens(t => (t ?? 0) - bet.amount)
+      showToast(`⚠️ ${e instanceof Error ? e.message : 'Undo failed'}`)
+    }
   }
 
   return (

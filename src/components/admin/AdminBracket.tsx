@@ -644,7 +644,7 @@ export default function AdminBracket({ teams, matches, division, teamCount, onMa
                 )}
 
                 <div
-                  className="flex shrink-0 items-stretch rounded-xl bg-gradient-to-br from-amber-400/15 via-amber-300/5 to-transparent px-2 pt-2 pb-20 ring-1 ring-amber-300/25"
+                  className="flex shrink-0 items-stretch rounded-xl bg-gradient-to-br from-amber-400/15 via-amber-300/5 to-transparent px-2 pt-2 pb-40 ring-1 ring-amber-300/25"
                 >
                   <div className="flex flex-col">
                     <div className="shrink-0 px-1 py-0.5">

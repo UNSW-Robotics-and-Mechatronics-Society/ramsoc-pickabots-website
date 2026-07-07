@@ -1,9 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  type BracketMatch, type Division, type MatchStatus, type TeamCount,
-  MOCK_BRACKET_MATCHES, MOCK_TEAMS, DEFAULT_TEAM_COUNT,
+  type BracketMatch, type Division, type MatchStatus, type Team, type TeamCount,
   generateDoubleElimBracket, transferBracket,
 } from "@/lib/mock-data";
 import {
@@ -73,29 +72,64 @@ function applyScheduleStatus(
   });
 }
 
-function initSchedules(matches: BracketMatch[]): Record<Division, MatchSchedule> {
-  return {
-    standards: generateSchedule(defaultScheduleOrder(matches, 'standards')),
-    open:      generateSchedule(defaultScheduleOrder(matches, 'open')),
-  };
-}
-
 const ALL_PANEL_IDS: PanelId[] = ['teams', 'bracket', 'matches'];
 const TEAM_COUNTS: TeamCount[] = [4, 8, 16, 32, 64];
 // Stable reference: 25% / 50% / 25% when all three panels are visible
 const DEFAULT_3_PANEL_DIVIDERS = [25, 75];
 
-type Props = { division: Division };
+type InitialBracket = {
+  matches: BracketMatch[];
+  teamCount: TeamCount;
+  schedules: Record<Division, MatchSchedule>;
+};
 
-export default function AdminPageClient({ division }: Props) {
-  const [matches,      setMatches]   = useState<BracketMatch[]>(MOCK_BRACKET_MATCHES);
-  const [teamCount,    setTeamCount] = useState<TeamCount>(DEFAULT_TEAM_COUNT);
+type Props = {
+  division: Division;
+  initialTeams: Team[];
+  initialBracket: InitialBracket;
+};
+
+export default function AdminPageClient({ division, initialTeams, initialBracket }: Props) {
+  const [teams,        setTeams]     = useState<Team[]>(initialTeams);
+  const [matches,      setMatches]   = useState<BracketMatch[]>(initialBracket.matches);
+  const [teamCount,    setTeamCount] = useState<TeamCount>(initialBracket.teamCount);
   const [pendingCount, setPending]   = useState<TeamCount | null>(null);
-  const [schedules,    setSchedules] = useState<Record<Division, MatchSchedule>>(
-    () => initSchedules(MOCK_BRACKET_MATCHES),
-  );
+  const [schedules,    setSchedules] = useState<Record<Division, MatchSchedule>>(initialBracket.schedules);
 
   const { visiblePanels } = useAdminPanels();
+
+  // Debounced save-on-change — skips the very first render, since that's
+  // just the server-fetched initial state being echoed back.
+  const isFirstRender = useRef(true);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (isFirstRender.current) { isFirstRender.current = false; return; }
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      fetch('/api/admin/bracket', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ matches, teamCount, schedules }),
+      }).catch(err => console.error('[admin] bracket save failed:', err));
+    }, 500);
+    return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
+  }, [matches, teamCount, schedules]);
+
+  const teamSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  function handleTeamUpdate(id: string, patch: Partial<Team>) {
+    setTeams(prev => prev.map(t => t.id === id ? { ...t, ...patch } : t));
+
+    const key = `${id}-${Object.keys(patch).sort().join(',')}`;
+    clearTimeout(teamSaveTimers.current[key]);
+    teamSaveTimers.current[key] = setTimeout(() => {
+      fetch(`/api/admin/teams/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      }).catch(err => console.error('[admin] team update failed:', err));
+    }, 300);
+  }
 
   const eliminatedTeams = useMemo(() => computeEliminated(matches), [matches]);
 
@@ -157,9 +191,10 @@ export default function AdminPageClient({ division }: Props) {
       minPx: p === 'matches' ? MIN_MATCH_LIST_W : undefined,
       node: p === 'teams' ? (
         <TeamList
-          teams={MOCK_TEAMS}
+          teams={teams}
           division={division}
           eliminatedTeams={eliminatedTeams}
+          onTeamUpdate={handleTeamUpdate}
         />
       ) : p === 'bracket' ? (
         <div className="flex h-full flex-col">
@@ -183,7 +218,7 @@ export default function AdminPageClient({ division }: Props) {
           </div>
           <div className="min-h-0 flex-1">
             <AdminBracket
-              teams={MOCK_TEAMS}
+              teams={teams}
               matches={effectiveMatches}
               division={division}
               teamCount={teamCount}
@@ -197,7 +232,7 @@ export default function AdminPageClient({ division }: Props) {
           division={division}
           teamCount={teamCount}
           schedule={schedules[division]}
-          teams={MOCK_TEAMS}
+          teams={teams}
           onScheduleChange={s =>
             setSchedules(prev => ({ ...prev, [division]: s }))
           }

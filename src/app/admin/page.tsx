@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 import { currentUser } from "@clerk/nextjs/server";
 import { isAdminUser } from "@/lib/auth";
 import { type Division } from "@/lib/mock-data";
+import { listTeams } from "@/lib/db/teams";
+import { getBracketState } from "@/lib/db/bracket";
 import AdminPageClient from "@/components/admin/AdminPageClient";
 import AdminNavBar from "@/components/admin/AdminNavBar";
 import AdminKeyForm from "@/components/admin/AdminKeyForm";
@@ -30,6 +32,8 @@ export default async function AdminPage({ searchParams }: Props) {
   const { division: raw } = await searchParams;
   const division: Division = raw === "open" ? "open" : "standards";
 
+  const [teams, bracket] = await Promise.all([listTeams(), getBracketState()]);
+
   return (
     <div className="fixed inset-0 z-20 flex flex-col">
       {/* Header row — aligns with the AdminSidePanel's division toggle (top-6) */}
@@ -45,7 +49,7 @@ export default async function AdminPage({ searchParams }: Props) {
         below the division toggle that aligns with the header row above.
       */}
       <div className="min-h-0 flex-1 pt-12">
-        <AdminPageClient division={division} />
+        <AdminPageClient division={division} initialTeams={teams} initialBracket={bracket} />
       </div>
     </div>
   );

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { auth } from '@clerk/nextjs/server'
+import { auth, currentUser } from '@clerk/nextjs/server'
 import supabase from '@/lib/supabase'
 
 export async function GET() {
@@ -16,9 +16,11 @@ export async function GET() {
   }
 
   if (!user) {
-    // First visit — create the row
+    // First visit — create the row, tagging it with a display name for the leaderboard
+    const clerkUser = await currentUser()
+    const displayName = clerkUser?.fullName || clerkUser?.username || 'Anonymous Pilot'
     const { error: insertErr } = await supabase
-      .from('users').insert({ id: userId, tokens: 100 })
+      .from('users').insert({ id: userId, tokens: 100, display_name: displayName })
     if (insertErr) {
       console.error('[GET /api/user] insert failed:', insertErr)
       return NextResponse.json({ tokens: 100, _supabaseError: insertErr.message })

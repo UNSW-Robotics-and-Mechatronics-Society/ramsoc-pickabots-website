@@ -4,6 +4,18 @@ import supabase from '@/lib/supabase'
 
 const MAX_BET = 50
 
+// GET /api/bets — the signed-in user's bets
+export async function GET() {
+  const { userId } = await auth()
+  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { data, error } = await supabase
+    .from('bets').select('id, match_id, side, amount').eq('user_id', userId)
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
 // POST /api/bets — place a bet
 export async function POST(req: NextRequest) {
   const { userId } = await auth()

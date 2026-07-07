@@ -4,9 +4,9 @@ import BotSvg from './BotSvg'
 import type { Match, Bet } from '@/lib/types'
 
 const COMP_META = {
-  standards: { color: '#FF6B00', label: '⚙ STANDARDS' },
-  opens:     { color: '#4cff00', label: '◈ OPENS'     },
-  bossbot:   { color: '#9B30FF', label: '💀 BOSSBOT'   },
+  standard: { color: '#FF6B00', label: '⚙ STANDARD' },
+  open:     { color: '#4cff00', label: '◈ OPEN'      },
+  bossbot:  { color: '#9B30FF', label: '💀 BOSSBOT'   },
 } as const
 
 const IMPACT_WORDS = ['POW!', 'ZAP!', 'BOOM!', 'WHAM!', 'BAM!', 'NOVA!', 'SMASH!']
@@ -22,7 +22,7 @@ interface RingProps {
 }
 
 export default function Ring({ match, bet, onVote, onUndo }: RingProps) {
-  const meta = COMP_META[match.comp_type] ?? COMP_META.standards
+  const meta = COMP_META[match.comp_type] ?? COMP_META.standard
   const voted = !!bet
   const [lWord] = useState(rw)
   const [rWord] = useState(rw)
