@@ -4,6 +4,7 @@ import { isAdminUser } from "@/lib/auth";
 import { type Division } from "@/lib/mock-data";
 import AdminPageClient from "@/components/admin/AdminPageClient";
 import AdminNavBar from "@/components/admin/AdminNavBar";
+import AdminKeyForm from "@/components/admin/AdminKeyForm";
 
 type Props = {
   searchParams: Promise<{ division?: string }>;
@@ -19,7 +20,11 @@ export default async function AdminPage({ searchParams }: Props) {
   }
 
   if (!isAdminUser(user)) {
-    redirect("/bid");
+    return (
+      <div className="fixed inset-0 z-20 flex flex-col">
+        <AdminKeyForm />
+      </div>
+    );
   }
 
   const { division: raw } = await searchParams;

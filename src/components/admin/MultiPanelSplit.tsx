@@ -2,10 +2,12 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-const STORAGE_PREFIX = "admin-split-";
+// Bump the "v2" suffix whenever the intended default layout changes, so a
+// divider position saved during earlier testing doesn't silently override it.
+const STORAGE_PREFIX = "admin-split-v2-";
 const MIN_PCT = 10;
 
-type Panel = { key: string; node: ReactNode };
+type Panel = { key: string; node: ReactNode; minPx?: number };
 
 type Props = {
   panels: Panel[];
@@ -49,6 +51,14 @@ export default function MultiPanelSplit({ panels, defaultPercents }: Props) {
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }
 
+  // A panel's own minPx (e.g. "always show at least one full ring column")
+  // takes priority over the generic MIN_PCT floor.
+  function minPctFor(panelIdx: number, containerWidthPx: number): number {
+    const minPx = panels[panelIdx]?.minPx;
+    if (!minPx || containerWidthPx <= 0) return MIN_PCT;
+    return Math.max(MIN_PCT, (minPx / containerWidthPx) * 100);
+  }
+
   function onPointerMove(e: React.PointerEvent) {
     if (dragging.current === null || !containerRef.current) return;
     const idx  = dragging.current;
@@ -57,8 +67,10 @@ export default function MultiPanelSplit({ panels, defaultPercents }: Props) {
 
     setDividers(prev => {
       const next = [...prev];
-      const lo   = idx === 0     ? MIN_PCT             : next[idx - 1] + MIN_PCT;
-      const hi   = idx === n - 2 ? 100 - MIN_PCT       : next[idx + 1] - MIN_PCT;
+      // Divider `idx` is the shared boundary between panel[idx] (left) and
+      // panel[idx + 1] (right) — clamp so neither shrinks past its own minPx.
+      const lo = (idx === 0     ? 0   : next[idx - 1]) + minPctFor(idx,     rect.width);
+      const hi = (idx === n - 2 ? 100 : next[idx + 1]) - minPctFor(idx + 1, rect.width);
       next[idx]  = Math.max(lo, Math.min(hi, pct));
       localStorage.setItem(`${STORAGE_PREFIX}${idx}`, String(next[idx]));
       return next;

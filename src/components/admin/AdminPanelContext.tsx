@@ -9,12 +9,15 @@ const ORDER: PanelId[] = ['teams', 'bracket', 'matches'];
 type Ctx = {
   visiblePanels: PanelId[];
   togglePanel: (id: PanelId) => void;
+  bracketFullscreen: boolean;
+  setBracketFullscreen: (v: boolean) => void;
 };
 
 const AdminPanelContext = createContext<Ctx | null>(null);
 
 export function AdminPanelProvider({ children }: { children: ReactNode }) {
   const [visiblePanels, setVisible] = useState<PanelId[]>(['teams', 'bracket']);
+  const [bracketFullscreen, setBracketFullscreen] = useState(false);
 
   function togglePanel(id: PanelId) {
     setVisible(prev => {
@@ -27,7 +30,7 @@ export function AdminPanelProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AdminPanelContext.Provider value={{ visiblePanels, togglePanel }}>
+    <AdminPanelContext.Provider value={{ visiblePanels, togglePanel, bracketFullscreen, setBracketFullscreen }}>
       {children}
     </AdminPanelContext.Provider>
   );

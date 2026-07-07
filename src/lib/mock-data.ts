@@ -1,13 +1,13 @@
 export type Division   = 'standards' | 'open';
 export type TeamCount  = 4 | 8 | 16 | 32 | 64;
-export type BracketSide = 'winners' | 'losers' | 'grand-final';
+export type BracketSide = 'winners' | 'losers' | 'finals-semi' | 'finals-final' | 'finals-third';
 
 export type Team = {
   id: string;
   name: string;
   division: Division;
   points: number;
-  score: number | null;
+  seed: number | null;
   comment: string;
 };
 
@@ -129,11 +129,37 @@ export function generateDoubleElimBracket(teamCount: TeamCount, division: Divisi
     }
   }
 
-  // Grand Final
+  // Finals Day — crossed semis (WB Champion vs LB Runner-up, WB Runner-up vs
+  // LB Champion), winners meet in the True Final.
+  for (let m = 1; m <= 2; m++) {
+    matches.push({
+      id: `${division}-finals-semi-m${m}`,
+      division,
+      side: 'finals-semi',
+      round: 1,
+      matchNumber: m,
+      slotA: { teamName: '', score: 0 },
+      slotB: { teamName: '', score: 0 },
+      targetScore: 2,
+      status: 'todo',
+    });
+  }
   matches.push({
-    id: `${division}-gf`,
+    id: `${division}-finals-final`,
     division,
-    side: 'grand-final',
+    side: 'finals-final',
+    round: 1,
+    matchNumber: 1,
+    slotA: { teamName: '', score: 0 },
+    slotB: { teamName: '', score: 0 },
+    targetScore: 2,
+    status: 'todo',
+  });
+  // 3rd place: the two semi-final losers play each other.
+  matches.push({
+    id: `${division}-finals-third`,
+    division,
+    side: 'finals-third',
     round: 1,
     matchNumber: 1,
     slotA: { teamName: '', score: 0 },
@@ -171,7 +197,7 @@ export function transferBracket(
     let newRound = old.round;
     if (old.side === 'winners')     newRound = old.round + wbOffset;
     else if (old.side === 'losers') newRound = old.round + lbOffset;
-    // grand-final round is always 1, no offset needed
+    // finals-semi / finals-final round is always 1, no offset needed
 
     if (newRound < 1) continue;
 
@@ -195,6 +221,20 @@ export function winner(m: BracketMatch): 'a' | 'b' | null {
   if (m.slotA.score >= m.targetScore && m.slotA.teamName) return 'a';
   if (m.slotB.score >= m.targetScore && m.slotB.teamName) return 'b';
   return null;
+}
+
+/** True if `name` is already placed in some other match in this division. */
+export function isTeamNameTaken(
+  matches: BracketMatch[],
+  division: Division,
+  excludeMatchId: string,
+  name: string,
+): boolean {
+  return matches.some(m =>
+    m.id !== excludeMatchId &&
+    m.division === division &&
+    (m.slotA.teamName === name || m.slotB.teamName === name),
+  );
 }
 
 export function applyStatusChange(
@@ -225,24 +265,36 @@ export function applyStatusChange(
 
       if (changed.side === 'winners') {
         if (changed.round === wbRounds) {
-          setSlot('grand-final', 1, 1, 'a', winnerName);
+          // WB Final: both participants go straight to Finals Day. The loser
+          // does NOT drop into the losers bracket this round — the LB Final
+          // stays purely LB-native so Finals Day's 4 teams are all distinct.
+          setSlot('finals-semi', 1, 1, 'a', winnerName);
+          if (loserName) setSlot('finals-semi', 1, 2, 'a', loserName);
         } else {
           const nr = changed.round + 1;
           const nm = Math.ceil(changed.matchNumber / 2);
           const ns = changed.matchNumber % 2 === 1 ? 'a' : 'b' as 'a' | 'b';
           setSlot('winners', nr, nm, ns, winnerName);
-        }
-        if (loserName) {
-          const lb = wbLossToLBEntry(changed.round, changed.matchNumber);
-          setSlot('losers', lb.round, lb.match, lb.slot, loserName);
+          if (loserName) {
+            const lb = wbLossToLBEntry(changed.round, changed.matchNumber);
+            setSlot('losers', lb.round, lb.match, lb.slot, loserName);
+          }
         }
       } else if (changed.side === 'losers') {
         const adv = lbWinnerNext(changed.round, changed.matchNumber, lbRounds);
         if (adv) {
           setSlot('losers', adv.round, adv.match, adv.slot, winnerName);
         } else {
-          setSlot('grand-final', 1, 1, 'b', winnerName);
+          // LB Final: winner is LB Champion, loser is LB Runner-up — both
+          // feed Finals Day, crossed against the WB Final's two entrants.
+          setSlot('finals-semi', 1, 2, 'b', winnerName);
+          if (loserName) setSlot('finals-semi', 1, 1, 'b', loserName);
         }
+      } else if (changed.side === 'finals-semi') {
+        const ns = changed.matchNumber === 1 ? 'a' : 'b' as 'a' | 'b';
+        setSlot('finals-final', 1, 1, ns, winnerName);
+        // The semi-final loser plays for 3rd place against the other semi's loser.
+        if (loserName) setSlot('finals-third', 1, 1, ns, loserName);
       }
     }
   }
@@ -287,7 +339,7 @@ export const MOCK_TEAMS: Team[] = [
     name,
     division: 'standards' as Division,
     points: 900 - i * 55 + (i % 3) * 20,
-    score: null,
+    seed: null,
     comment: '',
   })),
   ...OPEN_NAMES.map((name, i) => ({
@@ -295,7 +347,7 @@ export const MOCK_TEAMS: Team[] = [
     name,
     division: 'open' as Division,
     points: 950 - i * 60 + (i % 4) * 15,
-    score: null,
+    seed: null,
     comment: '',
   })),
 ];

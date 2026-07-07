@@ -9,7 +9,9 @@ const STATUS_COLOR = {
 } as const;
 
 function matchLabel(m: BracketMatch, teamCount: TeamCount): string {
-  if (m.side === 'grand-final') return 'Grand Final';
+  if (m.side === 'finals-semi')  return `Finals Semi ${m.matchNumber}`;
+  if (m.side === 'finals-third') return '3rd Place';
+  if (m.side === 'finals-final') return 'Finals';
   const total = m.side === 'winners' ? wbRoundsFor(teamCount) : lbRoundsFor(teamCount);
   return m.side === 'winners'
     ? wbRoundLabel(m.round, total)
@@ -28,8 +30,8 @@ export default function NextMatchPanel({ matches, division, teamCount }: Props) 
     .sort((a, b) => {
       // active before next
       if (a.status !== b.status) return a.status === 'active' ? -1 : 1;
-      // winners before losers before grand-final
-      const sideOrder = { winners: 0, losers: 1, 'grand-final': 2 };
+      // winners before losers before finals day
+      const sideOrder = { winners: 0, losers: 1, 'finals-semi': 2, 'finals-third': 3, 'finals-final': 4 };
       if (a.side !== b.side) return sideOrder[a.side] - sideOrder[b.side];
       if (a.round !== b.round) return a.round - b.round;
       return a.matchNumber - b.matchNumber;
@@ -61,7 +63,7 @@ export default function NextMatchPanel({ matches, division, teamCount }: Props) 
                   <div className="mb-1.5 flex items-center justify-between">
                     <span className="text-[0.6rem] uppercase tracking-wider opacity-80">
                       {matchLabel(m, teamCount)}
-                      {m.side !== 'grand-final' && ` · M${m.matchNumber}`}
+                      {m.side !== 'finals-semi' && m.side !== 'finals-third' && m.side !== 'finals-final' && ` · M${m.matchNumber}`}
                     </span>
                     <span className={cn(
                       "rounded px-1.5 py-0.5 text-[0.55rem] font-medium uppercase tracking-wide",

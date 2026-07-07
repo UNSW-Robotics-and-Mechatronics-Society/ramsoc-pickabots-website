@@ -4,21 +4,23 @@ import { useEffect, useRef, useState } from "react";
 import {
   type BracketMatch, type Division,
   type MatchStatus, type Team, type TeamCount,
-  wbRoundsFor, lbRoundsFor, wbRoundLabel, lbRoundLabel,
-  winner, applyStatusChange,
+  wbRoundsFor, lbRoundsFor,
+  winner, applyStatusChange, isTeamNameTaken,
 } from "@/lib/mock-data";
 import { cn } from "@/lib/cn";
+import { MATCH_DRAG_TYPE, SlotRow } from "./MatchTeamSlot";
+import { useAdminPanels } from "./AdminPanelContext";
 
 // ── layout constants ───────────────────────────────────────────────────────────
 const MATCH_H      = 96;
 const ROUND_W      = 188;
 const CONN_W       = 44;
-const GF_W         = 200;
-const WINNER_W     = 90;
+const PODIUM_W     = 120;
 const SLOT_H       = MATCH_H + 14; // vertical space each match occupies in a column
 const SECTION_GAP  = 36;           // pixels between WB and LB strips
 
-function sectionH(r1Matches: number) { return r1Matches * SLOT_H; }
+function sectionH(r1Matches: number, slotH: number) { return r1Matches * slotH; }
+function clamp(v: number, lo: number, hi: number) { return Math.min(hi, Math.max(lo, v)); }
 
 // ── status styling ─────────────────────────────────────────────────────────────
 const STATUS_BORDER: Record<MatchStatus, string> = {
@@ -38,112 +40,18 @@ const STATUS_TEXT: Record<MatchStatus, string> = {
 
 const AUTO_COMPLETE_FROM: MatchStatus[] = ['todo', 'next', 'active'];
 
-// ── MatchTeamInput — local state fixes the one-letter-at-a-time bug ────────────
-// Root cause: SlotRow was an inline component inside MatchCard, so React
-// remounted it (and reset focus) on every parent render. Now it's a stable
-// named component + input carries its own local value, only committing on blur.
-function MatchTeamInput({
-  value, datalistId, onCommit,
-}: {
-  value: string; datalistId: string; onCommit: (v: string) => void;
-}) {
-  const [local, setLocal] = useState(value);
-  const committed         = useRef(value);
-
-  // Sync when prop changes externally (winner advancement, clear, auto-fill)
-  useEffect(() => {
-    if (value !== committed.current) {
-      setLocal(value);
-      committed.current = value;
-    }
-  }, [value]);
-
-  function commit(v: string) {
-    committed.current = v;
-    onCommit(v);
-  }
-
-  return (
-    <input
-      list={datalistId}
-      value={local}
-      placeholder="Team…"
-      onChange={e => setLocal(e.target.value)}
-      onBlur={() => { if (local !== committed.current) commit(local); }}
-      onKeyDown={e => { if (e.key === 'Enter') commit(local); }}
-      // Drop from TeamList (text/plain carries team name).
-      // stopPropagation prevents the event bubbling to MatchCard's match-swap handler.
-      onDragOver={e => {
-        if (!e.dataTransfer.types.includes('application/match-id')) {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      }}
-      onDrop={e => {
-        if (e.dataTransfer.types.includes('application/match-id')) return; // let match-swap handle
-        e.preventDefault();
-        e.stopPropagation();
-        const name = e.dataTransfer.getData('text/plain');
-        if (name) commit(name);
-      }}
-      className="min-w-0 flex-1 bg-transparent text-[0.6rem] outline-none placeholder:text-foreground/20 truncate"
-    />
-  );
-}
-
-// ── SlotRow — defined outside MatchCard so React never remounts it ─────────────
-type SlotRowProps = {
-  slotData: { teamName: string; score: number };
-  won: boolean; lost: boolean;
-  datalistId: string;
-  onNameCommit: (n: string) => void;
-  onScoreDelta: (d: number) => void;
-};
-function SlotRow({ slotData, won, lost, datalistId, onNameCommit, onScoreDelta }: SlotRowProps) {
-  return (
-    <div
-      className={cn(
-        "flex flex-1 items-center gap-0.5 px-1.5",
-        won  && "rounded bg-amber-400/20",
-        lost && "opacity-40",
-      )}
-      // Accept team drops anywhere on the row, not just on the input itself.
-      // Stop propagation so MatchCard's match-swap handler doesn't also fire.
-      onDragOver={e => {
-        if (!e.dataTransfer.types.includes('application/match-id')) {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      }}
-      onDrop={e => {
-        if (e.dataTransfer.types.includes('application/match-id')) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const name = e.dataTransfer.getData('text/plain');
-        if (name) onNameCommit(name);
-      }}
-    >
-      <MatchTeamInput value={slotData.teamName} datalistId={datalistId} onCommit={onNameCommit} />
-      {won  && <span className="shrink-0 text-amber-300 text-[0.55rem]">★</span>}
-      {lost && <span className="shrink-0 text-red-400/70 text-[0.55rem]">✗</span>}
-      <button onClick={() => onScoreDelta(-1)} className="shrink-0 px-0.5 text-[0.65rem] text-foreground/70 hover:text-foreground">−</button>
-      <span className="shrink-0 w-3.5 text-center text-[0.65rem] tabular-nums">{slotData.score}</span>
-      <button onClick={() => onScoreDelta( 1)} className="shrink-0 px-0.5 text-[0.65rem] text-foreground/70 hover:text-foreground">+</button>
-    </div>
-  );
-}
-
 // ── MatchCard ──────────────────────────────────────────────────────────────────
 type MatchCardProps = {
   match: BracketMatch;
   onChange: (m: BracketMatch) => void;
   datalistId: string;
+  isValidTeamName: (matchId: string, name: string) => boolean;
   draggingId: string | null;
   onDragStart: (id: string) => void;
   onMatchDrop: (targetId: string) => void;
   onDragEnd: () => void;
 };
-function MatchCard({ match, onChange, datalistId, draggingId, onDragStart, onMatchDrop, onDragEnd }: MatchCardProps) {
+function MatchCard({ match, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd }: MatchCardProps) {
   const w = winner(match);
   const swappable       = match.status === 'todo' || match.status === 'next';
   const isBeingDragged  = draggingId === match.id;
@@ -170,9 +78,11 @@ function MatchCard({ match, onChange, datalistId, draggingId, onDragStart, onMat
     });
   }
 
-  const sideLabel = match.side === 'grand-final'
-    ? 'Grand Final'
-    : `${match.side === 'winners' ? 'W' : 'L'}B R${match.round}·M${match.matchNumber}`;
+  const sideLabel =
+    match.side === 'finals-semi'  ? `Finals Semi ${match.matchNumber}` :
+    match.side === 'finals-third' ? '3rd Place' :
+    match.side === 'finals-final' ? 'Finals' :
+    `${match.side === 'winners' ? 'W' : 'L'}B R${match.round}·M${match.matchNumber}`;
 
   return (
     <div
@@ -180,12 +90,12 @@ function MatchCard({ match, onChange, datalistId, draggingId, onDragStart, onMat
       draggable={swappable}
       onDragStart={e => {
         e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('application/match-id', match.id); // distinguishes from team drags
+        e.dataTransfer.setData(MATCH_DRAG_TYPE, match.id); // distinguishes from team drags
         onDragStart(match.id);
       }}
       onDragOver={e => { if (isMatchDropTgt) e.preventDefault(); }}
       onDrop={e => {
-        if (e.dataTransfer.types.includes('application/match-id')) {
+        if (e.dataTransfer.types.includes(MATCH_DRAG_TYPE)) {
           e.preventDefault();
           onMatchDrop(match.id);
         }
@@ -201,12 +111,14 @@ function MatchCard({ match, onChange, datalistId, draggingId, onDragStart, onMat
     >
       <SlotRow
         slotData={match.slotA} won={w === 'a'} lost={w !== null && w !== 'a'}
-        datalistId={datalistId} onNameCommit={n => setName('a', n)} onScoreDelta={d => setScore('a', d)}
+        datalistId={datalistId} isValid={n => isValidTeamName(match.id, n)}
+        onNameCommit={n => setName('a', n)} onScoreDelta={d => setScore('a', d)}
       />
       <div className="border-t border-white/[0.14]" />
       <SlotRow
         slotData={match.slotB} won={w === 'b'} lost={w !== null && w !== 'b'}
-        datalistId={datalistId} onNameCommit={n => setName('b', n)} onScoreDelta={d => setScore('b', d)}
+        datalistId={datalistId} isValid={n => isValidTeamName(match.id, n)}
+        onNameCommit={n => setName('b', n)} onScoreDelta={d => setScore('b', d)}
       />
 
       <div className="flex items-center justify-between border-t border-white/[0.14] px-1.5 py-1.5">
@@ -246,14 +158,14 @@ function MatchCard({ match, onChange, datalistId, draggingId, onDragStart, onMat
 const WON_COLOR  = '#4ade80';
 const BASE_COLOR = 'rgba(255,255,255,0.85)';
 
-function ConnectorSVG({ fromMatches, height }: { fromMatches: BracketMatch[]; height: number }) {
+function ConnectorSVG({ fromMatches, height, connW }: { fromMatches: BracketMatch[]; height: number; connW: number }) {
   const fromN   = fromMatches.length;
   const pairs   = fromN / 2;
   const spacing = height / fromN;
-  const cx      = CONN_W / 2;
+  const cx      = connW / 2;
 
   return (
-    <svg width={CONN_W} height={height} className="shrink-0 overflow-visible">
+    <svg width={connW} height={height} className="shrink-0 overflow-visible">
       {Array.from({ length: pairs }, (_, i) => {
         const m1       = fromMatches[2 * i];
         const m2       = fromMatches[2 * i + 1];
@@ -269,7 +181,7 @@ function ConnectorSVG({ fromMatches, height }: { fromMatches: BracketMatch[]; he
             <line x1={0}    y1={y1}   x2={cx}     y2={y1}   stroke={c(m1Done)}   strokeWidth={1.5} />
             <line x1={cx}   y1={y1}   x2={cx}     y2={y2}   stroke={c(bothDone)} strokeWidth={1.5} />
             <line x1={0}    y1={y2}   x2={cx}     y2={y2}   stroke={c(m2Done)}   strokeWidth={1.5} />
-            <line x1={cx}   y1={midY} x2={CONN_W} y2={midY} stroke={c(bothDone)} strokeWidth={1.5} />
+            <line x1={cx}   y1={midY} x2={connW}  y2={midY} stroke={c(bothDone)} strokeWidth={1.5} />
           </g>
         );
       })}
@@ -283,12 +195,13 @@ type RoundColumnProps = {
   height: number;
   onChange: (m: BracketMatch) => void;
   datalistId: string;
+  isValidTeamName: (matchId: string, name: string) => boolean;
   draggingId: string | null;
   onDragStart: (id: string) => void;
   onMatchDrop: (id: string) => void;
   onDragEnd: () => void;
 };
-function RoundColumn({ matches, height, onChange, datalistId, draggingId, onDragStart, onMatchDrop, onDragEnd }: RoundColumnProps) {
+function RoundColumn({ matches, height, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd }: RoundColumnProps) {
   return (
     <div style={{ width: ROUND_W, height }} className="flex shrink-0 flex-col justify-around">
       {matches.map(m => (
@@ -297,6 +210,7 @@ function RoundColumn({ matches, height, onChange, datalistId, draggingId, onDrag
           match={m}
           onChange={onChange}
           datalistId={datalistId}
+          isValidTeamName={isValidTeamName}
           draggingId={draggingId}
           onDragStart={onDragStart}
           onMatchDrop={onMatchDrop}
@@ -313,14 +227,16 @@ type BracketStripProps = {
   rounds: number[];
   matchesByRound: BracketMatch[][];
   height: number;
+  connW: number;
   onChange: (m: BracketMatch) => void;
   datalistId: string;
+  isValidTeamName: (matchId: string, name: string) => boolean;
   draggingId: string | null;
   onDragStart: (id: string) => void;
   onMatchDrop: (id: string) => void;
   onDragEnd: () => void;
 };
-function BracketStrip({ rounds, matchesByRound, height, onChange, datalistId, draggingId, onDragStart, onMatchDrop, onDragEnd }: BracketStripProps) {
+function BracketStrip({ rounds, matchesByRound, height, connW, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd }: BracketStripProps) {
   return (
     <div className="flex items-stretch" style={{ height }}>
       {rounds.map((_, i) => (
@@ -330,21 +246,58 @@ function BracketStrip({ rounds, matchesByRound, height, onChange, datalistId, dr
             height={height}
             onChange={onChange}
             datalistId={datalistId}
+            isValidTeamName={isValidTeamName}
             draggingId={draggingId}
             onDragStart={onDragStart}
             onMatchDrop={onMatchDrop}
             onDragEnd={onDragEnd}
           />
           {i < rounds.length - 1 && matchesByRound[i].length >= 2 && (
-            <ConnectorSVG fromMatches={matchesByRound[i]} height={height} />
+            <ConnectorSVG fromMatches={matchesByRound[i]} height={height} connW={connW} />
           )}
           {i < rounds.length - 1 && matchesByRound[i].length < 2 && (
-            <div style={{ width: CONN_W }} className="shrink-0" />
+            <div style={{ width: connW }} className="shrink-0" />
           )}
         </div>
       ))}
     </div>
   );
+}
+
+// ── bye handling ───────────────────────────────────────────────────────────────
+/**
+ * Auto-advances a winners-side match whose bracket slot has no opponent
+ * (fewer real teams than bracket capacity). Round 1 byes are known from
+ * seeding; a round N>1 "bye" is only resolved once BOTH of its feeder
+ * matches have completed, so a genuinely pending 2-team match is never
+ * short-circuited.
+ */
+function propagateByes(list: BracketMatch[], division: Division, teamCount: TeamCount): BracketMatch[] {
+  const wbRounds = wbRoundsFor(teamCount);
+  for (let round = 1; round <= wbRounds; round++) {
+    for (const m of list.filter(x => x.division === division && x.side === 'winners' && x.round === round)) {
+      const cur = list.find(x => x.id === m.id)!;
+      if (cur.status === 'completed') continue;
+
+      const aFilled = !!cur.slotA.teamName;
+      const bFilled = !!cur.slotB.teamName;
+      if (aFilled === bFilled) continue; // both filled (real match) or both empty (dead) — leave alone
+
+      if (round > 1) {
+        const feeders = list.filter(x =>
+          x.division === division && x.side === 'winners' && x.round === round - 1 &&
+          (x.matchNumber === 2 * cur.matchNumber - 1 || x.matchNumber === 2 * cur.matchNumber),
+        );
+        if (feeders.some(f => f.status !== 'completed')) continue; // a real match is still pending
+      }
+
+      const advancing = aFilled
+        ? { ...cur, slotA: { ...cur.slotA, score: cur.targetScore } }
+        : { ...cur, slotB: { ...cur.slotB, score: cur.targetScore } };
+      list = applyStatusChange(list, advancing, 'completed', teamCount);
+    }
+  }
+  return list;
 }
 
 // ── AdminBracket ───────────────────────────────────────────────────────────────
@@ -357,36 +310,77 @@ type Props = {
 };
 
 export default function AdminBracket({ teams, matches, division, teamCount, onMatchesChange }: Props) {
-  const [scale, setScale]                        = useState(0.7);
-  const [manualScale, setManual]                 = useState<number | null>(null);
-  const [draggingId, setDragging]                = useState<string | null>(null);
-  const [bracketView, setBracketView]            = useState<'both' | 'winners' | 'losers'>('both');
-  const containerRef                             = useRef<HTMLDivElement>(null);
-  const effectiveScale                           = manualScale ?? scale;
+  const [containerWidth, setContainerWidth] = useState(0);
+  const [manualScale, setManualScale]       = useState<number | null>(null);
+  const [manualStretch, setManualStretch]   = useState<number | null>(null);
+  const [manualVScale, setManualVScale]     = useState<number | null>(null);
+  const [draggingId, setDragging]           = useState<string | null>(null);
+  const [bracketView, setBracketView]       = useState<'all' | 'winners' | 'losers' | 'knockouts' | 'finals'>('all');
+  const { bracketFullscreen: fullscreen, setBracketFullscreen: setFullscreen } = useAdminPanels();
+  const containerRef                        = useRef<HTMLDivElement>(null);
+
+  const showBothSides = bracketView === 'all' || bracketView === 'knockouts';
 
   const wbRounds = wbRoundsFor(teamCount);
   const lbRounds = lbRoundsFor(teamCount);
 
-  // Section heights — each R1 match gets SLOT_H px of vertical space
-  const h_wb = sectionH(teamCount / 2);
-  const h_lb = sectionH(teamCount / 4);
+  const effectiveVScale  = manualVScale ?? 1;
+  const effectiveSlotH   = SLOT_H * effectiveVScale;
+  const effectiveSectionGap = SECTION_GAP * effectiveVScale;
+
+  // Section heights — each R1 match gets effectiveSlotH px of vertical space
+  const h_wb = sectionH(teamCount / 2, effectiveSlotH);
+  const h_lb = sectionH(teamCount / 4, effectiveSlotH);
   const NATURAL_H = bracketView === 'winners' ? h_wb
                   : bracketView === 'losers'  ? h_lb
-                  : h_wb + SECTION_GAP + h_lb;
+                  : bracketView === 'finals'  ? sectionH(2, effectiveSlotH)
+                  : h_wb + effectiveSectionGap + h_lb;
 
-  // Bracket width is driven by the wider strip (LB has 2R-2 rounds, WB has R)
-  const maxRounds = Math.max(wbRounds, lbRounds);
-  const NATURAL_W = maxRounds * ROUND_W + (maxRounds - 1) * CONN_W + CONN_W + GF_W + WINNER_W;
+  const showMain   = bracketView !== 'finals';
+  const showFinals = bracketView === 'all' || bracketView === 'finals';
+  const maxRounds  = Math.max(wbRounds, lbRounds);
+  const wbPadCols  = showBothSides ? lbRounds - wbRounds : 0;
+
+  // Fixed-width layout units (never affected by the Stretch slider — card
+  // widths always stay put so match cards never distort) vs. gap units
+  // (round-to-round connectors, the WB/LB alignment pad, the finals divider)
+  // which the Stretch slider grows/shrinks.
+  const fixedW = (showMain ? maxRounds * ROUND_W : 0) + (showFinals ? 2 * ROUND_W + PODIUM_W : 0);
+  const gapUnits =
+    (showMain ? Math.max(0, maxRounds - 1) : 0) +
+    Math.max(0, wbPadCols) +
+    (showMain && showFinals ? 1 : 0) +
+    (showFinals ? 1 : 0);
+  const NATURAL_W_BASE = fixedW + gapUnits * CONN_W;
+
+  const autoScale = containerWidth > 0 ? clamp(containerWidth / NATURAL_W_BASE, 0.2, 1.4) : 0.7;
+  // Never let the manual slider zoom out past the fit-to-width point — below
+  // that, the bracket would be narrower than the panel and show empty
+  // background at the edges.
+  const effectiveScale = Math.max(manualScale ?? autoScale, autoScale);
+
+  // Auto-stretch fills any width left over once Scale is applied (most
+  // visibly once Scale is pinned at its 1.4 ceiling on very wide screens) by
+  // growing the connector/gap widths only.
+  const autoStretch = containerWidth > 0 && gapUnits > 0
+    ? clamp((containerWidth - fixedW * effectiveScale) / (gapUnits * CONN_W * effectiveScale), 0.3, 4)
+    : 1;
+  const effectiveStretch = manualStretch ?? autoStretch;
+  const effectiveConnW   = CONN_W * effectiveStretch;
+
+  const NATURAL_W = fixedW + gapUnits * effectiveConnW;
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(([entry]) => {
-      setScale(Math.min(1.4, Math.max(0.2, entry.contentRect.width / NATURAL_W)));
-    });
+    const ro = new ResizeObserver(([entry]) => setContainerWidth(entry.contentRect.width));
     ro.observe(el);
     return () => ro.disconnect();
-  }, [NATURAL_W]);
+  }, []);
+
+  function isValidTeamName(matchId: string, name: string): boolean {
+    return !isTeamNameTaken(matches, division, matchId, name);
+  }
 
   function handleChange(updated: BracketMatch) {
     const prev = matches.find(m => m.id === updated.id);
@@ -427,15 +421,15 @@ export default function AdminBracket({ teams, matches, division, teamCount, onMa
 
   function autoFillTeams() {
     const divTeams  = teams.filter(t => t.division === division);
-    // Highest score = seed 1 (strongest). Unscored teams are shuffled to the end.
-    const withScore = [...divTeams.filter(t => t.score !== null)].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-    const noScore   = [...divTeams.filter(t => t.score === null)];
-    for (let i = noScore.length - 1; i > 0; i--) {
+    // Highest seed value = seed 1 (strongest). Unseeded teams are shuffled to the end.
+    const withSeed  = [...divTeams.filter(t => t.seed !== null)].sort((a, b) => (b.seed ?? 0) - (a.seed ?? 0));
+    const noSeed    = [...divTeams.filter(t => t.seed === null)];
+    for (let i = noSeed.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      [noScore[i], noScore[j]] = [noScore[j], noScore[i]];
+      [noSeed[i], noSeed[j]] = [noSeed[j], noSeed[i]];
     }
     // sorted[0] = seed 1 (best), sorted[1] = seed 2, …
-    const sorted = [...withScore, ...noScore];
+    const sorted = [...withSeed, ...noSeed];
 
     const r1 = matches
       .filter(m => m.division === division && m.side === 'winners' && m.round === 1)
@@ -463,7 +457,7 @@ export default function AdminBracket({ teams, matches, division, teamCount, onMa
 
     const slotASeeds = seedOrder(numMatches);
 
-    onMatchesChange(matches.map(m => {
+    let seeded = matches.map(m => {
       if (m.division !== division || m.side !== 'winners' || m.round !== 1) return m;
       const i     = r1.findIndex(r => r.id === m.id);
       const aSeed = slotASeeds[i];
@@ -473,7 +467,13 @@ export default function AdminBracket({ teams, matches, division, teamCount, onMa
         slotA: { teamName: sorted[aSeed - 1]?.name ?? '', score: 0 },
         slotB: { teamName: sorted[bSeed - 1]?.name ?? '', score: 0 },
       };
-    }));
+    });
+
+    // Byes: when there are fewer real teams than bracket slots, the present
+    // (higher-seeded) team auto-advances instead of facing a blank opponent.
+    seeded = propagateByes(seeded, division, teamCount);
+
+    onMatchesChange(seeded);
   }
 
   // Group matches for rendering
@@ -485,32 +485,40 @@ export default function AdminBracket({ teams, matches, division, teamCount, onMa
   const lbByRound = Array.from({ length: lbRounds }, (_, i) =>
     divMatches.filter(m => m.side === 'losers' && m.round === i + 1).sort((a, b) => a.matchNumber - b.matchNumber)
   );
-  const gfMatch = divMatches.find(m => m.side === 'grand-final');
+  const finalsSemis = divMatches.filter(m => m.side === 'finals-semi').sort((a, b) => a.matchNumber - b.matchNumber);
+  const finalsFinal = divMatches.find(m => m.side === 'finals-final');
+  const finalsThird = divMatches.find(m => m.side === 'finals-third');
 
-  const finalWb   = wbByRound[wbRounds - 1]?.[0];
-  const wbWinner  = finalWb ? winner(finalWb) : null;
-  const champion  = gfMatch ? (winner(gfMatch) === 'a' ? gfMatch.slotA.teamName : winner(gfMatch) === 'b' ? gfMatch.slotB.teamName : null) : null;
+  const finalWinner = finalsFinal ? winner(finalsFinal) : null;
+  const first  = finalsFinal && finalWinner === 'a' ? finalsFinal.slotA.teamName : finalsFinal && finalWinner === 'b' ? finalsFinal.slotB.teamName : null;
+  const second = finalsFinal && finalWinner === 'a' ? finalsFinal.slotB.teamName : finalsFinal && finalWinner === 'b' ? finalsFinal.slotA.teamName : null;
+  const thirdWinner = finalsThird ? winner(finalsThird) : null;
+  const third  = finalsThird && thirdWinner === 'a' ? finalsThird.slotA.teamName : finalsThird && thirdWinner === 'b' ? finalsThird.slotB.teamName : null;
 
   const datalistId = `bl-teams-${division}`;
 
   const sharedCardProps = {
     datalistId,
+    isValidTeamName,
     draggingId,
     onDragStart: setDragging,
     onMatchDrop: handleMatchDrop,
     onDragEnd:   () => setDragging(null),
   };
 
-  // Pad WB strip to lbRounds width by adding empty spacer columns if WB is narrower
-  const wbPadCols = lbRounds - wbRounds;
-
   return (
-    <div className="flex h-full flex-col">
+    <div
+      className={cn("flex flex-col", fullscreen ? "fixed inset-0 z-40 bg-black" : "h-full")}
+      // Same "sumobots gears" background the rest of the admin page uses
+      // (src/app/admin/layout.tsx), so full screen doesn't look like a
+      // different, plainer surface.
+      style={fullscreen ? { backgroundImage: "url('/background_gears.svg')" } : undefined}
+    >
       {/* toolbar */}
       <div className="flex shrink-0 items-center gap-2 border-b border-white/10 px-3 py-1.5">
-        {/* WB / LB / Both filter */}
+        {/* All / Winners / Losers / Knockouts / Finals filter */}
         <div className="flex items-center gap-0.5 rounded-lg border border-white/15 bg-white/5 p-0.5 text-[0.6rem]">
-          {(['both', 'winners', 'losers'] as const).map(v => (
+          {(['all', 'winners', 'losers', 'knockouts', 'finals'] as const).map(v => (
             <button
               key={v}
               onClick={() => setBracketView(v)}
@@ -519,12 +527,23 @@ export default function AdminBracket({ teams, matches, division, teamCount, onMa
                 bracketView === v ? "bg-white/20 text-foreground" : "text-foreground/50 hover:text-foreground/80",
               )}
             >
-              {v === 'both' ? 'Both' : v === 'winners' ? 'Winners' : 'Losers'}
+              {v === 'all' ? 'All' : v === 'winners' ? 'Winners' : v === 'losers' ? 'Losers' : v === 'knockouts' ? 'Knockouts' : 'Finals'}
             </button>
           ))}
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={() => setFullscreen(!fullscreen)}
+            className={cn(
+              "rounded-lg border px-2 py-1 text-[0.6rem] font-medium transition-colors",
+              fullscreen
+                ? "border-white/30 bg-white/20 text-foreground"
+                : "border-white/15 bg-white/5 text-foreground/50 hover:text-foreground/80",
+            )}
+          >
+            {fullscreen ? 'Exit Full Screen' : 'Full Screen'}
+          </button>
           <button
             onClick={clearTeams}
             className="rounded-lg border border-white/25 bg-white/5 px-3 py-1 text-xs text-foreground/70 transition-colors hover:bg-red-400/10 hover:border-red-400/30 hover:text-red-300"
@@ -547,107 +566,204 @@ export default function AdminBracket({ teams, matches, division, teamCount, onMa
         ))}
       </datalist>
 
-      {/* scrollable bracket */}
+      {/* scrollable bracket — content centers horizontally when narrower than the panel */}
       <div ref={containerRef} className="relative flex-1 overflow-auto">
+       <div className="flex min-h-full min-w-full items-start justify-center">
         <div style={{ width: NATURAL_W * effectiveScale, height: NATURAL_H * effectiveScale, position: 'relative' }}>
           <div
             style={{ width: NATURAL_W, height: NATURAL_H, transform: `scale(${effectiveScale})`, transformOrigin: 'top left', position: 'absolute' }}
             className="flex items-stretch"
           >
-            {/* Main bracket (WB + LB stacked) */}
-            <div style={{ height: NATURAL_H }} className="flex flex-col">
+            {/* Main bracket (WB + LB stacked) — wrapped in a silver box, same
+                treatment as the gold Finals Day box below. */}
+            {showMain && (
+              <div className="flex shrink-0 rounded-xl bg-gradient-to-br from-slate-300/10 via-slate-200/5 to-transparent px-2 py-2 ring-1 ring-slate-300/20">
+                <div style={{ height: NATURAL_H }} className="flex flex-col">
 
-              {/* ── Winners Bracket ─────────────────────────────── */}
-              {bracketView !== 'losers' && (
-                <>
-                  <div className="shrink-0 px-1 py-0.5">
-                    <span className="text-[0.55rem] uppercase tracking-widest text-foreground/40">Winners Bracket</span>
-                  </div>
-                  <BracketStrip
-                    side="winners"
-                    rounds={Array.from({ length: wbRounds }, (_, i) => i + 1)}
-                    matchesByRound={wbByRound}
-                    height={h_wb}
-                    onChange={handleChange}
-                    {...sharedCardProps}
-                  />
-                </>
-              )}
+                  {/* ── Winners Bracket ─────────────────────────────── */}
+                  {bracketView !== 'losers' && (
+                    <>
+                      <div className="shrink-0 px-1 py-0.5">
+                        <span className="text-[0.55rem] uppercase tracking-widest text-foreground/40">Winners Bracket</span>
+                      </div>
+                      <BracketStrip
+                        side="winners"
+                        rounds={Array.from({ length: wbRounds }, (_, i) => i + 1)}
+                        matchesByRound={wbByRound}
+                        height={h_wb}
+                        connW={effectiveConnW}
+                        onChange={handleChange}
+                        {...sharedCardProps}
+                      />
+                    </>
+                  )}
 
-              {/* ── Section gap ──────────────────────────────────── */}
-              {bracketView === 'both' && (
-                <div style={{ height: SECTION_GAP }} className="shrink-0 flex items-center border-t border-b border-white/8 px-2">
-                  <span className="text-[0.55rem] uppercase tracking-widest text-foreground/40">Losers Bracket</span>
-                </div>
-              )}
-
-              {/* ── Losers Bracket ───────────────────────────────── */}
-              {bracketView !== 'winners' && (
-                <>
-                  {bracketView === 'losers' && (
-                    <div className="shrink-0 px-1 py-0.5">
+                  {/* ── Section gap ──────────────────────────────────── */}
+                  {showBothSides && (
+                    <div style={{ height: effectiveSectionGap }} className="shrink-0 flex items-center border-t border-b border-white/8 px-2">
                       <span className="text-[0.55rem] uppercase tracking-widest text-foreground/40">Losers Bracket</span>
                     </div>
                   )}
-                  <BracketStrip
-                    side="losers"
-                    rounds={Array.from({ length: lbRounds }, (_, i) => i + 1)}
-                    matchesByRound={lbByRound}
-                    height={h_lb}
-                    onChange={handleChange}
-                    {...sharedCardProps}
-                  />
-                </>
-              )}
-            </div>
 
-            {/* Padding so WB aligns with LB column count */}
-            {wbPadCols > 0 && bracketView === 'both' && (
-              <div style={{ width: wbPadCols * (ROUND_W + CONN_W) }} />
+                  {/* ── Losers Bracket ───────────────────────────────── */}
+                  {bracketView !== 'winners' && (
+                    <>
+                      {bracketView === 'losers' && (
+                        <div className="shrink-0 px-1 py-0.5">
+                          <span className="text-[0.55rem] uppercase tracking-widest text-foreground/40">Losers Bracket</span>
+                        </div>
+                      )}
+                      <BracketStrip
+                        side="losers"
+                        rounds={Array.from({ length: lbRounds }, (_, i) => i + 1)}
+                        matchesByRound={lbByRound}
+                        height={h_lb}
+                        connW={effectiveConnW}
+                        onChange={handleChange}
+                        {...sharedCardProps}
+                      />
+                    </>
+                  )}
+
+                </div>
+              </div>
             )}
 
-            {/* ── Grand Final ──────────────────────────────────── */}
-            <div style={{ width: CONN_W }} className="shrink-0 flex items-center justify-center">
-              <div className="h-full border-l border-white/15" />
-            </div>
+            {/* Padding so WB aligns with LB column count */}
+            {wbPadCols > 0 && showBothSides && (
+              <div style={{ width: wbPadCols * (ROUND_W + effectiveConnW) }} />
+            )}
 
-            <div style={{ width: GF_W, height: NATURAL_H }} className="flex shrink-0 flex-col items-center justify-center gap-2">
-              <span className="text-[0.55rem] uppercase tracking-widest text-foreground/40">Grand Final</span>
-              {gfMatch && (
-                <MatchCard
-                  match={gfMatch}
-                  onChange={handleChange}
-                  {...sharedCardProps}
-                />
-              )}
-            </div>
+            {/* ── Finals Day ─────────────────────────────────────── */}
+            {showFinals && (
+              <>
+                {showMain && (
+                  <div style={{ width: effectiveConnW }} className="shrink-0 flex items-center justify-center">
+                    <div className="h-full border-l-2 border-dashed border-amber-300/40" />
+                  </div>
+                )}
 
-            {/* ── Champion display ─────────────────────────────── */}
-            <div style={{ width: WINNER_W, height: NATURAL_H }} className="flex shrink-0 flex-col items-center justify-center">
-              <span className="text-[0.55rem] uppercase tracking-widest text-foreground/40">Champion</span>
-              {champion && (
-                <span className="mt-1 text-center text-xs font-semibold text-amber-300">🏆 {champion}</span>
-              )}
-            </div>
+                <div
+                  className="flex shrink-0 items-stretch rounded-xl bg-gradient-to-br from-amber-400/15 via-amber-300/5 to-transparent px-2 pt-2 pb-20 ring-1 ring-amber-300/25"
+                >
+                  <div className="flex flex-col">
+                    <div className="shrink-0 px-1 py-0.5">
+                      <span className="text-[0.55rem] uppercase tracking-widest text-amber-200/80">Finals Day</span>
+                    </div>
+                    <div className="flex items-stretch">
+                      {/* Semis column */}
+                      <div style={{ width: ROUND_W, height: NATURAL_H }} className="flex shrink-0 flex-col justify-around">
+                        {finalsSemis.map(m => (
+                          <MatchCard key={m.id} match={m} onChange={handleChange} {...sharedCardProps} />
+                        ))}
+                      </div>
+
+                      {finalsSemis.length >= 2 ? (
+                        <ConnectorSVG fromMatches={finalsSemis} height={NATURAL_H} connW={effectiveConnW} />
+                      ) : (
+                        <div style={{ width: effectiveConnW }} className="shrink-0" />
+                      )}
+
+                      {/* Final + 3rd place column — height is intentionally
+                          unset so it grows to fit both stacked cards; the
+                          gold box around all of this auto-sizes to whichever
+                          column ends up tallest, so nothing gets clipped. */}
+                      <div style={{ width: ROUND_W }} className="flex shrink-0 flex-col items-stretch justify-center gap-3 self-center">
+                        {finalsFinal && (
+                          <div className="flex flex-col gap-1">
+                            <span className="text-center text-[0.5rem] uppercase tracking-widest text-amber-200/70">Grand Final</span>
+                            <MatchCard match={finalsFinal} onChange={handleChange} {...sharedCardProps} />
+                          </div>
+                        )}
+                        {finalsThird && (
+                          <div className="flex flex-col gap-1">
+                            <span className="text-center text-[0.5rem] uppercase tracking-widest text-foreground/40">3rd Place</span>
+                            <MatchCard match={finalsThird} onChange={handleChange} {...sharedCardProps} />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ── Podium ───────────────────────────────────────── */}
+                  <div style={{ width: PODIUM_W }} className="flex shrink-0 flex-col items-center justify-center gap-1.5">
+                    <span className="mb-1 text-[0.55rem] uppercase tracking-widest text-amber-200/80">Podium</span>
+                    <div className={cn(
+                      "flex w-full items-center gap-1.5 rounded-lg px-2 py-1 text-[0.65rem]",
+                      first ? "bg-amber-400/20 text-amber-200" : "text-foreground/25",
+                    )}>
+                      <span>🥇</span><span className="truncate">{first ?? '—'}</span>
+                    </div>
+                    <div className={cn(
+                      "flex w-full items-center gap-1.5 rounded-lg px-2 py-1 text-[0.65rem]",
+                      second ? "bg-slate-300/15 text-slate-200" : "text-foreground/25",
+                    )}>
+                      <span>🥈</span><span className="truncate">{second ?? '—'}</span>
+                    </div>
+                    <div className={cn(
+                      "flex w-full items-center gap-1.5 rounded-lg px-2 py-1 text-[0.65rem]",
+                      third ? "bg-orange-500/15 text-orange-200" : "text-foreground/25",
+                    )}>
+                      <span>🥉</span><span className="truncate">{third ?? '—'}</span>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
+       </div>
       </div>
 
-      {/* scale slider */}
-      <div className="flex shrink-0 items-center justify-end gap-2 border-t border-white/10 px-3 py-1.5">
-        <span className="text-[0.55rem] text-foreground/40">Scale</span>
-        <input
-          type="range" min={0.2} max={1.4} step={0.05}
-          value={effectiveScale}
-          onChange={e => setManual(Number(e.target.value))}
-          className="w-28 accent-white/50"
-        />
-        <span className="w-8 text-right text-[0.55rem] tabular-nums text-foreground/40">
-          {Math.round(effectiveScale * 100)}%
-        </span>
-        {manualScale !== null && (
-          <button onClick={() => setManual(null)} className="text-[0.55rem] text-foreground/40 hover:text-foreground/70">auto</button>
-        )}
+      {/* sliders */}
+      <div className="flex shrink-0 items-center justify-end gap-3 border-t border-white/10 px-3 py-1.5">
+        <div className="flex items-center gap-2">
+          <span className="text-[0.55rem] text-foreground/40">Scale</span>
+          <input
+            type="range" min={autoScale} max={1.4} step={0.05}
+            value={effectiveScale}
+            onChange={e => setManualScale(Number(e.target.value))}
+            className="w-24 accent-white/50"
+          />
+          <span className="w-8 text-right text-[0.55rem] tabular-nums text-foreground/40">
+            {Math.round(effectiveScale * 100)}%
+          </span>
+          {manualScale !== null && (
+            <button onClick={() => setManualScale(null)} className="text-[0.55rem] text-foreground/40 hover:text-foreground/70">auto</button>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-[0.55rem] text-foreground/40">Stretch</span>
+          <input
+            type="range" min={0.3} max={4} step={0.05}
+            value={effectiveStretch}
+            onChange={e => setManualStretch(Number(e.target.value))}
+            className="w-24 accent-white/50"
+          />
+          <span className="w-8 text-right text-[0.55rem] tabular-nums text-foreground/40">
+            {Math.round(effectiveStretch * 100)}%
+          </span>
+          {manualStretch !== null && (
+            <button onClick={() => setManualStretch(null)} className="text-[0.55rem] text-foreground/40 hover:text-foreground/70">auto</button>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-[0.55rem] text-foreground/40">V-Scale</span>
+          <input
+            type="range" min={0.5} max={2.5} step={0.05}
+            value={effectiveVScale}
+            onChange={e => setManualVScale(Number(e.target.value))}
+            className="w-24 accent-white/50"
+          />
+          <span className="w-8 text-right text-[0.55rem] tabular-nums text-foreground/40">
+            {Math.round(effectiveVScale * 100)}%
+          </span>
+          {manualVScale !== null && (
+            <button onClick={() => setManualVScale(null)} className="text-[0.55rem] text-foreground/40 hover:text-foreground/70">reset</button>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -1,17 +1,22 @@
+import { type BracketMatch } from "@/lib/mock-data";
+
 export type ConcurrentRings = 1 | 2 | 3 | 4;
 
 export const DEFAULT_MATCH_MINUTES = 5;
 export const DEFAULT_GAP_MINUTES   = 5;
 export const START_MINUTE          = 13 * 60; // 1:00 PM = 780
 
-export type ScheduleSlot = {
-  id: string;
-  startMinute: number;
-  matchIds: string[];  // length ≤ concurrentRings; index 0 = Ring 1
-};
+/** One match's place in a ring's own timeline. */
+export type RingMatch = { matchId: string; startMinute: number };
 
+/**
+ * Each ring runs its own independent queue of matches. Rings are NOT
+ * synchronized to shared rows — this lets a completed match's time stay
+ * frozen (see changeTimings) and lets a newly added ring start from "now"
+ * instead of the top (see changeRings), both per-ring rather than global.
+ */
 export type MatchSchedule = {
-  slots: ScheduleSlot[];
+  rings: RingMatch[][];   // rings[ringIndex] = that ring's ordered queue
   concurrentRings: ConcurrentRings;
   matchMinutes: number;
   gapMinutes: number;
@@ -42,22 +47,19 @@ function slotDuration(s: Pick<MatchSchedule, 'matchMinutes' | 'gapMinutes'>): nu
   return s.matchMinutes + s.gapMinutes;
 }
 
-function buildSlots(
-  ids: string[],
-  rings: ConcurrentRings,
-  startMinute: number,
-  slotMin: number,
-): ScheduleSlot[] {
-  const slots: ScheduleSlot[] = [];
-  for (let i = 0; i < ids.length; i += rings) {
-    const si = i / rings;
-    slots.push({
-      id: `slot-${si}`,
-      startMinute: startMinute + si * slotMin,
-      matchIds: ids.slice(i, i + rings),
-    });
-  }
-  return slots;
+function isCompleted(matches: BracketMatch[], matchId: string): boolean {
+  return matches.find(m => m.id === matchId)?.status === 'completed';
+}
+
+/** Distribute a flat id order round-robin across `rings` queues, timed sequentially from startMinute. */
+function buildRings(ids: string[], rings: ConcurrentRings, startMinute: number, slotMin: number): RingMatch[][] {
+  const out: RingMatch[][] = Array.from({ length: rings }, () => []);
+  ids.forEach((id, i) => {
+    const ri  = i % rings;
+    const idx = out[ri].length;
+    out[ri].push({ matchId: id, startMinute: startMinute + idx * slotMin });
+  });
+  return out;
 }
 
 export function generateSchedule(
@@ -68,74 +70,118 @@ export function generateSchedule(
   gapMinutes: number = DEFAULT_GAP_MINUTES,
 ): MatchSchedule {
   return {
-    slots: buildSlots(matchIds, rings, startMinute, matchMinutes + gapMinutes),
+    rings: buildRings(matchIds, rings, startMinute, matchMinutes + gapMinutes),
     concurrentRings: rings,
     matchMinutes,
     gapMinutes,
   };
 }
 
-/** Redistribute matches into new ring count; times recalculated from first slot's time. */
-export function changeRings(schedule: MatchSchedule, newRings: ConcurrentRings): MatchSchedule {
-  const ids   = schedule.slots.flatMap(s => s.matchIds);
-  const start = schedule.slots[0]?.startMinute ?? START_MINUTE;
-  return {
-    slots: buildSlots(ids, newRings, start, slotDuration(schedule)),
-    concurrentRings: newRings,
-    matchMinutes: schedule.matchMinutes,
-    gapMinutes:   schedule.gapMinutes,
-  };
+/**
+ * Redistribute matches into a new ring count. Completed matches stay exactly
+ * where they are (front of their ring's queue); every not-yet-completed
+ * match is redistributed across the new ring count. A newly added ring's
+ * first match starts at "now" — the earliest currently-pending match's time
+ * across all rings — rather than from the top of the day.
+ */
+export function changeRings(
+  schedule: MatchSchedule,
+  matches: BracketMatch[],
+  newRings: ConcurrentRings,
+): MatchSchedule {
+  const dur = slotDuration(schedule);
+
+  const completedByRing: RingMatch[][] = schedule.rings.map(ring =>
+    ring.filter(e => isCompleted(matches, e.matchId)),
+  );
+  const pending = schedule.rings.flatMap(ring => ring.filter(e => !isCompleted(matches, e.matchId)));
+
+  const now = pending.length > 0
+    ? Math.min(...pending.map(e => e.startMinute))
+    : (schedule.rings[0]?.[0]?.startMinute ?? START_MINUTE);
+
+  const rings: RingMatch[][] = Array.from({ length: newRings }, (_, ri) => [...(completedByRing[ri] ?? [])]);
+
+  pending.forEach((entry, i) => {
+    const ri = i % newRings;
+    const completedCount = completedByRing[ri]?.length ?? 0;
+    const idxInPending    = rings[ri].length - completedCount;
+    const base = completedCount > 0
+      ? completedByRing[ri][completedCount - 1].startMinute + dur
+      : now;
+    rings[ri].push({ matchId: entry.matchId, startMinute: base + idxInPending * dur });
+  });
+
+  return { rings, concurrentRings: newRings, matchMinutes: schedule.matchMinutes, gapMinutes: schedule.gapMinutes };
 }
 
-/** Change match length and/or gap; recalculates all times from first slot's time. */
+/**
+ * Change match length and/or gap. Completed matches keep their exact time;
+ * every match after the last completed one in its ring reflows using the
+ * new duration.
+ */
 export function changeTimings(
   schedule: MatchSchedule,
+  matches: BracketMatch[],
   matchMinutes: number,
   gapMinutes: number,
 ): MatchSchedule {
-  const ids   = schedule.slots.flatMap(s => s.matchIds);
-  const start = schedule.slots[0]?.startMinute ?? START_MINUTE;
-  return {
-    slots: buildSlots(ids, schedule.concurrentRings, start, matchMinutes + gapMinutes),
-    concurrentRings: schedule.concurrentRings,
-    matchMinutes,
-    gapMinutes,
-  };
-}
-
-/** Swap two matches anywhere in the flat schedule order. */
-export function swapMatchIds(schedule: MatchSchedule, idA: string, idB: string): MatchSchedule {
-  const ids = schedule.slots.flatMap(s => s.matchIds);
-  const iA  = ids.indexOf(idA);
-  const iB  = ids.indexOf(idB);
-  if (iA === -1 || iB === -1 || iA === iB) return schedule;
-  [ids[iA], ids[iB]] = [ids[iB], ids[iA]];
-  const start = schedule.slots[0]?.startMinute ?? START_MINUTE;
-  return {
-    slots: buildSlots(ids, schedule.concurrentRings, start, slotDuration(schedule)),
-    concurrentRings: schedule.concurrentRings,
-    matchMinutes:    schedule.matchMinutes,
-    gapMinutes:      schedule.gapMinutes,
-  };
-}
-
-/** Edit one slot's time and cascade all subsequent slots. */
-export function editSlotTime(schedule: MatchSchedule, slotIdx: number, newMinute: number): MatchSchedule {
-  const dur   = slotDuration(schedule);
-  const slots = schedule.slots.map((s, i) => {
-    if (i < slotIdx) return s;
-    return { ...s, startMinute: newMinute + (i - slotIdx) * dur };
+  const dur = matchMinutes + gapMinutes;
+  const rings = schedule.rings.map(ring => {
+    let cursor: number | null = null;
+    return ring.map(entry => {
+      if (isCompleted(matches, entry.matchId)) {
+        cursor = entry.startMinute + dur;
+        return entry; // frozen
+      }
+      const startMinute = cursor ?? entry.startMinute;
+      cursor = startMinute + dur;
+      return { ...entry, startMinute };
+    });
   });
-  return { ...schedule, slots };
+  return { rings, concurrentRings: schedule.concurrentRings, matchMinutes, gapMinutes };
+}
+
+/** Swap two matches wherever they are — their time slots swap, match IDs trade places. */
+export function swapMatchIds(schedule: MatchSchedule, idA: string, idB: string): MatchSchedule {
+  function find(id: string) {
+    for (let ri = 0; ri < schedule.rings.length; ri++) {
+      const idx = schedule.rings[ri].findIndex(e => e.matchId === id);
+      if (idx !== -1) return { ri, idx };
+    }
+    return null;
+  }
+  const posA = find(idA);
+  const posB = find(idB);
+  if (!posA || !posB || (posA.ri === posB.ri && posA.idx === posB.idx)) return schedule;
+
+  const rings = schedule.rings.map(ring => [...ring]);
+  const entryA = rings[posA.ri][posA.idx];
+  const entryB = rings[posB.ri][posB.idx];
+  rings[posA.ri][posA.idx] = { ...entryA, matchId: entryB.matchId };
+  rings[posB.ri][posB.idx] = { ...entryB, matchId: entryA.matchId };
+
+  return { ...schedule, rings };
+}
+
+/** Edit one match's time and cascade forward through the rest of its own ring only. */
+export function editMatchTime(schedule: MatchSchedule, matchId: string, newMinute: number): MatchSchedule {
+  const dur = slotDuration(schedule);
+  const rings = schedule.rings.map(ring => {
+    const idx = ring.findIndex(e => e.matchId === matchId);
+    if (idx === -1) return ring;
+    return ring.map((e, i) => i < idx ? e : { ...e, startMinute: newMinute + (i - idx) * dur });
+  });
+  return { ...schedule, rings };
 }
 
 /**
  * Returns match IDs in tournament day order:
  *
  * Alternates WB and LB by round index (WB1, LB1, WB2, LB2, …) until WB
- * rounds are exhausted, then plays out the remaining LB rounds, then GF.
- * This satisfies all dependency constraints (each round's teams are known
- * before the round starts).
+ * rounds are exhausted, then plays out the remaining LB rounds, then Finals
+ * Day (semis, then the 3rd-place match, then the final). This satisfies all
+ * dependency constraints (each round's teams are known before the round starts).
  *
  * WB Round 1 uses middle-first ordering so the top seeds (at positions 1
  * and N) play their first match last — e.g. 8 matches → [4,5,3,6,2,7,1,8].
@@ -177,7 +223,11 @@ export function defaultScheduleOrder(
     if (k <= W) ids.push(...roundIds('winners', k));
     if (k <= L) ids.push(...roundIds('losers',  k));
   }
-  ids.push(...div.filter(m => m.side === 'grand-final').map(m => m.id));
+  ids.push(
+    ...div.filter(m => m.side === 'finals-semi').sort((a, b) => a.matchNumber - b.matchNumber).map(m => m.id),
+    ...div.filter(m => m.side === 'finals-third').map(m => m.id),
+    ...div.filter(m => m.side === 'finals-final').map(m => m.id),
+  );
 
   return ids;
 }

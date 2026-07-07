@@ -1,17 +1,18 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
 import {
   type BracketMatch, type Division, type MatchStatus, type Team, type TeamCount,
-  winner, applyStatusChange,
+  winner, applyStatusChange, isTeamNameTaken,
   wbRoundsFor, lbRoundsFor, wbRoundLabel, lbRoundLabel,
 } from "@/lib/mock-data";
 import {
   type MatchSchedule, type ConcurrentRings,
-  formatTime, parseTimeInput,
-  changeRings, changeTimings, swapMatchIds, editSlotTime,
+  START_MINUTE, formatTime, parseTimeInput,
+  changeRings, changeTimings, swapMatchIds, editMatchTime,
 } from "@/lib/schedule";
 import { cn } from "@/lib/cn";
+import { MATCH_DRAG_TYPE, SlotRow } from "./MatchTeamSlot";
 
 const RING_OPTIONS: ConcurrentRings[] = [1, 2, 3, 4];
 const AUTO_COMPLETE_FROM: MatchStatus[] = ['todo', 'next', 'active'];
@@ -24,15 +25,27 @@ const STATUS_TEXT: Record<MatchStatus, string> = {
   completed: 'text-white/50', skipped: 'text-red-400',
 };
 
+// ── layout constants ─────────────────────────────────────────────────────────
+const AXIS_W    = 56;  // shared left time-axis column width
+const RING_W    = 176; // each ring's match-column width — always constant
+const HEADER_H  = 22;  // sticky header row height
+const CARD_H    = 100; // match card height — always constant, regardless of match length
+
+/** One ring's full column (axis + matches) — the panel should never be
+ * resized narrower than this, so at least one ring is always fully visible. */
+export const MIN_MATCH_LIST_W = AXIS_W + RING_W;
+
 function matchLabel(m: BracketMatch, teamCount: TeamCount): string {
-  if (m.side === 'grand-final') return 'Grand Final';
+  if (m.side === 'finals-semi')  return `Finals Semi ${m.matchNumber}`;
+  if (m.side === 'finals-third') return '3rd Place';
+  if (m.side === 'finals-final') return 'Finals';
   const total = m.side === 'winners' ? wbRoundsFor(teamCount) : lbRoundsFor(teamCount);
   return m.side === 'winners'
     ? wbRoundLabel(m.round, total)
     : lbRoundLabel(m.round, total);
 }
 
-// ── TimeCell ──────────────────────────────────────────────────────────────────
+// ── TimeCell — the shared axis label doubles as the time editor ───────────────
 
 type TimeCellProps = { minute: number; onCommit: (minute: number) => void };
 
@@ -51,7 +64,7 @@ function TimeCell({ minute, onCommit }: TimeCellProps) {
         onChange={e => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
-        className="w-18 rounded bg-white/10 px-1 py-0.5 text-center text-[0.6rem] text-foreground outline-none ring-1 ring-white/30"
+        className="w-14 rounded bg-white/10 px-1 py-0.5 text-center text-[0.55rem] text-foreground outline-none ring-1 ring-white/30"
       />
     );
   }
@@ -59,8 +72,8 @@ function TimeCell({ minute, onCommit }: TimeCellProps) {
   return (
     <button
       onClick={startEdit}
-      title="Click to edit time"
-      className="text-[0.6rem] tabular-nums text-foreground/50 transition-colors hover:text-foreground/80"
+      title="Click to edit this match's time"
+      className="text-[0.55rem] tabular-nums text-foreground/50 transition-colors hover:text-foreground/80"
     >
       {formatTime(minute)}
     </button>
@@ -101,119 +114,7 @@ function NumInput({ value, min = 1, max = 60, onChange }: NumInputProps) {
   );
 }
 
-// ── MatchTeamInput ────────────────────────────────────────────────────────────
-
-function MatchTeamInput({
-  value, datalistId, onCommit, isValid,
-}: {
-  value: string;
-  datalistId: string;
-  onCommit: (v: string) => void;
-  isValid?: (v: string) => boolean;
-}) {
-  const [local, setLocal] = useState(value);
-  const committed         = useRef(value);
-
-  useEffect(() => {
-    if (value !== committed.current) {
-      setLocal(value);
-      committed.current = value;
-    }
-  }, [value]);
-
-  function commit(v: string) {
-    if (isValid && v && !isValid(v)) {
-      // Reject: revert to the current accepted value
-      setLocal(value);
-      committed.current = value;
-      return;
-    }
-    committed.current = v;
-    onCommit(v);
-  }
-
-  return (
-    <input
-      list={datalistId}
-      value={local}
-      placeholder="Team…"
-      onChange={e => setLocal(e.target.value)}
-      onBlur={() => { if (local !== committed.current) commit(local); }}
-      onKeyDown={e => { if (e.key === 'Enter') commit(local); }}
-      onDragOver={e => {
-        if (!e.dataTransfer.types.includes('application/schedule-match')) {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      }}
-      onDrop={e => {
-        if (e.dataTransfer.types.includes('application/schedule-match')) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const name = e.dataTransfer.getData('text/plain');
-        if (name) commit(name);
-      }}
-      className="min-w-0 flex-1 bg-transparent text-[0.6rem] outline-none placeholder:text-foreground/20 truncate"
-    />
-  );
-}
-
-// ── SlotRow ───────────────────────────────────────────────────────────────────
-
-type SlotRowProps = {
-  slotData: { teamName: string; score: number };
-  won: boolean;
-  lost: boolean;
-  datalistId: string;
-  isValid?: (v: string) => boolean;
-  onNameCommit: (n: string) => void;
-  onScoreDelta: (d: number) => void;
-};
-
-function SlotRow({ slotData, won, lost, datalistId, isValid, onNameCommit, onScoreDelta }: SlotRowProps) {
-  return (
-    <div
-      className={cn(
-        "flex flex-1 items-center gap-0.5 px-1.5 py-0.5",
-        won  && "rounded bg-amber-400/20",
-        lost && "opacity-40",
-      )}
-      onDragOver={e => {
-        if (!e.dataTransfer.types.includes('application/schedule-match')) {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      }}
-      onDrop={e => {
-        if (e.dataTransfer.types.includes('application/schedule-match')) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const name = e.dataTransfer.getData('text/plain');
-        if (name) onNameCommit(name);
-      }}
-    >
-      <MatchTeamInput
-        value={slotData.teamName}
-        datalistId={datalistId}
-        onCommit={onNameCommit}
-        isValid={isValid}
-      />
-      {won  && <span className="shrink-0 text-amber-300 text-[0.55rem]">★</span>}
-      {lost && <span className="shrink-0 text-red-400/70 text-[0.55rem]">✗</span>}
-      <button
-        onClick={e => { e.stopPropagation(); onScoreDelta(-1); }}
-        className="shrink-0 px-0.5 text-[0.65rem] text-foreground/70 hover:text-foreground"
-      >−</button>
-      <span className="shrink-0 w-3.5 text-center text-[0.65rem] tabular-nums">{slotData.score}</span>
-      <button
-        onClick={e => { e.stopPropagation(); onScoreDelta(1); }}
-        className="shrink-0 px-0.5 text-[0.65rem] text-foreground/70 hover:text-foreground"
-      >+</button>
-    </div>
-  );
-}
-
-// ── MatchCard ─────────────────────────────────────────────────────────────────
+// ── MatchCard — fixed size always, regardless of match length ─────────────────
 
 type MatchCardProps = {
   match: BracketMatch;
@@ -224,11 +125,15 @@ type MatchCardProps = {
   isValidTeamName: (name: string) => boolean;
 };
 
-function MatchCard({ match, teamCount, onDrop, onChange, datalistId, isValidTeamName }: MatchCardProps) {
+function MatchCard({
+  match, teamCount,
+  onDrop, onChange, datalistId, isValidTeamName,
+}: MatchCardProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [dragOver,   setDragOver]   = useState(false);
 
   const w = winner(match);
+  const isFinals = match.side === 'finals-semi' || match.side === 'finals-third' || match.side === 'finals-final';
 
   const statusClass =
     match.status === 'active'    ? 'border-green-400 shadow-[0_0_12px_rgba(74,222,128,0.5)] bg-green-400/10' :
@@ -262,7 +167,7 @@ function MatchCard({ match, teamCount, onDrop, onChange, datalistId, isValidTeam
     <div
       draggable
       onDragStart={e => {
-        e.dataTransfer.setData('application/schedule-match', match.id);
+        e.dataTransfer.setData(MATCH_DRAG_TYPE, match.id);
         e.dataTransfer.effectAllowed = 'move';
         setIsDragging(true);
       }}
@@ -272,21 +177,21 @@ function MatchCard({ match, teamCount, onDrop, onChange, datalistId, isValidTeam
       onDrop={e => {
         e.preventDefault();
         setDragOver(false);
-        const src = e.dataTransfer.getData('application/schedule-match');
+        const src = e.dataTransfer.getData(MATCH_DRAG_TYPE);
         if (src && src !== match.id) onDrop(src);
       }}
       className={cn(
-        "flex cursor-grab flex-col rounded-md border bg-[#0d1018] text-foreground select-none transition-all",
+        "flex h-full cursor-grab flex-col overflow-hidden rounded-md border bg-[#0d1018] text-foreground select-none transition-all",
         statusClass,
         isDragging && 'opacity-30',
         dragOver   && 'ring-1 ring-white/50',
       )}
     >
-      {/* Header: label + status */}
+      {/* Header: label + status (no time here — edit it from the axis) */}
       <div className="flex items-center justify-between gap-1 px-1.5 pt-1 pb-0.5">
         <span className="truncate text-[0.55rem] uppercase leading-none tracking-wider text-foreground/50">
           {matchLabel(match, teamCount)}
-          {match.side !== 'grand-final' && `·M${match.matchNumber}`}
+          {!isFinals && `·M${match.matchNumber}`}
         </span>
         <select
           value={match.status}
@@ -303,7 +208,6 @@ function MatchCard({ match, teamCount, onDrop, onChange, datalistId, isValidTeam
         </select>
       </div>
 
-      {/* Slot A */}
       <SlotRow
         slotData={match.slotA}
         won={w === 'a'} lost={w !== null && w !== 'a'}
@@ -314,7 +218,6 @@ function MatchCard({ match, teamCount, onDrop, onChange, datalistId, isValidTeam
       />
       <div className="border-t border-white/[0.14]" />
 
-      {/* Slot B */}
       <SlotRow
         slotData={match.slotB}
         won={w === 'b'} lost={w !== null && w !== 'b'}
@@ -324,7 +227,6 @@ function MatchCard({ match, teamCount, onDrop, onChange, datalistId, isValidTeam
         onScoreDelta={d => setScore('b', d)}
       />
 
-      {/* Footer: target score */}
       <div className="flex items-center justify-end border-t border-white/[0.14] px-1.5 py-1">
         <label className="flex items-center gap-0.5 text-[0.5rem] text-foreground/50">
           Win:
@@ -346,10 +248,6 @@ function MatchCard({ match, teamCount, onDrop, onChange, datalistId, isValidTeam
   );
 }
 
-function EmptyCell() {
-  return <div className="min-h-22 rounded-lg border border-dashed border-white/8 bg-white/1.5" />;
-}
-
 // ── MatchesPanel ──────────────────────────────────────────────────────────────
 
 type Props = {
@@ -369,14 +267,6 @@ export default function MatchesPanel({
     matches.filter(m => m.division === division).map(m => [m.id, m]),
   );
 
-  function isValidTeamName(matchId: string, name: string): boolean {
-    return !matches.some(m =>
-      m.id !== matchId &&
-      m.division === division &&
-      (m.slotA.teamName === name || m.slotB.teamName === name),
-    );
-  }
-
   function handleMatchChange(updated: BracketMatch) {
     const prev = matches.find(m => m.id === updated.id);
     if (!prev) return;
@@ -393,8 +283,26 @@ export default function MatchesPanel({
 
   const datalistId = `ms-teams-${division}`;
 
+  // One shared axis: every ring uses the same start-time reference and the
+  // same pixel-per-minute density, so a given clock time lines up at the
+  // same row across every ring — but each ring still shows and edits its own
+  // matches' times individually. The density is derived from the fixed card
+  // height so a match's box always exactly fills its own slot — card size
+  // never changes, only the (visible) gap after it grows/shrinks with gap time.
+  const allEntries = schedule.rings.flat();
+  const isEmpty = allEntries.length === 0;
+  const starts = allEntries.map(e => e.startMinute);
+  const globalStart = starts.length ? Math.min(...starts) : START_MINUTE;
+  const globalEnd = starts.length
+    ? Math.max(...starts) + schedule.matchMinutes + schedule.gapMinutes
+    : globalStart + schedule.matchMinutes + schedule.gapMinutes;
+  const totalMinutes = Math.max(1, globalEnd - globalStart);
+  const pxPerMin = CARD_H / schedule.matchMinutes;
+  const canvasH = totalMinutes * pxPerMin;
+  const yFor = (minute: number) => (minute - globalStart) * pxPerMin;
+
   return (
-    <div className="flex h-full flex-col">
+    <div className="@container flex h-full flex-col">
       {/* Datalist for team autocomplete */}
       <datalist id={datalistId}>
         {teams.filter(t => t.division === division).map(t => (
@@ -402,14 +310,17 @@ export default function MatchesPanel({
         ))}
       </datalist>
 
-      {/* Toolbar */}
-      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-white/10 px-3 py-2">
-        <div className="flex items-center gap-1">
+      {/* Toolbar — stays one line as the panel narrows; Gap disappears
+          first (least critical to always see), then Match, then the
+          divider; Rings (the control that reshapes the whole layout)
+          always stays. */}
+      <div className="flex shrink-0 flex-nowrap items-center gap-x-3 gap-y-1 overflow-hidden border-b border-white/10 px-3 py-2">
+        <div className="flex shrink-0 items-center gap-1">
           <span className="mr-0.5 text-[0.55rem] uppercase tracking-widest text-foreground/40">Rings</span>
           {RING_OPTIONS.map(n => (
             <button
               key={n}
-              onClick={() => onScheduleChange(changeRings(schedule, n))}
+              onClick={() => onScheduleChange(changeRings(schedule, matches, n))}
               className={cn(
                 "rounded px-2 py-0.5 text-[0.6rem] font-medium transition-colors",
                 schedule.concurrentRings === n
@@ -422,80 +333,92 @@ export default function MatchesPanel({
           ))}
         </div>
 
-        <div className="h-3 w-px bg-white/15" />
+        <div className="h-3 w-px shrink-0 bg-white/15 @max-[180px]:hidden" />
 
-        <div className="flex items-center gap-1.5">
+        {/* Match/Gap apply globally to every not-yet-completed match across
+            all rings (changeTimings freezes completed matches' times). Card
+            size never changes with these — only the axis spacing does. */}
+        <div className="flex shrink-0 items-center gap-1.5 @max-[180px]:hidden">
           <span className="text-[0.55rem] uppercase tracking-widest text-foreground/40">Match</span>
           <NumInput
             value={schedule.matchMinutes}
-            onChange={v => onScheduleChange(changeTimings(schedule, v, schedule.gapMinutes))}
+            onChange={v => onScheduleChange(changeTimings(schedule, matches, v, schedule.gapMinutes))}
           />
           <span className="text-[0.55rem] text-foreground/30">min</span>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1.5 @max-[260px]:hidden">
           <span className="text-[0.55rem] uppercase tracking-widest text-foreground/40">Gap</span>
           <NumInput
             value={schedule.gapMinutes}
-            onChange={v => onScheduleChange(changeTimings(schedule, schedule.matchMinutes, v))}
+            onChange={v => onScheduleChange(changeTimings(schedule, matches, schedule.matchMinutes, v))}
           />
           <span className="text-[0.55rem] text-foreground/30">min</span>
         </div>
       </div>
 
-      {/* Schedule grid */}
-      <div className="min-h-0 flex-1 overflow-auto">
-        {schedule.slots.length === 0 ? (
+      {/* Match list — one shared scale, one scroll; each ring keeps its own
+          axis column so every match's time is still edited individually.
+          Extra right padding keeps the scrollbar off the match cards. */}
+      <div className="min-h-0 flex-1 overflow-auto pr-10">
+        {isEmpty ? (
           <div className="flex h-full items-center justify-center">
             <p className="text-xs text-foreground/30">No matches scheduled</p>
           </div>
         ) : (
-          <>
-            <div className="sticky top-0 z-10 flex border-b border-white/10 bg-black/80 backdrop-blur-sm">
-              <div className="w-19 shrink-0 border-r border-white/10 px-2 py-1.5" />
-              {Array.from({ length: schedule.concurrentRings }, (_, ri) => (
+          <div className="flex items-start">
+            {schedule.rings.map((ring, ri) => (
+              <div key={ri} className="flex shrink-0 flex-col border-l border-white/5">
                 <div
-                  key={ri}
-                  className="w-44 shrink-0 border-r border-white/10 px-2 py-1.5 text-center text-[0.55rem] uppercase tracking-widest text-foreground/40 last:border-r-0"
+                  className="sticky top-0 z-10 border-b border-white/10 bg-black/80 text-center text-[0.55rem] uppercase tracking-widest text-foreground/40 backdrop-blur-sm"
+                  style={{ height: HEADER_H, lineHeight: `${HEADER_H}px`, width: AXIS_W + RING_W }}
                 >
                   Ring {ri + 1}
                 </div>
-              ))}
-            </div>
-
-            <div className="divide-y divide-white/5">
-              {schedule.slots.map((slot, si) => (
-                <div key={slot.id} className="flex items-stretch">
-                  <div className="flex w-19 shrink-0 items-center justify-center border-r border-white/10 px-1 py-2">
-                    <TimeCell
-                      minute={slot.startMinute}
-                      onCommit={min => onScheduleChange(editSlotTime(schedule, si, min))}
-                    />
+                <div className="flex items-start">
+                  {/* this ring's own time axis — same scale as every other ring */}
+                  <div className="relative shrink-0" style={{ width: AXIS_W, height: canvasH }}>
+                    {ring.map(entry => (
+                      <div
+                        key={entry.matchId}
+                        className="absolute right-1.5 flex items-center justify-end"
+                        style={{ top: yFor(entry.startMinute) + (CARD_H - 18) / 2, height: 18 }}
+                      >
+                        <TimeCell
+                          minute={entry.startMinute}
+                          onCommit={min => onScheduleChange(editMatchTime(schedule, entry.matchId, min))}
+                        />
+                      </div>
+                    ))}
                   </div>
-                  {Array.from({ length: schedule.concurrentRings }, (_, ri) => {
-                    const mid   = slot.matchIds[ri];
-                    const match = mid ? matchById.get(mid) : undefined;
-                    return (
-                      <div key={ri} className="w-44 shrink-0 border-r border-white/5 p-1.5 last:border-r-0">
-                        {match ? (
+
+                  {/* this ring's matches */}
+                  <div className="relative shrink-0" style={{ width: RING_W, height: canvasH }}>
+                    {ring.map(entry => {
+                      const match = matchById.get(entry.matchId);
+                      if (!match) return null;
+                      return (
+                        <div
+                          key={match.id}
+                          className="absolute inset-x-1"
+                          style={{ top: yFor(entry.startMinute), height: CARD_H }}
+                        >
                           <MatchCard
                             match={match}
                             teamCount={teamCount}
                             onDrop={srcId => onScheduleChange(swapMatchIds(schedule, srcId, match.id))}
                             onChange={handleMatchChange}
                             datalistId={datalistId}
-                            isValidTeamName={name => isValidTeamName(match.id, name)}
+                            isValidTeamName={name => !isTeamNameTaken(matches, division, match.id, name)}
                           />
-                        ) : (
-                          <EmptyCell />
-                        )}
-                      </div>
-                    );
-                  })}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              ))}
-            </div>
-          </>
+              </div>
+            ))}
+          </div>
         )}
       </div>
     </div>

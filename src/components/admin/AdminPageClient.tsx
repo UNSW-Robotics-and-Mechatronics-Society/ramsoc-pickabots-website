@@ -12,10 +12,11 @@ import {
 } from "@/lib/schedule";
 import { cn } from "@/lib/cn";
 import { useAdminPanels, type PanelId } from "./AdminPanelContext";
+import { DragPreviewProvider } from "./DragPreviewContext";
 import MultiPanelSplit from "./MultiPanelSplit";
 import TeamList        from "./TeamList";
 import AdminBracket    from "./AdminBracket";
-import MatchesPanel    from "./MatchesPanel";
+import MatchesPanel, { MIN_MATCH_LIST_W } from "./MatchesPanel";
 import ConfirmDialog   from "./ConfirmDialog";
 
 // ── eliminated teams (only LB losers; WB losers still alive in LB) ────────────
@@ -32,9 +33,10 @@ function computeEliminated(matches: BracketMatch[]): Set<string> {
 }
 
 /**
- * Derives active/next/todo statuses from the schedule order for one division.
- * The first `concurrentRings` non-completed matches → active.
- * The next `concurrentRings` non-completed matches → next.
+ * Derives active/next/todo statuses from the schedule for one division.
+ * Each ring is independent: the first non-completed/non-skipped match in
+ * that ring's own queue → active, the second → next. This guarantees
+ * exactly one active match per ring, by construction.
  * Completed and skipped statuses are always preserved.
  */
 function applyScheduleStatus(
@@ -44,16 +46,19 @@ function applyScheduleStatus(
 ): BracketMatch[] {
   const byId = new Map(matches.map(m => [m.id, m]));
 
-  const pending = schedule.slots
-    .flatMap(s => s.matchIds)
-    .filter(id => {
-      const m = byId.get(id);
-      return m && m.division === division && m.status !== 'completed' && m.status !== 'skipped';
-    });
+  const activeSet = new Set<string>();
+  const nextSet   = new Set<string>();
 
-  const N         = schedule.concurrentRings;
-  const activeSet = new Set(pending.slice(0, N));
-  const nextSet   = new Set(pending.slice(N, N * 2));
+  for (const ring of schedule.rings) {
+    const pending = ring
+      .map(e => e.matchId)
+      .filter(id => {
+        const m = byId.get(id);
+        return m && m.status !== 'completed' && m.status !== 'skipped';
+      });
+    if (pending[0]) activeSet.add(pending[0]);
+    if (pending[1]) nextSet.add(pending[1]);
+  }
 
   return matches.map(m => {
     if (m.division !== division) return m;
@@ -128,14 +133,14 @@ export default function AdminPageClient({ division }: Props) {
       [division]: generateSchedule(
         defaultScheduleOrder(newMatches, division),
         prev[division].concurrentRings,
-        prev[division].slots[0]?.startMinute ?? START_MINUTE,
+        prev[division].rings[0]?.[0]?.startMinute ?? START_MINUTE,
         prev[division].matchMinutes,
         prev[division].gapMinutes,
       ),
       [otherDiv]: generateSchedule(
         defaultScheduleOrder(newMatches, otherDiv),
         prev[otherDiv].concurrentRings,
-        prev[otherDiv].slots[0]?.startMinute ?? START_MINUTE,
+        prev[otherDiv].rings[0]?.[0]?.startMinute ?? START_MINUTE,
         prev[otherDiv].matchMinutes,
         prev[otherDiv].gapMinutes,
       ),
@@ -148,7 +153,8 @@ export default function AdminPageClient({ division }: Props) {
   const panels = ALL_PANEL_IDS
     .filter(p => visiblePanels.includes(p))
     .map(p => ({
-      key:  p,
+      key:   p,
+      minPx: p === 'matches' ? MIN_MATCH_LIST_W : undefined,
       node: p === 'teams' ? (
         <TeamList
           teams={MOCK_TEAMS}
@@ -201,7 +207,7 @@ export default function AdminPageClient({ division }: Props) {
     }));
 
   return (
-    <>
+    <DragPreviewProvider>
       {/* Panels */}
       <div className="h-full w-full">
         <MultiPanelSplit
@@ -220,6 +226,6 @@ export default function AdminPageClient({ division }: Props) {
           onCancel={() => setPending(null)}
         />
       )}
-    </>
+    </DragPreviewProvider>
   );
 }

@@ -17,10 +17,11 @@ export default function AdminSidePanel() {
   const { user, isLoaded }           = useUser();
   const pathname                     = usePathname();
   const searchParams                 = useSearchParams();
-  const { visiblePanels, togglePanel } = useAdminPanels();
+  const { visiblePanels, togglePanel, bracketFullscreen } = useAdminPanels();
 
   if (!isLoaded) return null;
   if ((user?.publicMetadata as { role?: string } | undefined)?.role !== "admin") return null;
+  if (bracketFullscreen) return null;
 
   const isOnAdmin       = pathname.startsWith("/admin");
   const currentDivision = searchParams.get("division") ?? "standards";
