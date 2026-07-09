@@ -99,37 +99,92 @@ export async function getBracketState(): Promise<BracketState> {
 }
 
 /**
- * Opens/resolves betting matches in response to bracket status changes.
- * Best-effort: a failure here is logged but doesn't fail the bracket save,
- * since the admin's primary action (recording the bracket result) already
- * succeeded by the time this runs.
+ * Marks a betting row's outcome once its bracket match resolves. Only
+ * "completed" is handled transition-gated (not folded into the full
+ * reconciliation below) because it's a one-way event — a completed match
+ * never needs its winner_side re-derived on a later save. Best-effort: a
+ * failure here is logged but doesn't fail the bracket save, since the
+ * admin's primary action (recording the bracket result) already succeeded
+ * by the time this runs.
  */
-async function syncBettingMatches(beforeStatusById: Map<string, MatchStatus>, after: BracketMatch[]): Promise<void> {
+async function syncCompletedMatches(beforeStatusById: Map<string, MatchStatus>, after: BracketMatch[]): Promise<void> {
   for (const m of after) {
-    const prevStatus = beforeStatusById.get(m.id);
-    if (prevStatus === m.status) continue;
+    if (m.status !== "completed" || beforeStatusById.get(m.id) === m.status) continue;
+    const w = winner(m);
+    if (!w) continue;
+    await supabase
+      .from("matches")
+      .update({ winner_side: w === "a" ? "left" : "right", is_active: false })
+      .eq("bracket_match_id", m.id);
+  }
+}
 
-    if (m.status === "active") {
-      const { data: existing } = await supabase
-        .from("matches").select("id").eq("bracket_match_id", m.id).maybeSingle();
-      if (!existing) {
-        await supabase.from("matches").insert({
-          bracket_match_id: m.id,
-          comp_type: toDbCategory(m.division),
-          left_name: m.slotA.teamName || "TBD",
-          right_name: m.slotB.teamName || "TBD",
-          is_active: true,
-        });
-      }
-    } else if (m.status === "completed") {
-      const w = winner(m);
-      if (!w) continue;
-      await supabase
-        .from("matches")
-        .update({ winner_side: w === "a" ? "left" : "right", is_active: false })
-        .eq("bracket_match_id", m.id);
+/**
+ * Full reconciliation of the public betting `matches` table against the
+ * bracket's current active/next matches — runs on every save (not gated on
+ * detecting a transition this round), so it self-heals regardless of how
+ * a mismatch happened: creates a row for any active/next bracket match
+ * that doesn't have one yet (e.g. it became "next" before this
+ * reconciliation existed, or the one-shot transition sync it replaced
+ * missed it), corrects is_active/names on rows that drifted (a match that
+ * was active and got bumped back to "next" by a ring/schedule change, or
+ * was active during testing/reseeding and later got reset to "todo" by a
+ * resize without ever passing through "completed"), and deletes rows whose
+ * bracket match is "todo"/"skipped" or gone entirely (resize dropped that
+ * round) — those don't correspond to anything current. Any bets against a
+ * deleted row are refunded first, since the FK is ON DELETE CASCADE and
+ * would otherwise silently drop the bet along with the user's already-
+ * deducted tokens.
+ */
+async function reconcileBettingMatches(bracketMatchById: Map<string, BracketMatch>): Promise<void> {
+  const { data: rows, error } = await supabase
+    .from("matches")
+    .select("id, bracket_match_id, is_active, left_name, right_name")
+    .is("winner_side", null)
+    .not("bracket_match_id", "is", null);
+  if (error || !rows) return;
+
+  const rowByBracketId = new Map(rows.map(r => [r.bracket_match_id as string, r]));
+  const toDelete: string[] = [];
+
+  for (const row of rows) {
+    const bm = bracketMatchById.get(row.bracket_match_id as string);
+    if (bm?.status !== "active" && bm?.status !== "next") toDelete.push(row.id as string);
+  }
+
+  for (const bm of bracketMatchById.values()) {
+    if (bm.status !== "active" && bm.status !== "next") continue;
+    const desired = {
+      comp_type: toDbCategory(bm.division),
+      is_active: bm.status === "active",
+      left_name: bm.slotA.teamName || "TBD",
+      right_name: bm.slotB.teamName || "TBD",
+    };
+    const existing = rowByBracketId.get(bm.id);
+    if (!existing) {
+      await supabase.from("matches").insert({ bracket_match_id: bm.id, ...desired });
+    } else if (existing.is_active !== desired.is_active || existing.left_name !== desired.left_name || existing.right_name !== desired.right_name) {
+      await supabase.from("matches").update(desired).eq("id", existing.id as string);
     }
   }
+
+  if (toDelete.length === 0) return;
+
+  const { data: betRows } = await supabase
+    .from("bets").select("user_id, amount").in("match_id", toDelete);
+  if (betRows && betRows.length > 0) {
+    const refundByUser = new Map<string, number>();
+    for (const b of betRows) {
+      const uid = b.user_id as string;
+      refundByUser.set(uid, (refundByUser.get(uid) ?? 0) + (b.amount as number));
+    }
+    for (const [userId, refund] of refundByUser) {
+      const { data: user } = await supabase.from("users").select("tokens").eq("id", userId).single();
+      if (user) await supabase.from("users").update({ tokens: (user.tokens as number) + refund }).eq("id", userId);
+    }
+    console.warn(`[bracket] refunded ${betRows.length} bet(s) on stale matches before cleanup: ${toDelete.join(", ")}`);
+  }
+  await supabase.from("matches").delete().in("id", toDelete);
 }
 
 export async function saveBracketState(state: BracketState): Promise<void> {
@@ -172,8 +227,14 @@ export async function saveBracketState(state: BracketState): Promise<void> {
   if (schedErr) throw new Error(`Failed to save bracket_schedule: ${schedErr.message}`);
 
   try {
-    await syncBettingMatches(beforeStatusById, matches);
+    await syncCompletedMatches(beforeStatusById, matches);
   } catch (err) {
     console.error("[bracket] betting sync failed:", err);
+  }
+
+  try {
+    await reconcileBettingMatches(new Map(matches.map(m => [m.id, m])));
+  } catch (err) {
+    console.error("[bracket] betting reconcile failed:", err);
   }
 }

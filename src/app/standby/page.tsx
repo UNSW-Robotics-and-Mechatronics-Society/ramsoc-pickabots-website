@@ -59,10 +59,16 @@ export default function StandbyPage() {
           PICKABOTS
         </div>
         <div style={{
-          fontSize: '0.48rem', fontWeight: 900, letterSpacing: 6,
-          color: '#2a2a2a', textTransform: 'uppercase', marginTop: 8,
+          display: 'inline-block', marginTop: 8,
+          padding: '4px 12px', borderRadius: 6,
+          background: 'rgba(255,107,0,0.3)',
         }}>
-          AWAITING ACCESS CODE
+          <span style={{
+            fontSize: '0.48rem', fontWeight: 900, letterSpacing: 6,
+            color: '#fff', textTransform: 'uppercase',
+          }}>
+            AWAITING ACCESS CODE
+          </span>
         </div>
       </div>
 
@@ -78,7 +84,7 @@ export default function StandbyPage() {
       }}>
         <div style={{
           fontSize: '0.44rem', fontWeight: 900, letterSpacing: 5,
-          color: unlocked ? '#4cff00' : '#2e2e2e',
+          color: unlocked ? '#4cff00' : '#fff',
           textTransform: 'uppercase', textAlign: 'center', marginBottom: 22,
           transition: 'color 0.25s',
         }}>
@@ -155,10 +161,15 @@ export default function StandbyPage() {
       </div>
 
       <div style={{
-        fontSize: '0.4rem', color: '#1e1e1e', fontWeight: 900,
-        textTransform: 'uppercase', letterSpacing: 4, textAlign: 'center',
+        display: 'inline-block', padding: '4px 12px', borderRadius: 6,
+        background: 'rgba(255,107,0,0.3)',
       }}>
-        RAMSoc · UNSW · Pickabots 2026
+        <span style={{
+          fontSize: '0.4rem', color: '#fff', fontWeight: 900,
+          textTransform: 'uppercase', letterSpacing: 4, textAlign: 'center',
+        }}>
+          RAMSoc · UNSW · Pickabots 2026
+        </span>
       </div>
 
       <style>{`

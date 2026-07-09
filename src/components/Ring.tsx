@@ -3,7 +3,7 @@ import { useState } from 'react'
 import BotSvg from './BotSvg'
 import type { Match, Bet } from '@/lib/types'
 
-const COMP_META = {
+export const COMP_META = {
   standard: { color: '#FF6B00', label: '⚙ STANDARD' },
   open:     { color: '#4cff00', label: '◈ OPEN'      },
   bossbot:  { color: '#9B30FF', label: '💀 BOSSBOT'   },

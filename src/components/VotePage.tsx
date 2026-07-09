@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import Header from './Header'
 import Ring from './Ring'
+import NextMatchCard from './NextMatchCard'
 import BetModal from './BetModal'
 import ComicFlash, { useComicFlash } from './ComicFlash'
 import Toast, { useToast } from './Toast'
@@ -14,6 +15,8 @@ interface ModalCtx {
   compType: string
 }
 
+type CompFilter = 'standard' | 'open'
+
 export default function VotePage() {
   const [matches, setMatches]   = useState<Match[]>([])
   const [tokens, setTokens]     = useState<number | null>(null)
@@ -21,6 +24,7 @@ export default function VotePage() {
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState<string | null>(null)
   const [modalCtx, setModalCtx] = useState<ModalCtx | null>(null)
+  const [filter, setFilter]     = useState<CompFilter>('standard')
 
   const { state: flash, trigger: triggerFlash } = useComicFlash()
   const { toast, show: showToast } = useToast()
@@ -119,11 +123,40 @@ export default function VotePage() {
     }
   }
 
+  // Only a match the admin has actually put "on the ring" is biddable.
+  // "Next" matches (queued, not yet active, not yet resolved) get their own
+  // read-only preview segment instead of appearing here.
+  const activeMatches = matches.filter(m => m.is_active)
+  const nextMatches   = matches.filter(m => !m.is_active && m.winner_side === null)
+  // Bossbot matches aren't gated by the Standard/Open filter — they're a
+  // one-off exhibition category, not part of either division's bracket.
+  const visibleActive = activeMatches.filter(m => m.comp_type === 'bossbot' || m.comp_type === filter)
+
   return (
     <>
       <Header tokens={tokens ?? 0} loading={loading} />
 
       <main style={{ padding: '14px 16px 88px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {/* Standard / Open filter — only affects the biddable list below;
+            Bossbot matches and the Next Matches segment ignore it. */}
+        <div style={{ display: 'flex', gap: 6 }}>
+          {(['standard', 'open'] as CompFilter[]).map(f => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              style={{
+                padding: '6px 16px', borderRadius: 999, fontSize: '0.6rem', fontWeight: 900,
+                letterSpacing: 2, textTransform: 'uppercase', cursor: 'pointer',
+                border: `1px solid ${filter === f ? 'rgba(255,107,0,0.6)' : 'rgba(255,255,255,0.1)'}`,
+                background: filter === f ? 'rgba(255,107,0,0.15)' : 'rgba(255,255,255,0.04)',
+                color: filter === f ? '#FF6B00' : 'rgba(255,255,255,0.4)',
+              }}
+            >
+              {f === 'standard' ? 'Standard' : 'Open'}
+            </button>
+          ))}
+        </div>
+
         {loading && (
           <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:12, padding:'48px 0' }}>
             <div style={{
@@ -146,13 +179,13 @@ export default function VotePage() {
           </div>
         )}
 
-        {!loading && !error && matches.length === 0 && (
+        {!loading && !error && visibleActive.length === 0 && (
           <div style={{ textAlign:'center', padding:'48px 0', color:'#444', fontWeight:900, fontSize:'0.85rem', textTransform:'uppercase', letterSpacing:3 }}>
             No active matches right now.
           </div>
         )}
 
-        {matches.map(match => (
+        {visibleActive.map(match => (
           <Ring
             key={match.id}
             match={match}
@@ -165,6 +198,19 @@ export default function VotePage() {
             onUndo={() => handleUndo(match.id)}
           />
         ))}
+
+        {/* Next Matches — read-only preview of whatever's queued up next
+            (per division), not affected by the Standard/Open filter above. */}
+        {!loading && !error && nextMatches.length > 0 && (
+          <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <span style={{ fontSize: '0.55rem', fontWeight: 900, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: 4 }}>
+              Next Matches
+            </span>
+            {nextMatches.map(match => (
+              <NextMatchCard key={match.id} match={match} />
+            ))}
+          </div>
+        )}
       </main>
 
       <BetModal ctx={modalCtx} tokens={tokens ?? 0} onConfirm={handleConfirm} onClose={() => setModalCtx(null)} />

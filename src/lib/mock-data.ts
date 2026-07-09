@@ -225,6 +225,37 @@ export function winner(m: BracketMatch): 'a' | 'b' | null {
   return null;
 }
 
+// A match's position in the tournament's overall sequence — used to pick
+// the "most recent" or "next" match out of a team's whole match history,
+// since matches don't carry a timestamp. Finals always come after every
+// Winners/Losers round; Losers rounds are treated as happening after the
+// Winners round of the same number (a team only reaches LB round N once
+// it's dropped out of WB).
+export function stageRank(m: BracketMatch): number {
+  if (m.side === 'finals-final') return 10_000;
+  if (m.side === 'finals-third') return 9_999;
+  if (m.side === 'finals-semi')  return 9_998;
+  if (m.side === 'losers') return 5_000 + m.round;
+  return m.round;
+}
+
+/**
+ * Picks the one match to jump/scroll to for a team filter: their live match
+ * if they have one right now, else their next scheduled match, else (team
+ * is done / eliminated) the last match they actually played.
+ */
+export function findTeamTargetMatch(pool: BracketMatch[], teamName: string): BracketMatch | null {
+  const teamMatches = pool.filter(m => m.slotA.teamName === teamName || m.slotB.teamName === teamName);
+  if (!teamMatches.length) return null;
+  const active = teamMatches.find(m => m.status === 'active');
+  if (active) return active;
+  const upcoming = teamMatches.filter(m => m.status === 'todo' || m.status === 'next');
+  if (upcoming.length) return upcoming.sort((a, b) => stageRank(a) - stageRank(b))[0];
+  const completed = teamMatches.filter(m => m.status === 'completed');
+  if (completed.length) return completed.sort((a, b) => stageRank(b) - stageRank(a))[0];
+  return teamMatches[0];
+}
+
 /** True if `name` is already placed in some other match in this division. */
 export function isTeamNameTaken(
   matches: BracketMatch[],

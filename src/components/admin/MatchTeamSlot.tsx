@@ -2,14 +2,52 @@
 
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
-import { useDragPreview } from "./DragPreviewContext";
+import { formatTime, parseTimeInput } from "@/lib/schedule";
 
 /**
- * DataTransfer type used to distinguish a match-reorder/swap drag from a
- * team-name drop (which carries `text/plain`). Shared by the bracket and
- * match-list views so a drag started in one is never misread by the other.
+ * DataTransfer type carried by a match-reorder/swap drag, shared by the
+ * bracket and match-list views.
  */
 export const MATCH_DRAG_TYPE = "application/match-id";
+
+// ── TimeCell — click a match's scheduled time to edit it inline ───────────────
+// Shared by MatchesPanel (axis labels) and AdminBracket (on each card) so
+// editing a time behaves identically — same click-to-edit affordance, same
+// "1:05pm"/"13:05" parsing — no matter which admin view it's edited from.
+export type TimeCellProps = { minute: number; onCommit: (minute: number) => void; className?: string };
+
+export function TimeCell({ minute, onCommit, className }: TimeCellProps) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft]     = useState('');
+
+  function startEdit() { setDraft(formatTime(minute)); setEditing(true); }
+  function commit() { onCommit(parseTimeInput(draft, minute)); setEditing(false); }
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
+        onMouseDown={e => e.stopPropagation()}
+        className={cn("w-14 rounded bg-white/10 px-1 py-0.5 text-center text-[0.55rem] text-foreground outline-none ring-1 ring-white/30", className)}
+      />
+    );
+  }
+
+  return (
+    <button
+      onClick={e => { e.stopPropagation(); startEdit(); }}
+      onMouseDown={e => e.stopPropagation()}
+      title="Click to edit this match's time"
+      className={cn("text-[0.55rem] tabular-nums text-foreground/50 transition-colors hover:text-foreground/80", className)}
+    >
+      {formatTime(minute)}
+    </button>
+  );
+}
 
 // Single implementation of the team-name input used by both AdminBracket and
 // MatchesPanel — previously each view had its own copy with subtly different
@@ -24,9 +62,7 @@ export function MatchTeamInput({
   isValid?: (v: string) => boolean;
 }) {
   const [local, setLocal]     = useState(value);
-  const [previewing, setPreviewing] = useState(false);
   const committed              = useRef(value);
-  const { draggedTeamName }    = useDragPreview();
 
   // Sync when prop changes externally (winner advancement, clear, auto-fill)
   useEffect(() => {
@@ -47,43 +83,15 @@ export function MatchTeamInput({
     onCommit(v);
   }
 
-  // While a team is being dragged over this slot, preview its name before
-  // drop — dataTransfer's actual value isn't readable until the drop event,
-  // so the preview comes from DragPreviewContext instead.
-  const showPreview = previewing && !!draggedTeamName;
-  const displayValue = showPreview ? draggedTeamName : local;
-
   return (
     <input
       list={datalistId}
-      value={displayValue}
+      value={local}
       placeholder="Team…"
       onChange={e => setLocal(e.target.value)}
       onBlur={() => { if (local !== committed.current) commit(local); }}
       onKeyDown={e => { if (e.key === 'Enter') commit(local); }}
-      // Drop from TeamList (text/plain carries team name).
-      // stopPropagation prevents the event bubbling to the card's match-swap handler.
-      onDragOver={e => {
-        if (!e.dataTransfer.types.includes(MATCH_DRAG_TYPE)) {
-          e.preventDefault();
-          e.stopPropagation();
-          setPreviewing(true);
-        }
-      }}
-      onDragLeave={() => setPreviewing(false)}
-      onDrop={e => {
-        setPreviewing(false);
-        if (e.dataTransfer.types.includes(MATCH_DRAG_TYPE)) return; // let match-swap handle
-        e.preventDefault();
-        e.stopPropagation();
-        const name = e.dataTransfer.getData('text/plain');
-        if (name) commit(name);
-      }}
-      readOnly={showPreview}
-      className={cn(
-        "min-w-0 flex-1 bg-transparent text-[0.6rem] outline-none placeholder:text-foreground/20 truncate",
-        showPreview && "italic text-foreground/50",
-      )}
+      className="min-w-0 flex-1 bg-transparent text-[0.6rem] outline-none placeholder:text-foreground/20 truncate"
     />
   );
 }
@@ -109,20 +117,6 @@ export function SlotRow({ slotData, won, lost, datalistId, isValid, onNameCommit
         won  && "rounded bg-amber-400/20",
         lost && "opacity-40",
       )}
-      // Accept team drops anywhere on the row, not just on the input itself.
-      onDragOver={e => {
-        if (!e.dataTransfer.types.includes(MATCH_DRAG_TYPE)) {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      }}
-      onDrop={e => {
-        if (e.dataTransfer.types.includes(MATCH_DRAG_TYPE)) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const name = e.dataTransfer.getData('text/plain');
-        if (name) onNameCommit(name);
-      }}
     >
       <MatchTeamInput value={slotData.teamName} datalistId={datalistId} onCommit={onNameCommit} isValid={isValid} />
       {won  && <span className="shrink-0 text-amber-300 text-[0.55rem]">★</span>}

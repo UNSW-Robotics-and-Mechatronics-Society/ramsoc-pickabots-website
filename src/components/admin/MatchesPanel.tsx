@@ -8,11 +8,12 @@ import {
 } from "@/lib/mock-data";
 import {
   type MatchSchedule, type ConcurrentRings,
-  START_MINUTE, formatTime, parseTimeInput,
+  START_MINUTE,
   changeRings, changeTimings, swapMatchIds, editMatchTime,
 } from "@/lib/schedule";
 import { cn } from "@/lib/cn";
-import { MATCH_DRAG_TYPE, SlotRow } from "./MatchTeamSlot";
+import { MATCH_DRAG_TYPE, SlotRow, TimeCell } from "./MatchTeamSlot";
+import { useTeamFilter, TeamFilterBar, isMatchDimmed } from "./TeamFilterBar";
 
 const RING_OPTIONS: ConcurrentRings[] = [1, 2, 3, 4];
 const AUTO_COMPLETE_FROM: MatchStatus[] = ['todo', 'next', 'active'];
@@ -43,41 +44,6 @@ function matchLabel(m: BracketMatch, teamCount: TeamCount): string {
   return m.side === 'winners'
     ? wbRoundLabel(m.round, total)
     : lbRoundLabel(m.round, total);
-}
-
-// ── TimeCell — the shared axis label doubles as the time editor ───────────────
-
-type TimeCellProps = { minute: number; onCommit: (minute: number) => void };
-
-function TimeCell({ minute, onCommit }: TimeCellProps) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft]     = useState('');
-
-  function startEdit() { setDraft(formatTime(minute)); setEditing(true); }
-  function commit() { onCommit(parseTimeInput(draft, minute)); setEditing(false); }
-
-  if (editing) {
-    return (
-      <input
-        autoFocus
-        value={draft}
-        onChange={e => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
-        className="w-14 rounded bg-white/10 px-1 py-0.5 text-center text-[0.55rem] text-foreground outline-none ring-1 ring-white/30"
-      />
-    );
-  }
-
-  return (
-    <button
-      onClick={startEdit}
-      title="Click to edit this match's time"
-      className="text-[0.55rem] tabular-nums text-foreground/50 transition-colors hover:text-foreground/80"
-    >
-      {formatTime(minute)}
-    </button>
-  );
 }
 
 // ── NumInput ──────────────────────────────────────────────────────────────────
@@ -123,11 +89,12 @@ type MatchCardProps = {
   onChange: (m: BracketMatch) => void;
   datalistId: string;
   isValidTeamName: (name: string) => boolean;
+  dimmed?: boolean;
 };
 
 function MatchCard({
   match, teamCount,
-  onDrop, onChange, datalistId, isValidTeamName,
+  onDrop, onChange, datalistId, isValidTeamName, dimmed,
 }: MatchCardProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [dragOver,   setDragOver]   = useState(false);
@@ -185,6 +152,7 @@ function MatchCard({
         statusClass,
         isDragging && 'opacity-30',
         dragOver   && 'ring-1 ring-white/50',
+        dimmed     && 'opacity-30 grayscale-70',
       )}
     >
       {/* Header: label + status (no time here — edit it from the axis) */}
@@ -263,9 +231,13 @@ type Props = {
 export default function MatchesPanel({
   matches, division, teamCount, schedule, teams, onScheduleChange, onMatchesChange,
 }: Props) {
-  const matchById = new Map(
-    matches.filter(m => m.division === division).map(m => [m.id, m]),
-  );
+  const divMatches = matches.filter(m => m.division === division);
+  const matchById = new Map(divMatches.map(m => [m.id, m]));
+
+  const {
+    teamFilters, teamInput, setTeamInput, showSuggestions, setShowSuggestions,
+    teamSuggestions, filterSet, addTeamFilter, removeTeamFilter,
+  } = useTeamFilter(divMatches);
 
   function handleMatchChange(updated: BracketMatch) {
     const prev = matches.find(m => m.id === updated.id);
@@ -357,6 +329,20 @@ export default function MatchesPanel({
         </div>
       </div>
 
+      {/* Team filter — type/pick a team to dim every other match in the list */}
+      <div className="flex shrink-0 items-center gap-2 border-b border-white/10 px-3 py-1.5">
+        <TeamFilterBar
+          teamInput={teamInput}
+          onInputChange={setTeamInput}
+          showSuggestions={showSuggestions}
+          setShowSuggestions={setShowSuggestions}
+          teamSuggestions={teamSuggestions}
+          teamFilters={teamFilters}
+          onAdd={addTeamFilter}
+          onRemove={removeTeamFilter}
+        />
+      </div>
+
       {/* Match list — one shared scale, one scroll; each ring keeps its own
           axis column so every match's time is still edited individually.
           Extra right padding keeps the scrollbar off the match cards. */}
@@ -410,6 +396,7 @@ export default function MatchesPanel({
                             onChange={handleMatchChange}
                             datalistId={datalistId}
                             isValidTeamName={name => !isTeamNameTaken(matches, division, match.id, name)}
+                            dimmed={isMatchDimmed(match, filterSet)}
                           />
                         </div>
                       );

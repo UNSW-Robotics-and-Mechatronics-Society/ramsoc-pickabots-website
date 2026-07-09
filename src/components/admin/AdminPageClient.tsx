@@ -11,7 +11,6 @@ import {
 } from "@/lib/schedule";
 import { cn } from "@/lib/cn";
 import { useAdminPanels, type PanelId } from "./AdminPanelContext";
-import { DragPreviewProvider } from "./DragPreviewContext";
 import MultiPanelSplit from "./MultiPanelSplit";
 import TeamList        from "./TeamList";
 import AdminBracket    from "./AdminBracket";
@@ -222,7 +221,9 @@ export default function AdminPageClient({ division, initialTeams, initialBracket
               matches={effectiveMatches}
               division={division}
               teamCount={teamCount}
+              schedule={schedules[division]}
               onMatchesChange={setMatches}
+              onScheduleChange={s => setSchedules(prev => ({ ...prev, [division]: s }))}
             />
           </div>
         </div>
@@ -242,7 +243,7 @@ export default function AdminPageClient({ division, initialTeams, initialBracket
     }));
 
   return (
-    <DragPreviewProvider>
+    <>
       {/* Panels */}
       <div className="h-full w-full">
         <MultiPanelSplit
@@ -261,6 +262,6 @@ export default function AdminPageClient({ division, initialTeams, initialBracket
           onCancel={() => setPending(null)}
         />
       )}
-    </DragPreviewProvider>
+    </>
   );
 }

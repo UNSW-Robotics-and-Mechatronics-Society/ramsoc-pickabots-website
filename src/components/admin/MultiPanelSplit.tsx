@@ -15,10 +15,14 @@ type Props = {
   defaultPercents?: number[];
 };
 
+function defaultDividers(n: number, defaultPercents?: number[]): number[] {
+  return Array.from({ length: n - 1 }, (_, i) => defaultPercents?.[i] ?? ((i + 1) / n) * 100);
+}
+
+/** Client-only — call from an effect, never from the initial render (see below). */
 function readDividers(n: number, defaultPercents?: number[]): number[] {
   return Array.from({ length: n - 1 }, (_, i) => {
-    const def  = defaultPercents?.[i] ?? ((i + 1) / n) * 100;
-    if (typeof window === 'undefined') return def;
+    const def = defaultPercents?.[i] ?? ((i + 1) / n) * 100;
     const saved = localStorage.getItem(`${STORAGE_PREFIX}${i}`);
     if (!saved) return def;
     const v = parseFloat(saved);
@@ -32,17 +36,22 @@ export default function MultiPanelSplit({ panels, defaultPercents }: Props) {
   // Capture initial defaultPercents in a ref so the effect doesn't re-run on prop changes
   const defaultRef = useRef(defaultPercents);
 
+  // Always starts from the plain defaults (never localStorage) so the first
+  // client render matches the server-rendered HTML exactly — otherwise this
+  // is a hydration mismatch, since the server can't read localStorage.
+  // Restoring the saved split happens right after, in the effect below.
+  // Reads the `defaultPercents` prop directly rather than defaultRef — refs
+  // can't be read during render, only in effects/handlers.
   const [dividers, setDividers] = useState<number[]>(() =>
-    readDividers(n, defaultRef.current),
+    defaultDividers(n, defaultPercents),
   );
 
   const containerRef = useRef<HTMLDivElement>(null);
   const dragging     = useRef<number | null>(null);
 
-  // Re-read when panel count changes
+  // Restore from localStorage on mount, and re-read when panel count changes.
   useEffect(() => {
     setDividers(readDividers(n, defaultRef.current));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [n]);
 
   function startDrag(e: React.PointerEvent, idx: number) {

@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { Phone } from "lucide-react";
 import { type Division, type Team } from "@/lib/mock-data";
 import { cn } from "@/lib/cn";
-import { useDragPreview } from "./DragPreviewContext";
 
 const BASE_CARD_W = 260; // grid column min-width at scale = 1
 
@@ -28,7 +27,6 @@ export default function TeamList({ teams, division, eliminatedTeams, onTeamUpdat
   const [rawScale, setRawScale]     = useState(1);
   const [containerWidth, setContainerWidth] = useState(0);
   const containerRef                = useRef<HTMLDivElement>(null);
-  const { setDraggedTeamName }      = useDragPreview();
 
   // Cap how big a column the Scale slider can request so a single card can
   // never demand more width than the panel actually has — otherwise the
@@ -199,15 +197,8 @@ export default function TeamList({ teams, division, eliminatedTeams, onTeamUpdat
             return (
               <div
                 key={team.id}
-                draggable
-                onDragStart={e => {
-                  e.dataTransfer.setData("text/plain", team.name);
-                  e.dataTransfer.effectAllowed = "copy";
-                  setDraggedTeamName(team.name);
-                }}
-                onDragEnd={() => setDraggedTeamName(null)}
                 className={cn(
-                  "relative flex flex-col gap-2 rounded-2xl border border-white/22 p-3 cursor-grab active:cursor-grabbing",
+                  "relative flex flex-col gap-2 rounded-2xl border border-white/22 p-3",
                   ringClass,
                   bgClass,
                   isElim && "opacity-60",

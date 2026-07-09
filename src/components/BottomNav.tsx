@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Coins, Trophy, Swords, type LucideIcon } from "lucide-react";
+import { Coins, Trophy, Swords, CalendarClock, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 type Item = {
@@ -15,6 +15,7 @@ const ITEMS: Item[] = [
   { href: "/voting", label: "Bid", Icon: Coins },
   { href: "/leaderboard", label: "Leaderboard", Icon: Trophy },
   { href: "/competition", label: "Bracket", Icon: Swords },
+  { href: "/matches", label: "Matches", Icon: CalendarClock },
 ];
 
 export default function BottomNav() {
