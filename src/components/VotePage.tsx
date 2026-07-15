@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import Header from './Header'
 import Ring from './Ring'
+import NextMatchCard from './NextMatchCard'
 import BetModal from './BetModal'
 import ComicFlash, { useComicFlash } from './ComicFlash'
 import Toast, { useToast } from './Toast'
@@ -14,22 +15,7 @@ interface ModalCtx {
   compType: string
 }
 
-const BETS_KEY = 'pickabots_bets'
-
-function loadBets(): Record<string, Bet> {
-  try {
-    const raw = localStorage.getItem(BETS_KEY)
-    return raw ? JSON.parse(raw) : {}
-  } catch {
-    return {}
-  }
-}
-
-function saveBets(bets: Record<string, Bet>) {
-  try {
-    localStorage.setItem(BETS_KEY, JSON.stringify(bets))
-  } catch {}
-}
+type CompFilter = 'standard' | 'open'
 
 export default function VotePage() {
   const [matches, setMatches]   = useState<Match[]>([])
@@ -38,30 +24,32 @@ export default function VotePage() {
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState<string | null>(null)
   const [modalCtx, setModalCtx] = useState<ModalCtx | null>(null)
+  const [filter, setFilter]     = useState<CompFilter>('standard')
 
   const { state: flash, trigger: triggerFlash } = useComicFlash()
   const { toast, show: showToast } = useToast()
 
   // ── Load on mount ────────────────────────────────────────────────────────────
   useEffect(() => {
-    const savedBets = loadBets()
-    setBets(savedBets)
-
     async function load() {
       try {
-        const [matchRes, userRes] = await Promise.all([
+        const [matchRes, userRes, betsRes] = await Promise.all([
           fetch('/api/matches'),
           fetch('/api/user'),
+          fetch('/api/bets'),
         ])
         if (!matchRes.ok) throw new Error('Failed to load matches')
         if (!userRes.ok)  throw new Error('Failed to load user data')
+        if (!betsRes.ok)  throw new Error('Failed to load bets')
 
-        const [matchData, userData] = await Promise.all([matchRes.json(), userRes.json()])
+        const [matchData, userData, betsData] = await Promise.all([matchRes.json(), userRes.json(), betsRes.json()])
         setMatches(matchData)
         if (userData._supabaseError) console.error('[VotePage] Supabase error:', userData._supabaseError)
+        setTokens(userData.tokens)
 
-        const outstanding = Object.values(savedBets).reduce((sum, b) => sum + b.amount, 0)
-        setTokens(Math.max(0, userData.tokens - outstanding))
+        const betsByMatch: Record<string, Bet> = {}
+        for (const b of betsData as Bet[]) betsByMatch[b.match_id] = b
+        setBets(betsByMatch)
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : 'Unknown error')
       } finally {
@@ -71,21 +59,6 @@ export default function VotePage() {
     load()
   }, [])
 
-  // ── Persist tokens to Supabase ───────────────────────────────────────────────
-  async function syncTokens(newTokens: number) {
-    setTokens(newTokens)
-    const res = await fetch('/api/user', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tokens: newTokens }),
-    })
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      console.error('[syncTokens] failed:', res.status, body)
-      showToast(`⚠️ Token sync failed: ${body.error ?? res.status}`)
-    }
-  }
-
   // ── Open bet modal ────────────────────────────────────────────────────────────
   function handleVote(matchId: string, side: 'left' | 'right', botName: string, compType: string) {
     if (bets[matchId])      { showToast(`Already bet on ${bets[matchId].botName}! Undo to change.`); return }
@@ -94,7 +67,10 @@ export default function VotePage() {
   }
 
   // ── Confirm bet ───────────────────────────────────────────────────────────────
-  function handleConfirm(amount: number) {
+  // Token accounting happens server-side in POST /api/bets (deduct + validate
+  // atomically) — this only optimistically reflects it, then reconciles with
+  // the server's returned balance (or reverts on failure).
+  async function handleConfirm(amount: number) {
     if (!modalCtx) return
     const { matchId, side, botName } = modalCtx
     setModalCtx(null)
@@ -102,37 +78,85 @@ export default function VotePage() {
     const current = tokens ?? 0
     if (current < amount) { showToast('Not enough tokens!'); return }
 
-    const bet: Bet = { id: `local-${matchId}`, match_id: matchId, side, amount, botName }
-    const newBets  = { ...bets, [matchId]: bet }
-    const newTokens = current - amount
-
-    setBets(newBets)
-    saveBets(newBets)
-    syncTokens(newTokens)
+    const optimisticBet: Bet = { id: `pending-${matchId}`, match_id: matchId, side, amount, botName }
+    setBets(prev => ({ ...prev, [matchId]: optimisticBet }))
+    setTokens(current - amount)
     triggerFlash()
     showToast(`🪙 ${amount} locked on ${botName}!`)
+
+    try {
+      const res = await fetch('/api/bets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ match_id: matchId, side, amount }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body.error ?? 'Bet failed')
+      setBets(prev => ({ ...prev, [matchId]: { ...optimisticBet, id: body.bet.id } }))
+      setTokens(body.tokens)
+    } catch (e: unknown) {
+      setBets(prev => { const next = { ...prev }; delete next[matchId]; return next })
+      setTokens(current)
+      showToast(`⚠️ ${e instanceof Error ? e.message : 'Bet failed'}`)
+    }
   }
 
   // ── Undo bet ──────────────────────────────────────────────────────────────────
-  function handleUndo(matchId: string) {
+  async function handleUndo(matchId: string) {
     const bet = bets[matchId]
     if (!bet) return
 
-    const newBets   = { ...bets }
-    delete newBets[matchId]
-    const newTokens = (tokens ?? 0) + bet.amount
-
-    setBets(newBets)
-    saveBets(newBets)
-    syncTokens(newTokens)
+    const refunded = (tokens ?? 0) + bet.amount
+    setBets(prev => { const next = { ...prev }; delete next[matchId]; return next })
+    setTokens(refunded)
     showToast('Bet undone ↩️')
+
+    try {
+      const res = await fetch(`/api/bets?bet_id=${bet.id}`, { method: 'DELETE' })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body.error ?? 'Undo failed')
+      setTokens(body.tokens)
+    } catch (e: unknown) {
+      setBets(prev => ({ ...prev, [matchId]: bet }))
+      setTokens(t => (t ?? 0) - bet.amount)
+      showToast(`⚠️ ${e instanceof Error ? e.message : 'Undo failed'}`)
+    }
   }
+
+  // Only a match the admin has actually put "on the ring" is biddable.
+  // "Next" matches (queued, not yet active, not yet resolved) get their own
+  // read-only preview segment instead of appearing here.
+  const activeMatches = matches.filter(m => m.is_active)
+  const nextMatches   = matches.filter(m => !m.is_active && m.winner_side === null)
+  // Bossbot matches aren't gated by the Standard/Open filter — they're a
+  // one-off exhibition category, not part of either division's bracket.
+  const visibleActive = activeMatches.filter(m => m.comp_type === 'bossbot' || m.comp_type === filter)
 
   return (
     <>
       <Header tokens={tokens ?? 0} loading={loading} />
 
       <main style={{ padding: '14px 16px 88px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {/* Standard / Open filter — only affects the biddable list below;
+            Bossbot matches and the Next Matches segment ignore it. */}
+        <div style={{ display: 'flex', gap: 6 }}>
+          {(['standard', 'open'] as CompFilter[]).map(f => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              style={{
+                padding: '6px 16px', borderRadius: 999, fontSize: '0.6rem', fontWeight: 900,
+                letterSpacing: 2, textTransform: 'uppercase', cursor: 'pointer',
+                border: `1px solid ${filter === f ? 'rgba(255,107,0,0.6)' : 'rgba(255,255,255,0.1)'}`,
+                background: filter === f ? 'rgba(255,107,0,0.15)' : 'rgba(255,255,255,0.04)',
+                color: filter === f ? '#FF6B00' : 'rgba(255,255,255,0.4)',
+              }}
+            >
+              {f === 'standard' ? 'Standard' : 'Open'}
+            </button>
+          ))}
+        </div>
+
         {loading && (
           <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:12, padding:'48px 0' }}>
             <div style={{
@@ -155,13 +179,13 @@ export default function VotePage() {
           </div>
         )}
 
-        {!loading && !error && matches.length === 0 && (
+        {!loading && !error && visibleActive.length === 0 && (
           <div style={{ textAlign:'center', padding:'48px 0', color:'#444', fontWeight:900, fontSize:'0.85rem', textTransform:'uppercase', letterSpacing:3 }}>
             No active matches right now.
           </div>
         )}
 
-        {matches.map(match => (
+        {visibleActive.map(match => (
           <Ring
             key={match.id}
             match={match}
@@ -174,6 +198,19 @@ export default function VotePage() {
             onUndo={() => handleUndo(match.id)}
           />
         ))}
+
+        {/* Next Matches — read-only preview of whatever's queued up next
+            (per division), not affected by the Standard/Open filter above. */}
+        {!loading && !error && nextMatches.length > 0 && (
+          <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <span style={{ fontSize: '0.55rem', fontWeight: 900, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: 4 }}>
+              Next Matches
+            </span>
+            {nextMatches.map(match => (
+              <NextMatchCard key={match.id} match={match} />
+            ))}
+          </div>
+        )}
       </main>
 
       <BetModal ctx={modalCtx} tokens={tokens ?? 0} onConfirm={handleConfirm} onClose={() => setModalCtx(null)} />

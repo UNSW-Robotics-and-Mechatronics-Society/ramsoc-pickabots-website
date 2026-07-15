@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { Phone } from "lucide-react";
 import { type Division, type Team } from "@/lib/mock-data";
 import { cn } from "@/lib/cn";
-import { useDragPreview } from "./DragPreviewContext";
 
 const BASE_CARD_W = 260; // grid column min-width at scale = 1
 
@@ -17,23 +16,17 @@ type Props = {
   teams: Team[];
   division: Division;
   eliminatedTeams: Set<string>;
+  onTeamUpdate: (id: string, patch: Partial<Team>) => void;
 };
 
-export default function TeamList({ teams: initialTeams, division, eliminatedTeams }: Props) {
-  const [teams, setTeams]           = useState<Team[]>(initialTeams);
-  const [present, setPresent]       = useState<Record<string, boolean>>({});
-  const [wildcard, setWildcard]     = useState<Record<string, boolean>>({});
+export default function TeamList({ teams, division, eliminatedTeams, onTeamUpdate }: Props) {
   const [sortMode, setSortMode]     = useState<SortMode>('points');
   const [filterMode, setFilterMode] = useState<FilterMode>('all');
   const [search, setSearch]         = useState('');
   const [compact, setCompact]       = useState(false);
   const [rawScale, setRawScale]     = useState(1);
   const [containerWidth, setContainerWidth] = useState(0);
-  const saveTimers                  = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const containerRef                = useRef<HTMLDivElement>(null);
-  const { setDraggedTeamName }      = useDragPreview();
-
-  useEffect(() => { setTeams(initialTeams); }, [initialTeams]);
 
   // Cap how big a column the Scale slider can request so a single card can
   // never demand more width than the panel actually has — otherwise the
@@ -56,8 +49,8 @@ export default function TeamList({ teams: initialTeams, division, eliminatedTeam
   const filtered = divTeams.filter(t => {
     if (searchLower && !t.name.toLowerCase().includes(searchLower)) return false;
     const isElim    = eliminatedTeams.has(t.name);
-    const isPresent = present[t.id] ?? false;
-    const isWild    = wildcard[t.id] ?? false;
+    const isPresent = t.present ?? false;
+    const isWild    = t.wildcard ?? false;
     switch (filterMode) {
       case 'present':    return isPresent && !isElim;
       case 'absent':     return !isPresent && !isElim;
@@ -76,14 +69,12 @@ export default function TeamList({ teams: initialTeams, division, eliminatedTeam
     }
   });
 
-  function debounce(id: string, fn: () => void) {
-    clearTimeout(saveTimers.current[id]);
-    saveTimers.current[id] = setTimeout(fn, 300);
-  }
-
-  function update(id: string, field: "seed" | "comment", value: string | number | null) {
-    setTeams(prev => prev.map(t => t.id === id ? { ...t, [field]: value } : t));
-    debounce(`${id}-${field}`, () => { console.log("[admin] save", { id, field, value }); });
+  function update(
+    id: string,
+    field: "seed" | "comment" | "present" | "wildcard",
+    value: string | number | boolean | null,
+  ) {
+    onTeamUpdate(id, { [field]: value } as Partial<Team>);
   }
 
   // As the Scale slider shrinks cards, progressively drop detail — down to
@@ -188,8 +179,8 @@ export default function TeamList({ teams: initialTeams, division, eliminatedTeam
         >
           {sorted.map(team => {
             const isElim    = eliminatedTeams.has(team.name);
-            const isPresent = present[team.id]  ?? false;
-            const isWild    = wildcard[team.id] ?? false;
+            const isPresent = team.present ?? false;
+            const isWild    = team.wildcard ?? false;
 
             const ringClass = isWild
               ? "ring-1 ring-purple-400/70"
@@ -206,15 +197,8 @@ export default function TeamList({ teams: initialTeams, division, eliminatedTeam
             return (
               <div
                 key={team.id}
-                draggable
-                onDragStart={e => {
-                  e.dataTransfer.setData("text/plain", team.name);
-                  e.dataTransfer.effectAllowed = "copy";
-                  setDraggedTeamName(team.name);
-                }}
-                onDragEnd={() => setDraggedTeamName(null)}
                 className={cn(
-                  "relative flex flex-col gap-2 rounded-2xl border border-white/22 p-3 cursor-grab active:cursor-grabbing",
+                  "relative flex flex-col gap-2 rounded-2xl border border-white/22 p-3",
                   ringClass,
                   bgClass,
                   isElim && "opacity-60",
@@ -281,7 +265,7 @@ export default function TeamList({ teams: initialTeams, division, eliminatedTeam
                         <input
                           type="checkbox"
                           checked={isPresent}
-                          onChange={e => setPresent(prev => ({ ...prev, [team.id]: e.target.checked }))}
+                          onChange={e => update(team.id, "present", e.target.checked)}
                           className="sr-only"
                         />
                         {isPresent ? "Present" : "Absent"}
@@ -290,7 +274,7 @@ export default function TeamList({ teams: initialTeams, division, eliminatedTeam
                       {/* Wildcard toggle — separate from present */}
                       <button
                         type="button"
-                        onClick={() => setWildcard(prev => ({ ...prev, [team.id]: !prev[team.id] }))}
+                        onClick={() => update(team.id, "wildcard", !isWild)}
                         className={cn(
                           "rounded-lg border px-2 py-0.5 text-[0.65rem] transition-colors",
                           isWild

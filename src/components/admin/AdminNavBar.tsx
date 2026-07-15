@@ -2,14 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Coins, Trophy, Swords, LogIn, type LucideIcon } from "lucide-react";
+import { Coins, Trophy, Swords, CalendarClock, LogIn, type LucideIcon } from "lucide-react";
 import { UserButton, useAuth } from "@clerk/nextjs";
 import { cn } from "@/lib/cn";
 
 const ITEMS: { href: string; label: string; Icon: LucideIcon }[] = [
-  { href: "/bid",         label: "Bid",         Icon: Coins  },
-  { href: "/leaderboard", label: "Leaderboard",  Icon: Trophy },
-  { href: "/competition", label: "Bracket",      Icon: Swords },
+  { href: "/bid",         label: "Bid",         Icon: Coins       },
+  { href: "/leaderboard", label: "Leaderboard",  Icon: Trophy      },
+  { href: "/competition", label: "Bracket",      Icon: Swords      },
+  { href: "/matches",     label: "Matches",      Icon: CalendarClock },
 ];
 
 export default function AdminNavBar() {

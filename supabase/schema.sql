@@ -1,7 +1,10 @@
 -- ─────────────────────────────────────────────────────
---  PICKABOTS — Supabase schema
---  Paste into Supabase Dashboard → SQL Editor → Run once
+--  SUPERSEDED — never applied to the live project. See
+--  supabase/migrations/0002_pickabots_live.sql instead, which creates
+--  users/matches/bets correctly (fixes the 'opens' typo below and adds
+--  bracket_match_id) and adds the bracket/team-state tables.
 -- ─────────────────────────────────────────────────────
+
 
 -- Users (keyed by Clerk userId e.g. "user_2abc...")
 create table if not exists public.users (

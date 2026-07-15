@@ -8,24 +8,23 @@ interface Player {
   losses: number
 }
 
-const PLAYERS: Player[] = [
-  { rank: 1,  name: 'NovaPilot',  credits: 3240, wins: 15, losses: 3  },
-  { rank: 2,  name: 'StarForge',  credits: 2890, wins: 12, losses: 5  },
-  { rank: 3,  name: 'VoidHunter', credits: 2450, wins: 11, losses: 6  },
-  { rank: 4,  name: 'NebulaX',    credits: 2100, wins: 9,  losses: 7  },
-  { rank: 5,  name: 'OrbitalAce', credits: 1870, wins: 8,  losses: 8  },
-  { rank: 6,  name: 'DarkMatter', credits: 1650, wins: 7,  losses: 9  },
-  { rank: 7,  name: 'PulsarKing', credits: 1420, wins: 6,  losses: 9  },
-  { rank: 8,  name: 'CosmicBet',  credits: 1190, wins: 5,  losses: 10 },
-  { rank: 9,  name: 'RedShift',   credits:  980, wins: 4,  losses: 11 },
-  { rank: 10, name: 'StarlightX', credits:  750, wins: 3,  losses: 12 },
-]
+type LeaderboardEntry = { id: string; name: string; tokens: number; wins: number; losses: number }
 
 const MEDAL = ['🥇', '🥈', '🥉']
 
 const GRAIN = `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)' opacity='1'/%3E%3C/svg%3E")`
 
-export default function LeaderboardPage() {
+type Props = { players: LeaderboardEntry[] }
+
+export default function LeaderboardPage({ players }: Props) {
+  const PLAYERS: Player[] = players.map((p, i) => ({
+    rank: i + 1,
+    name: p.name,
+    credits: p.tokens,
+    wins: p.wins,
+    losses: p.losses,
+  }))
+
   return (
     <div style={{ minHeight: '100dvh', paddingBottom: 88 }}>
       {/* Page header */}
@@ -78,7 +77,7 @@ export default function LeaderboardPage() {
       {/* Player rows */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 12px' }}>
         {PLAYERS.map(p => {
-          const winRate = Math.round((p.wins / (p.wins + p.losses)) * 100)
+          const winRate = p.wins + p.losses > 0 ? Math.round((p.wins / (p.wins + p.losses)) * 100) : 0
           const isTop3  = p.rank <= 3
           return (
             <div key={p.rank} style={{

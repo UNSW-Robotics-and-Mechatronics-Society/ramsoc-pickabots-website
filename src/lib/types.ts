@@ -1,4 +1,4 @@
-export type CompType = 'standards' | 'opens' | 'bossbot'
+export type CompType = 'standard' | 'open' | 'bossbot'
 
 export interface Match {
   id: string

@@ -7,12 +7,14 @@ import {
   wbRoundsFor, lbRoundsFor,
   winner, applyStatusChange, isTeamNameTaken,
 } from "@/lib/mock-data";
+import { type MatchSchedule, editMatchTime } from "@/lib/schedule";
 import { cn } from "@/lib/cn";
-import { MATCH_DRAG_TYPE, SlotRow } from "./MatchTeamSlot";
+import { MATCH_DRAG_TYPE, SlotRow, TimeCell } from "./MatchTeamSlot";
 import { useAdminPanels } from "./AdminPanelContext";
+import { useTeamFilter, TeamFilterBar, isMatchDimmed } from "./TeamFilterBar";
 
 // ── layout constants ───────────────────────────────────────────────────────────
-const MATCH_H      = 96;
+const MATCH_H      = 116; // +20 over the base card height, for the time row
 const ROUND_W      = 188;
 const CONN_W       = 44;
 const PODIUM_W     = 120;
@@ -50,8 +52,13 @@ type MatchCardProps = {
   onDragStart: (id: string) => void;
   onMatchDrop: (targetId: string) => void;
   onDragEnd: () => void;
+  dimmed?: boolean;
+  time?: number;
+  onTimeChange?: (matchId: string, minute: number) => void;
 };
-function MatchCard({ match, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd }: MatchCardProps) {
+function MatchCard({
+  match, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd, dimmed, time, onTimeChange,
+}: MatchCardProps) {
   const w = winner(match);
   const swappable       = match.status === 'todo' || match.status === 'next';
   const isBeingDragged  = draggingId === match.id;
@@ -102,13 +109,22 @@ function MatchCard({ match, onChange, datalistId, isValidTeamName, draggingId, o
       }}
       onDragEnd={onDragEnd}
       className={cn(
-        "flex flex-col rounded-md border bg-[#0d1018] text-foreground transition-opacity",
+        "flex flex-col rounded-md border bg-[#0d1018] text-foreground transition-all",
         STATUS_BORDER[match.status],
         isBeingDragged  && "opacity-30",
         isMatchDropTgt  && "ring-2 ring-white/60 ring-dashed",
         swappable       && "cursor-grab active:cursor-grabbing",
+        dimmed          && "opacity-30 grayscale-70",
       )}
     >
+      {time !== undefined && (
+        <div
+          className="flex shrink-0 items-center justify-center border-b border-white/[0.14] py-1"
+          onMouseDown={e => e.stopPropagation()}
+        >
+          <TimeCell minute={time} onCommit={min => onTimeChange?.(match.id, min)} />
+        </div>
+      )}
       <SlotRow
         slotData={match.slotA} won={w === 'a'} lost={w !== null && w !== 'a'}
         datalistId={datalistId} isValid={n => isValidTeamName(match.id, n)}
@@ -200,8 +216,13 @@ type RoundColumnProps = {
   onDragStart: (id: string) => void;
   onMatchDrop: (id: string) => void;
   onDragEnd: () => void;
+  filterSet?: Set<string>;
+  getTime: (matchId: string) => number | undefined;
+  onTimeChange: (matchId: string, minute: number) => void;
 };
-function RoundColumn({ matches, height, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd }: RoundColumnProps) {
+function RoundColumn({
+  matches, height, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd, filterSet, getTime, onTimeChange,
+}: RoundColumnProps) {
   return (
     <div style={{ width: ROUND_W, height }} className="flex shrink-0 flex-col justify-around">
       {matches.map(m => (
@@ -215,6 +236,9 @@ function RoundColumn({ matches, height, onChange, datalistId, isValidTeamName, d
           onDragStart={onDragStart}
           onMatchDrop={onMatchDrop}
           onDragEnd={onDragEnd}
+          dimmed={!!filterSet && isMatchDimmed(m, filterSet)}
+          time={getTime(m.id)}
+          onTimeChange={onTimeChange}
         />
       ))}
     </div>
@@ -235,8 +259,13 @@ type BracketStripProps = {
   onDragStart: (id: string) => void;
   onMatchDrop: (id: string) => void;
   onDragEnd: () => void;
+  filterSet?: Set<string>;
+  getTime: (matchId: string) => number | undefined;
+  onTimeChange: (matchId: string, minute: number) => void;
 };
-function BracketStrip({ rounds, matchesByRound, height, connW, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd }: BracketStripProps) {
+function BracketStrip({
+  rounds, matchesByRound, height, connW, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd, filterSet, getTime, onTimeChange,
+}: BracketStripProps) {
   return (
     <div className="flex items-stretch" style={{ height }}>
       {rounds.map((_, i) => (
@@ -251,6 +280,9 @@ function BracketStrip({ rounds, matchesByRound, height, connW, onChange, datalis
             onDragStart={onDragStart}
             onMatchDrop={onMatchDrop}
             onDragEnd={onDragEnd}
+            filterSet={filterSet}
+            getTime={getTime}
+            onTimeChange={onTimeChange}
           />
           {i < rounds.length - 1 && matchesByRound[i].length >= 2 && (
             <ConnectorSVG fromMatches={matchesByRound[i]} height={height} connW={connW} />
@@ -306,10 +338,12 @@ type Props = {
   matches: BracketMatch[];
   division: Division;
   teamCount: TeamCount;
+  schedule: MatchSchedule;
   onMatchesChange: (next: BracketMatch[]) => void;
+  onScheduleChange: (s: MatchSchedule) => void;
 };
 
-export default function AdminBracket({ teams, matches, division, teamCount, onMatchesChange }: Props) {
+export default function AdminBracket({ teams, matches, division, teamCount, schedule, onMatchesChange, onScheduleChange }: Props) {
   const [containerWidth, setContainerWidth] = useState(0);
   const [manualScale, setManualScale]       = useState<number | null>(null);
   const [manualStretch, setManualStretch]   = useState<number | null>(null);
@@ -479,6 +513,11 @@ export default function AdminBracket({ teams, matches, division, teamCount, onMa
   // Group matches for rendering
   const divMatches = matches.filter(m => m.division === division);
 
+  const {
+    teamFilters, teamInput, setTeamInput, showSuggestions, setShowSuggestions,
+    teamSuggestions, filterSet, addTeamFilter, removeTeamFilter,
+  } = useTeamFilter(divMatches);
+
   const wbByRound = Array.from({ length: wbRounds }, (_, i) =>
     divMatches.filter(m => m.side === 'winners' && m.round === i + 1).sort((a, b) => a.matchNumber - b.matchNumber)
   );
@@ -497,6 +536,12 @@ export default function AdminBracket({ teams, matches, division, teamCount, onMa
 
   const datalistId = `bl-teams-${division}`;
 
+  const timeByMatchId = new Map(schedule.rings.flat().map(e => [e.matchId, e.startMinute]));
+  function getTime(matchId: string): number | undefined { return timeByMatchId.get(matchId); }
+  function handleTimeChange(matchId: string, minute: number) {
+    onScheduleChange(editMatchTime(schedule, matchId, minute));
+  }
+
   const sharedCardProps = {
     datalistId,
     isValidTeamName,
@@ -504,6 +549,8 @@ export default function AdminBracket({ teams, matches, division, teamCount, onMa
     onDragStart: setDragging,
     onMatchDrop: handleMatchDrop,
     onDragEnd:   () => setDragging(null),
+    getTime,
+    onTimeChange: handleTimeChange,
   };
 
   return (
@@ -515,7 +562,7 @@ export default function AdminBracket({ teams, matches, division, teamCount, onMa
       style={fullscreen ? { backgroundImage: "url('/background_gears.svg')" } : undefined}
     >
       {/* toolbar */}
-      <div className="flex shrink-0 items-center gap-2 border-b border-white/10 px-3 py-1.5">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-white/10 px-3 py-1.5">
         {/* All / Winners / Losers / Knockouts / Finals filter */}
         <div className="flex items-center gap-0.5 rounded-lg border border-white/15 bg-white/5 p-0.5 text-[0.6rem]">
           {(['all', 'winners', 'losers', 'knockouts', 'finals'] as const).map(v => (
@@ -531,6 +578,18 @@ export default function AdminBracket({ teams, matches, division, teamCount, onMa
             </button>
           ))}
         </div>
+
+        {/* Team filter — type/pick a team to dim every other match on the bracket */}
+        <TeamFilterBar
+          teamInput={teamInput}
+          onInputChange={setTeamInput}
+          showSuggestions={showSuggestions}
+          setShowSuggestions={setShowSuggestions}
+          teamSuggestions={teamSuggestions}
+          teamFilters={teamFilters}
+          onAdd={addTeamFilter}
+          onRemove={removeTeamFilter}
+        />
 
         <div className="ml-auto flex items-center gap-2">
           <button
@@ -593,6 +652,7 @@ export default function AdminBracket({ teams, matches, division, teamCount, onMa
                         height={h_wb}
                         connW={effectiveConnW}
                         onChange={handleChange}
+                        filterSet={filterSet}
                         {...sharedCardProps}
                       />
                     </>
@@ -620,6 +680,7 @@ export default function AdminBracket({ teams, matches, division, teamCount, onMa
                         height={h_lb}
                         connW={effectiveConnW}
                         onChange={handleChange}
+                        filterSet={filterSet}
                         {...sharedCardProps}
                       />
                     </>
@@ -644,7 +705,7 @@ export default function AdminBracket({ teams, matches, division, teamCount, onMa
                 )}
 
                 <div
-                  className="flex shrink-0 items-stretch rounded-xl bg-gradient-to-br from-amber-400/15 via-amber-300/5 to-transparent px-2 pt-2 pb-20 ring-1 ring-amber-300/25"
+                  className="flex shrink-0 items-stretch rounded-xl bg-gradient-to-br from-amber-400/15 via-amber-300/5 to-transparent px-2 pt-2 pb-40 ring-1 ring-amber-300/25"
                 >
                   <div className="flex flex-col">
                     <div className="shrink-0 px-1 py-0.5">
@@ -654,7 +715,7 @@ export default function AdminBracket({ teams, matches, division, teamCount, onMa
                       {/* Semis column */}
                       <div style={{ width: ROUND_W, height: NATURAL_H }} className="flex shrink-0 flex-col justify-around">
                         {finalsSemis.map(m => (
-                          <MatchCard key={m.id} match={m} onChange={handleChange} {...sharedCardProps} />
+                          <MatchCard key={m.id} match={m} onChange={handleChange} dimmed={isMatchDimmed(m, filterSet)} time={getTime(m.id)} {...sharedCardProps} />
                         ))}
                       </div>
 
@@ -672,13 +733,13 @@ export default function AdminBracket({ teams, matches, division, teamCount, onMa
                         {finalsFinal && (
                           <div className="flex flex-col gap-1">
                             <span className="text-center text-[0.5rem] uppercase tracking-widest text-amber-200/70">Grand Final</span>
-                            <MatchCard match={finalsFinal} onChange={handleChange} {...sharedCardProps} />
+                            <MatchCard match={finalsFinal} onChange={handleChange} dimmed={isMatchDimmed(finalsFinal, filterSet)} time={getTime(finalsFinal.id)} {...sharedCardProps} />
                           </div>
                         )}
                         {finalsThird && (
                           <div className="flex flex-col gap-1">
                             <span className="text-center text-[0.5rem] uppercase tracking-widest text-foreground/40">3rd Place</span>
-                            <MatchCard match={finalsThird} onChange={handleChange} {...sharedCardProps} />
+                            <MatchCard match={finalsThird} onChange={handleChange} dimmed={isMatchDimmed(finalsThird, filterSet)} time={getTime(finalsThird.id)} {...sharedCardProps} />
                           </div>
                         )}
                       </div>

@@ -1,79 +1,15 @@
 import { NextResponse } from 'next/server'
-import type { Match } from '@/lib/types'
-
-const MOCK_MATCHES: Match[] = [
-  {
-    id: 'mock-std-1',
-    comp_type: 'standards',
-    is_bossbot: false,
-    left_name: 'Wedge Warrior',
-    left_color: '#FF6B00',
-    left_shape: 'wedge',
-    right_name: 'Spin Doctor',
-    right_color: '#00E5FF',
-    right_shape: 'spinner',
-    is_active: true,
-    winner_side: null,
-    created_at: new Date(Date.now() - 4 * 60000).toISOString(),
-  },
-  {
-    id: 'mock-std-2',
-    comp_type: 'standards',
-    is_bossbot: false,
-    left_name: 'Full Metal',
-    left_color: '#4CAF50',
-    left_shape: 'fullbody',
-    right_name: 'Flip King',
-    right_color: '#FF1493',
-    right_shape: 'flipper',
-    is_active: true,
-    winner_side: null,
-    created_at: new Date(Date.now() - 3 * 60000).toISOString(),
-  },
-  {
-    id: 'mock-open-1',
-    comp_type: 'opens',
-    is_bossbot: false,
-    left_name: 'Drum Roll',
-    left_color: '#FFD700',
-    left_shape: 'drum',
-    right_name: 'Lift Off',
-    right_color: '#7B68EE',
-    right_shape: 'lifter',
-    is_active: true,
-    winner_side: null,
-    created_at: new Date(Date.now() - 2 * 60000).toISOString(),
-  },
-  {
-    id: 'mock-open-2',
-    comp_type: 'opens',
-    is_bossbot: false,
-    left_name: 'Wedge Edge',
-    left_color: '#FF4500',
-    left_shape: 'wedge',
-    right_name: 'Full Force',
-    right_color: '#00CED1',
-    right_shape: 'fullbody',
-    is_active: true,
-    winner_side: null,
-    created_at: new Date(Date.now() - 1 * 60000).toISOString(),
-  },
-  {
-    id: 'mock-boss-1',
-    comp_type: 'bossbot',
-    is_bossbot: true,
-    left_name: 'Bot Slayer',
-    left_color: '#4cff00',
-    left_shape: 'wedge',
-    right_name: 'OMEGA-X',
-    right_color: '#9B30FF',
-    right_shape: 'bossbot',
-    is_active: true,
-    winner_side: null,
-    created_at: new Date().toISOString(),
-  },
-]
+import supabase from '@/lib/supabase'
 
 export async function GET() {
-  return NextResponse.json(MOCK_MATCHES)
+  const { data, error } = await supabase
+    .from('matches')
+    .select('*')
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+
+  return NextResponse.json(data)
 }

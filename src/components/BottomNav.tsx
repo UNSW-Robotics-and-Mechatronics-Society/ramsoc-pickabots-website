@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Coins, Trophy, Swords, type LucideIcon } from "lucide-react";
+import { Coins, Trophy, Swords, CalendarClock, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 type Item = {
@@ -15,19 +15,19 @@ const ITEMS: Item[] = [
   { href: "/voting", label: "Bid", Icon: Coins },
   { href: "/leaderboard", label: "Leaderboard", Icon: Trophy },
   { href: "/competition", label: "Bracket", Icon: Swords },
+  { href: "/matches", label: "Matches", Icon: CalendarClock },
 ];
 
 export default function BottomNav() {
   const pathname = usePathname();
-
-  // Hide on sign-in/sign-up and admin (admin has its own inline nav)
+  
+  // Hide on sign-in/sign-up/standby, and on admin (admin has its own inline nav)
   if (
     pathname.startsWith("/sign-in") ||
     pathname.startsWith("/sign-up") ||
+    pathname.startsWith("/standby") ||
     pathname.startsWith("/admin")
   ) {
-  // The nav only makes sense once you're inside the app.
-  if (pathname.startsWith("/sign-in") || pathname.startsWith("/sign-up") || pathname.startsWith("/standby")) {
     return null;
   }
 
@@ -59,7 +59,6 @@ export default function BottomNav() {
             </Link>
           );
         })}
-
       </div>
     </nav>
   );
