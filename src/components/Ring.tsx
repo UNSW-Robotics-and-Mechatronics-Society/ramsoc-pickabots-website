@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import BotSvg from './BotSvg'
-import type { Match, Bet } from '@/lib/types'
+import type { Match, Bet, OddsData } from '@/lib/types'
 
 const SHAPES = ['wedge', 'spinner', 'drum', 'flipper', 'lifter', 'fullbody'] as const
 
@@ -32,11 +32,12 @@ const GRAIN = `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http:
 interface RingProps {
   match: Match
   bet: Bet | null
+  odds: OddsData | null
   onVote: (side: 'left' | 'right') => void
   onUndo: () => void
 }
 
-export default function Ring({ match, bet, onVote, onUndo }: RingProps) {
+export default function Ring({ match, bet, odds, onVote, onUndo }: RingProps) {
   const meta = COMP_META[match.comp_type] ?? COMP_META.standard
   const voted = !!bet
   const [lWord] = useState(rw)

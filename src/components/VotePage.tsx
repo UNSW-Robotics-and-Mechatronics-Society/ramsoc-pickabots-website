@@ -25,6 +25,7 @@ export default function VotePage() {
   const [error, setError]       = useState<string | null>(null)
   const [modalCtx, setModalCtx] = useState<ModalCtx | null>(null)
   const [filter, setFilter]     = useState<CompFilter>('standard')
+  const [odds, setOdds]         = useState<Record<string, OddsData>>({})
 
   const { state: flash, trigger: triggerFlash } = useComicFlash()
   const { toast, show: showToast } = useToast()
@@ -59,6 +60,29 @@ export default function VotePage() {
     load()
   }, [])
 
+  // ── Poll live odds for active matches ────────────────────────────────────────
+  useEffect(() => {
+    const activeIds = matches.filter(m => m.is_active).map(m => m.id)
+    if (activeIds.length === 0) return
+
+    async function fetchOdds() {
+      const results = await Promise.all(
+        activeIds.map(id =>
+          fetch(`/api/matches/${id}/odds`).then(r => r.json()).catch(() => null)
+        )
+      )
+      setOdds(prev => {
+        const next = { ...prev }
+        activeIds.forEach((id, i) => { if (results[i]) next[id] = results[i] })
+        return next
+      })
+    }
+
+    fetchOdds()
+    const interval = setInterval(fetchOdds, 3000)
+    return () => clearInterval(interval)
+  }, [matches])
+
   // ── Open bet modal ────────────────────────────────────────────────────────────
   function handleVote(matchId: string, side: 'left' | 'right', botName: string, compType: string) {
     if (bets[matchId])      { showToast(`Already bet on ${bets[matchId].botName}! Undo to change.`); return }
@@ -85,10 +109,10 @@ export default function VotePage() {
     showToast(`🪙 ${amount} locked on ${botName}!`)
 
     try {
-      const res = await fetch('/api/bets', {
+      const res = await fetch(`/api/matches/${matchId}/bet`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ match_id: matchId, side, amount }),
+        body: JSON.stringify({ side, amount }),
       })
       const body = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(body.error ?? 'Bet failed')
@@ -190,6 +214,7 @@ export default function VotePage() {
             key={match.id}
             match={match}
             bet={bets[match.id] ?? null}
+            odds={odds[match.id] ?? null}
             onVote={side => handleVote(
               match.id, side,
               side === 'left' ? match.left_name : match.right_name,
@@ -213,7 +238,7 @@ export default function VotePage() {
         )}
       </main>
 
-      <BetModal ctx={modalCtx} tokens={tokens ?? 0} onConfirm={handleConfirm} onClose={() => setModalCtx(null)} />
+      <BetModal ctx={modalCtx} tokens={tokens ?? 0} odds={modalCtx ? (odds[modalCtx.matchId] ?? null) : null} onConfirm={handleConfirm} onClose={() => setModalCtx(null)} />
       <ComicFlash state={flash} />
       <Toast toast={toast} />
 
