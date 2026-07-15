@@ -6,7 +6,7 @@ import NextMatchCard from './NextMatchCard'
 import BetModal from './BetModal'
 import ComicFlash, { useComicFlash } from './ComicFlash'
 import Toast, { useToast } from './Toast'
-import type { Match, Bet } from '@/lib/types'
+import type { Match, Bet, OddsData } from '@/lib/types'
 
 interface ModalCtx {
   matchId: string

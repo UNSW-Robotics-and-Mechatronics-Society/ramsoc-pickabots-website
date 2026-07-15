@@ -3,6 +3,21 @@ import { useState } from 'react'
 import BotSvg from './BotSvg'
 import type { Match, Bet } from '@/lib/types'
 
+const SHAPES = ['wedge', 'spinner', 'drum', 'flipper', 'lifter', 'fullbody'] as const
+
+function hashStr(s: string): number {
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0
+  return Math.abs(h)
+}
+
+function pickShape(matchId: string, side: 'left' | 'right'): string {
+  return SHAPES[hashStr(matchId + side) % SHAPES.length]
+}
+
+const LEFT_COLOR  = '#1A6CFF'
+const RIGHT_COLOR = '#FF2D2D'
+
 export const COMP_META = {
   standard: { color: '#FF6B00', label: '⚙ STANDARD' },
   open:     { color: '#4cff00', label: '◈ OPEN'      },
@@ -71,11 +86,11 @@ export default function Ring({ match, bet, onVote, onUndo }: RingProps) {
 
       {/* Inner row */}
       <div style={{ display: 'flex', minHeight: 140, position: 'relative', zIndex: 1 }}>
-        <Side bot={{ name: match.left_name, color: match.left_color, shape: match.left_shape }}
+        <Side bot={{ name: match.left_name, color: LEFT_COLOR, shape: pickShape(match.id, 'left') }}
               side="left"  isBossbot={match.is_bossbot} ringColor={meta.color}
               impactWord={lWord} disabled={voted}
               onClick={() => !voted && onVote('left')} />
-        <Side bot={{ name: match.right_name, color: match.right_color, shape: match.right_shape }}
+        <Side bot={{ name: match.right_name, color: match.is_bossbot ? '#9B30FF' : RIGHT_COLOR, shape: match.is_bossbot ? 'bossbot' : pickShape(match.id, 'right') }}
               side="right" isBossbot={match.is_bossbot} ringColor={meta.color}
               impactWord={rWord} disabled={voted}
               onClick={() => !voted && onVote('right')} />
