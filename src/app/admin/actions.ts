@@ -44,3 +44,17 @@ export async function submitAdminKey(
 export async function redeemAdminKey(key: string): Promise<RedeemResult> {
   return grantAdmin(key);
 }
+
+/**
+ * Revokes the signed-in user's admin role. They can re-enter the access code
+ * to become an admin again afterwards — this only clears publicMetadata.role.
+ */
+export async function demoteFromAdmin(): Promise<RedeemResult> {
+  const { userId } = await auth();
+  if (!userId) return { ok: false, error: "You must be signed in." };
+
+  const client = await clerkClient();
+  await client.users.updateUserMetadata(userId, { publicMetadata: { role: null } });
+
+  return { ok: true };
+}
