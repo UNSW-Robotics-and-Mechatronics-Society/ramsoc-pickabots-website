@@ -22,11 +22,7 @@ export default async function AdminPage({ searchParams }: Props) {
   }
 
   if (!isAdminUser(user)) {
-    return (
-      <div className="fixed inset-0 z-20 flex flex-col">
-        <AdminKeyForm />
-      </div>
-    );
+    return <AdminKeyForm />;
   }
 
   const { division: raw } = await searchParams;
