@@ -7,11 +7,15 @@ import {
   wbRoundsFor, lbRoundsFor,
   winner, applyStatusChange, isTeamNameTaken,
 } from "@/lib/mock-data";
-import { type MatchSchedule, editMatchTime } from "@/lib/schedule";
+import {
+  type MatchSchedule,
+  editMatchTime, generateSchedule, defaultScheduleOrder,
+} from "@/lib/schedule";
 import { cn } from "@/lib/cn";
 import { MATCH_DRAG_TYPE, SlotRow, TimeCell } from "./MatchTeamSlot";
 import { useAdminPanels } from "./AdminPanelContext";
 import { useTeamFilter, TeamFilterBar, isMatchDimmed } from "./TeamFilterBar";
+import ConfirmDialog from "./ConfirmDialog";
 
 // ── layout constants ───────────────────────────────────────────────────────────
 const MATCH_H      = 116; // +20 over the base card height, for the time row
@@ -350,6 +354,7 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
   const [manualVScale, setManualVScale]     = useState<number | null>(null);
   const [draggingId, setDragging]           = useState<string | null>(null);
   const [bracketView, setBracketView]       = useState<'all' | 'winners' | 'losers' | 'knockouts' | 'finals'>('all');
+  const [confirmClear, setConfirmClear]     = useState(false);
   const { bracketFullscreen: fullscreen, setBracketFullscreen: setFullscreen } = useAdminPanels();
   const containerRef                        = useRef<HTMLDivElement>(null);
 
@@ -446,11 +451,22 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
     }));
   }
 
-  function clearTeams() {
-    onMatchesChange(matches.map(m =>
+  function requestClearTeams() {
+    setConfirmClear(true);
+  }
+
+  // Wipes every team/score/result out of this division's bracket and resets
+  // its match statuses and schedule back to defaults — otherwise a match left
+  // 'completed'/'active'/'next' or a customized time would be stale and
+  // meaningless once the teams that earned that state are gone.
+  function applyClearTeams() {
+    const cleared = matches.map(m =>
       m.division !== division ? m
-        : { ...m, slotA: { teamName: '', score: 0 }, slotB: { teamName: '', score: 0 } }
-    ));
+        : { ...m, slotA: { teamName: '', score: 0 }, slotB: { teamName: '', score: 0 }, status: 'todo' as MatchStatus }
+    );
+    onMatchesChange(cleared);
+    onScheduleChange(generateSchedule(defaultScheduleOrder(cleared, division)));
+    setConfirmClear(false);
   }
 
   function autoFillTeams() {
@@ -604,7 +620,7 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
             {fullscreen ? 'Exit Full Screen' : 'Full Screen'}
           </button>
           <button
-            onClick={clearTeams}
+            onClick={requestClearTeams}
             className="rounded-lg border border-white/25 bg-white/5 px-3 py-1 text-xs text-foreground/70 transition-colors hover:bg-red-400/10 hover:border-red-400/30 hover:text-red-300"
           >
             Clear Teams
@@ -826,6 +842,17 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
           )}
         </div>
       </div>
+
+      {/* Confirm bracket-wide team wipe */}
+      {confirmClear && (
+        <ConfirmDialog
+          title="Clear all teams?"
+          message="Every team, score, and match result in this bracket will be cleared, and the match schedule will reset to its default order and times. This can't be undone."
+          confirmLabel="Clear Teams"
+          onConfirm={applyClearTeams}
+          onCancel={() => setConfirmClear(false)}
+        />
+      )}
     </div>
   );
 }

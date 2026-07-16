@@ -1,5 +1,5 @@
 'use client'
-import { UserButton } from '@clerk/nextjs'
+import AdminUserButton from './AdminUserButton'
 
 export default function Header({ tokens, loading }: { tokens: number; loading: boolean }) {
   return (
@@ -52,7 +52,7 @@ export default function Header({ tokens, loading }: { tokens: number; loading: b
           <span style={{ fontSize: '0.5rem', color: '#666', fontWeight: 900, letterSpacing: 2 }}>CR</span>
         </div>
 
-        <UserButton />
+        <AdminUserButton />
       </div>
 
       <style>{`
