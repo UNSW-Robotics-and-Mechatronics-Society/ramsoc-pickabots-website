@@ -17,13 +17,17 @@ const GRAIN = `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http:
 interface RingProps {
   match: Match
   bet: Bet | null
+  /** Whether bidding is currently open. When false, vote buttons are disabled and bets are locked. */
+  bettingOpen?: boolean
   onVote: (side: 'left' | 'right') => void
   onUndo: () => void
 }
 
-export default function Ring({ match, bet, onVote, onUndo }: RingProps) {
+export default function Ring({ match, bet, bettingOpen = true, onVote, onUndo }: RingProps) {
   const meta = COMP_META[match.comp_type] ?? COMP_META.standard
   const voted = !!bet
+  // Sides are non-interactive once the user has bet OR bidding is closed.
+  const locked = voted || !bettingOpen
   const [lWord] = useState(rw)
   const [rWord] = useState(rw)
 
@@ -73,12 +77,12 @@ export default function Ring({ match, bet, onVote, onUndo }: RingProps) {
       <div style={{ display: 'flex', minHeight: 140, position: 'relative', zIndex: 1 }}>
         <Side bot={{ name: match.left_name, color: match.left_color, shape: match.left_shape }}
               side="left"  isBossbot={match.is_bossbot} ringColor={meta.color}
-              impactWord={lWord} disabled={voted}
-              onClick={() => !voted && onVote('left')} />
+              impactWord={lWord} disabled={locked}
+              onClick={() => !locked && onVote('left')} />
         <Side bot={{ name: match.right_name, color: match.right_color, shape: match.right_shape }}
               side="right" isBossbot={match.is_bossbot} ringColor={meta.color}
-              impactWord={rWord} disabled={voted}
-              onClick={() => !voted && onVote('right')} />
+              impactWord={rWord} disabled={locked}
+              onClick={() => !locked && onVote('right')} />
 
         {/* VS / ⚡ badge */}
         <div style={{
@@ -139,10 +143,35 @@ export default function Ring({ match, bet, onVote, onUndo }: RingProps) {
             </div>
             <div style={{ fontSize: '0.78rem', fontWeight: 900, color: '#FFD700', letterSpacing: 1 }}>🪙 {bet.amount}</div>
             <div style={{ fontSize: '0.58rem', color: '#4cff00', marginTop: 2, letterSpacing: 2 }}>RETURN · {bet.amount * 2}</div>
-            <button onClick={onUndo} style={{
-              display: 'block', marginTop: 8, fontSize: '0.52rem', color: '#444',
-              background: 'none', border: 'none', textDecoration: 'underline', fontWeight: 900, letterSpacing: 2,
-            }}>UNDO</button>
+            {bettingOpen ? (
+              <button onClick={onUndo} style={{
+                display: 'block', marginTop: 8, fontSize: '0.52rem', color: '#444',
+                background: 'none', border: 'none', textDecoration: 'underline', fontWeight: 900, letterSpacing: 2,
+              }}>UNDO</button>
+            ) : (
+              <div style={{ marginTop: 8, fontSize: '0.5rem', fontWeight: 900, color: '#888', letterSpacing: 2 }}>🔒 LOCKED IN</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Bidding-closed overlay — shown when bidding is off and the user has NOT bet */}
+      {!voted && !bettingOpen && (
+        <div style={{
+          position: 'absolute', inset: 0, zIndex: 20,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(2,0,6,0.72)', backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)', animation: 'fadeIn 0.25s ease',
+        }}>
+          <div style={{
+            background: 'rgba(5,2,14,0.92)', border: '1px solid rgba(255,255,255,0.18)',
+            borderRadius: 12, padding: '10px 20px', textAlign: 'center',
+            backdropFilter: 'blur(12px)',
+          }}>
+            <div style={{ fontSize: '1rem' }}>🔒</div>
+            <div style={{ fontSize: '0.6rem', fontWeight: 900, color: '#fff', marginTop: 4, textTransform: 'uppercase', letterSpacing: 3 }}>
+              Bidding Closed
+            </div>
           </div>
         </div>
       )}

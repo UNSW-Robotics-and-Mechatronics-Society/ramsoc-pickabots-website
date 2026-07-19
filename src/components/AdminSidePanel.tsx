@@ -95,9 +95,10 @@ export default function AdminSidePanel() {
         </div>
       )}
 
-      {/* Admin shield button */}
+      {/* Admin shield button — toggles between the admin dashboard and the
+          public Bid page depending on where you currently are. */}
       <Link
-        href={`/admin?division=${currentDivision}`}
+        href={isOnAdmin ? "/voting" : `/admin?division=${currentDivision}`}
         className={cn(
           "pointer-events-auto flex flex-col items-center gap-1 rounded-2xl px-3 py-2 text-[0.6rem] font-semibold tracking-widest transition-colors",
           "border",

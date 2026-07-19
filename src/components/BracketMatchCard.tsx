@@ -29,10 +29,12 @@ export function matchSideLabel(m: BracketMatch): string {
   if (m.side === 'finals-semi')  return `Semi ${m.matchNumber}`
   if (m.side === 'finals-third') return '3rd Place'
   if (m.side === 'finals-final') return 'Grand Final'
+  if (m.side === 'exhibition')   return 'Exhibition'
   return `${m.side === 'winners' ? 'W' : 'L'}B R${m.round}`
 }
 
-export function Slot({ name, score, won, lost }: { name: string; score: number; won: boolean; lost: boolean }) {
+export function Slot({ name, score, won, lost, placeholder }: { name: string; score: number; won: boolean; lost: boolean; placeholder?: string }) {
+  const empty = !name
   return (
     <div style={{
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -41,10 +43,13 @@ export function Slot({ name, score, won, lost }: { name: string; score: number; 
     }}>
       <span style={{
         fontSize: '0.31rem', fontWeight: 900, letterSpacing: 0.25, textTransform: 'uppercase',
-        color: won ? '#fff' : lost ? 'rgba(255,255,255,0.3)' : 'rgba(210,210,210,0.85)',
+        // Empty slots show their feeder ("Winner of R64 M3") in a dimmer,
+        // italic style so it reads as a placeholder, not a real team.
+        color: empty ? 'rgba(200,200,200,0.5)' : won ? '#fff' : lost ? 'rgba(255,255,255,0.3)' : 'rgba(210,210,210,0.85)',
+        fontStyle: empty ? 'italic' : 'normal',
         whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
       }}>
-        {name || 'TBD'}
+        {name || placeholder || 'TBD'}
       </span>
       <span style={{ fontSize: '0.34rem', fontWeight: 900, color: won ? '#FF6B00' : 'rgba(255,255,255,0.35)' }}>
         {score}
@@ -55,26 +60,46 @@ export function Slot({ name, score, won, lost }: { name: string; score: number; 
 
 type MatchCardProps = {
   match: BracketMatch
-  /** Formatted scheduled time (e.g. "1:05 PM") — omitted renders a "—" placeholder so every card stays the same height. */
+  /** Formatted scheduled time (e.g. "1:05 PM"). Omitted → the time row is not rendered at all. */
   time?: string
   dimmed?: boolean
+  /**
+   * Highlighted because one of its teams is in the active team filter. Renders
+   * a solid light card with a status-coloured border (grey = done, black =
+   * to-do), overriding the normal "done → faded" treatment. Wins over `dimmed`.
+   */
+  selected?: boolean
+  /** Feeder placeholders for empty slots (e.g. { a: "Winner of R64 M3" }). */
+  defaults?: { a?: string; b?: string }
 }
 
-export function MatchCard({ match, time, dimmed }: MatchCardProps) {
+export function MatchCard({ match, time, dimmed, selected, defaults }: MatchCardProps) {
   const w = winner(match)
   const isDone = match.status === 'completed'
+
+  // Selected (filtered-in) cards keep the normal dark look but render SOLID —
+  // never faded, even when done — with a status border so a followed team's
+  // matches stand out: light grey when done, black when still to do. (Black is
+  // intentionally subtle on the dark theme.)
+  const border = selected
+    ? `2px solid ${isDone ? '#9ca3af' : '#000'}`
+    : `1px solid ${STATUS_BORDER[match.status]}`
+
   return (
     <div style={{
       height: MATCH_H, width: ROUND_W, flexShrink: 0, position: 'relative',
       display: 'flex', flexDirection: 'column',
-      background: 'rgba(6,3,16,0.9)',
-      backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)',
-      border: `1px solid ${STATUS_BORDER[match.status]}`,
+      // Opaque (no backdrop-blur): keeps cards crisp when the bracket is
+      // scaled up, and lets them read cleanly on top of the translucent
+      // Winners/Losers box instead of blending it through.
+      background: 'rgba(6,3,16,0.96)',
+      border,
       borderRadius: 5, overflow: 'hidden',
       boxShadow: match.status === 'active' ? '0 0 10px rgba(74,222,128,0.3)' : '0 1.5px 7px rgba(0,0,0,0.5)',
-      // Team-filter dimming and "done → grey" both fade the card out; dimming wins when both apply.
-      opacity: dimmed ? 0.22 : isDone ? 0.55 : 1,
-      filter: dimmed ? 'grayscale(0.6)' : isDone ? 'grayscale(0.85)' : 'none',
+      // Team-filter dimming and "done → grey" both fade the card out; a
+      // selected card is never faded, and dimming wins over done.
+      opacity: selected ? 1 : dimmed ? 0.22 : isDone ? 0.55 : 1,
+      filter: selected ? 'none' : dimmed ? 'grayscale(0.6)' : isDone ? 'grayscale(0.85)' : 'none',
       transition: 'opacity 0.2s, filter 0.2s',
     }}>
       <div style={{
@@ -92,16 +117,18 @@ export function MatchCard({ match, time, dimmed }: MatchCardProps) {
           {STATUS_LABEL[match.status]}
         </span>
       </div>
-      <div style={{
-        flexShrink: 0, textAlign: 'center', padding: '1px 0',
-        fontSize: '0.22rem', fontWeight: 700, letterSpacing: 0.5,
-        color: 'rgba(255,215,0,0.65)', borderBottom: '1px solid rgba(255,255,255,0.06)',
-      }}>
-        {time ?? '—'}
-      </div>
-      <Slot name={match.slotA.teamName} score={match.slotA.score} won={w === 'a'} lost={w === 'b'} />
+      {time !== undefined && (
+        <div style={{
+          flexShrink: 0, textAlign: 'center', padding: '1px 0',
+          fontSize: '0.22rem', fontWeight: 700, letterSpacing: 0.5,
+          color: 'rgba(255,215,0,0.65)', borderBottom: '1px solid rgba(255,255,255,0.06)',
+        }}>
+          {time}
+        </div>
+      )}
+      <Slot name={match.slotA.teamName} score={match.slotA.score} won={w === 'a'} lost={w === 'b'} placeholder={defaults?.a} />
       <div style={{ height: 1, background: 'rgba(255,255,255,0.08)' }} />
-      <Slot name={match.slotB.teamName} score={match.slotB.score} won={w === 'b'} lost={w === 'a'} />
+      <Slot name={match.slotB.teamName} score={match.slotB.score} won={w === 'b'} lost={w === 'a'} placeholder={defaults?.b} />
     </div>
   )
 }

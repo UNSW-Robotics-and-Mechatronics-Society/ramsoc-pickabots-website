@@ -11,6 +11,7 @@ export interface Match {
   right_color: string
   right_shape: string
   is_active: boolean
+  bidding_open: boolean
   winner_side: 'left' | 'right' | null
   created_at: string
 }

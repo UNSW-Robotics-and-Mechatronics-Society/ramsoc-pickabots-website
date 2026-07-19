@@ -2,12 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  type BracketMatch, type Division, type MatchStatus, type Team, type TeamCount,
+  type BracketMatch, type Division, type Team, type TeamCount,
   generateDoubleElimBracket, transferBracket,
 } from "@/lib/mock-data";
 import {
   type MatchSchedule,
-  generateSchedule, defaultScheduleOrder, START_MINUTE,
+  generateSchedule, applyScheduleStatus, rollSchedule, START_MINUTE,
 } from "@/lib/schedule";
 import { cn } from "@/lib/cn";
 import { useAdminPanels, type PanelId } from "./AdminPanelContext";
@@ -28,47 +28,6 @@ function computeEliminated(matches: BracketMatch[]): Set<string> {
     if (bWon && m.slotA.teamName) out.add(m.slotA.teamName);
   }
   return out;
-}
-
-/**
- * Derives active/next/todo statuses from the schedule for one division.
- * Each ring is independent: the first non-completed/non-skipped match in
- * that ring's own queue → active, the second → next. This guarantees
- * exactly one active match per ring, by construction.
- * Completed and skipped statuses are always preserved.
- */
-function applyScheduleStatus(
-  matches: BracketMatch[],
-  schedule: MatchSchedule,
-  division: Division,
-): BracketMatch[] {
-  const byId = new Map(matches.map(m => [m.id, m]));
-
-  const activeSet = new Set<string>();
-  const nextSet   = new Set<string>();
-
-  for (const ring of schedule.rings) {
-    const pending = ring
-      .map(e => e.matchId)
-      .filter(id => {
-        const m = byId.get(id);
-        return m && m.status !== 'completed' && m.status !== 'skipped';
-      });
-    if (pending[0]) activeSet.add(pending[0]);
-    if (pending[1]) nextSet.add(pending[1]);
-  }
-
-  return matches.map(m => {
-    if (m.division !== division) return m;
-    if (m.status === 'completed' || m.status === 'skipped') return m;
-
-    const newStatus: MatchStatus =
-      activeSet.has(m.id) ? 'active' :
-      nextSet.has(m.id)   ? 'next'   :
-      'todo';
-
-    return m.status === newStatus ? m : { ...m, status: newStatus };
-  });
 }
 
 const ALL_PANEL_IDS: PanelId[] = ['teams', 'bracket', 'matches'];
@@ -161,25 +120,33 @@ export default function AdminPageClient({ division, initialTeams, initialBracket
     const otherMatches = generateDoubleElimBracket(n, otherDiv);
     const newMatches   = [...transferred, ...otherMatches];
     setMatches(newMatches);
-    // Rebuild schedules for both divisions, preserving ring count and timing params
-    setSchedules(prev => ({
-      [division]: generateSchedule(
-        defaultScheduleOrder(newMatches, division),
-        prev[division].concurrentRings,
-        prev[division].rings[0]?.[0]?.startMinute ?? START_MINUTE,
-        prev[division].matchMinutes,
-        prev[division].gapMinutes,
-      ),
-      [otherDiv]: generateSchedule(
-        defaultScheduleOrder(newMatches, otherDiv),
-        prev[otherDiv].concurrentRings,
-        prev[otherDiv].rings[0]?.[0]?.startMinute ?? START_MINUTE,
-        prev[otherDiv].matchMinutes,
-        prev[otherDiv].gapMinutes,
-      ),
-    } as Record<Division, MatchSchedule>));
+    // Rebuild schedules for both divisions as rolling schedules (only the
+    // currently-playable matches), preserving ring count and timing params.
+    setSchedules(prev => {
+      const rebuild = (d: Division) => rollSchedule(
+        generateSchedule(
+          [],
+          prev[d].concurrentRings,
+          prev[d].rings[0]?.[0]?.startMinute ?? START_MINUTE,
+          prev[d].matchMinutes,
+          prev[d].gapMinutes,
+        ),
+        newMatches,
+        d,
+      );
+      return { [division]: rebuild(division), [otherDiv]: rebuild(otherDiv) } as Record<Division, MatchSchedule>;
+    });
     setTeamCount(n);
     setPending(null);
+  }
+
+  // Any change to matches re-rolls the current division's schedule: newly-ready
+  // matches (teams just decided by a completed feeder) get appended, anything
+  // no longer playable is dropped — keeping the match list a rolling list of
+  // only-playable matches.
+  function commitMatches(next: BracketMatch[]) {
+    setMatches(next);
+    setSchedules(prev => ({ ...prev, [division]: rollSchedule(prev[division], next, division) }));
   }
 
   // ── build panel list for MultiPanelSplit ─────────────────────────────────────
@@ -222,7 +189,7 @@ export default function AdminPageClient({ division, initialTeams, initialBracket
               division={division}
               teamCount={teamCount}
               schedule={schedules[division]}
-              onMatchesChange={setMatches}
+              onMatchesChange={commitMatches}
               onScheduleChange={s => setSchedules(prev => ({ ...prev, [division]: s }))}
             />
           </div>
@@ -237,7 +204,7 @@ export default function AdminPageClient({ division, initialTeams, initialBracket
           onScheduleChange={s =>
             setSchedules(prev => ({ ...prev, [division]: s }))
           }
-          onMatchesChange={setMatches}
+          onMatchesChange={commitMatches}
         />
       ),
     }));

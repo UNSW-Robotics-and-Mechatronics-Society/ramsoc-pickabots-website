@@ -4,7 +4,7 @@ import {
   type BracketMatch, type BracketSide, type Division, type MatchStatus, type TeamCount,
   generateDoubleElimBracket, winner,
 } from "@/lib/mock-data";
-import { type MatchSchedule, generateSchedule, defaultScheduleOrder } from "@/lib/schedule";
+import { type MatchSchedule, generateSchedule, applyScheduleStatus, rollSchedule } from "@/lib/schedule";
 import { toDbCategory, fromDbCategory } from "./division";
 
 const DIVISIONS: Division[] = ["standards", "open"];
@@ -22,6 +22,7 @@ type BracketMatchRow = {
   slot_b_score: number;
   target_score: number;
   status: string;
+  bidding_open: boolean | null;
 };
 
 function rowToMatch(r: BracketMatchRow): BracketMatch {
@@ -35,6 +36,8 @@ function rowToMatch(r: BracketMatchRow): BracketMatch {
     slotB: { teamName: r.slot_b_name, score: r.slot_b_score },
     targetScore: r.target_score,
     status: r.status as MatchStatus,
+    // Default open for rows created before this column existed.
+    biddingOpen: r.bidding_open ?? true,
   };
 }
 
@@ -53,6 +56,7 @@ function matchToRow(m: BracketMatch, teamIdByName: Map<string, string>) {
     slot_b_score: m.slotB.score,
     target_score: m.targetScore,
     status: m.status,
+    bidding_open: m.biddingOpen,
   };
 }
 
@@ -90,9 +94,11 @@ export async function getBracketState(): Promise<BracketState> {
   const schedules = {} as Record<Division, MatchSchedule>;
   for (const division of DIVISIONS) {
     const row = (scheduleRows ?? []).find(s => fromDbCategory(s.division as string) === division);
-    schedules[division] = row
-      ? (row.schedule as MatchSchedule)
-      : generateSchedule(defaultScheduleOrder(matches, division));
+    const existing = row ? (row.schedule as MatchSchedule) : generateSchedule([], 2);
+    // Roll on read: strip any stale "waiting"/bye entries and surface only the
+    // currently-playable matches, so the admin and public always see a
+    // rolling schedule (and never a match parked with unknown teams).
+    schedules[division] = rollSchedule(existing, matches, division);
   }
 
   return { matches, teamCount, schedules };
@@ -139,7 +145,7 @@ async function syncCompletedMatches(beforeStatusById: Map<string, MatchStatus>, 
 async function reconcileBettingMatches(bracketMatchById: Map<string, BracketMatch>): Promise<void> {
   const { data: rows, error } = await supabase
     .from("matches")
-    .select("id, bracket_match_id, is_active, left_name, right_name")
+    .select("id, bracket_match_id, is_active, bidding_open, left_name, right_name")
     .is("winner_side", null)
     .not("bracket_match_id", "is", null);
   if (error || !rows) return;
@@ -157,13 +163,21 @@ async function reconcileBettingMatches(bracketMatchById: Map<string, BracketMatc
     const desired = {
       comp_type: toDbCategory(bm.division),
       is_active: bm.status === "active",
+      // Bidding open state is driven by the admin's per-match toggle. Default
+      // open so an active match accepts bids immediately unless explicitly locked.
+      bidding_open: bm.biddingOpen ?? true,
       left_name: bm.slotA.teamName || "TBD",
       right_name: bm.slotB.teamName || "TBD",
     };
     const existing = rowByBracketId.get(bm.id);
     if (!existing) {
       await supabase.from("matches").insert({ bracket_match_id: bm.id, ...desired });
-    } else if (existing.is_active !== desired.is_active || existing.left_name !== desired.left_name || existing.right_name !== desired.right_name) {
+    } else if (
+      existing.is_active !== desired.is_active ||
+      existing.bidding_open !== desired.bidding_open ||
+      existing.left_name !== desired.left_name ||
+      existing.right_name !== desired.right_name
+    ) {
       await supabase.from("matches").update(desired).eq("id", existing.id as string);
     }
   }
@@ -226,14 +240,24 @@ export async function saveBracketState(state: BracketState): Promise<void> {
     );
   if (schedErr) throw new Error(`Failed to save bracket_schedule: ${schedErr.message}`);
 
+  // Betting rows follow the SCHEDULE-derived active/next (one active + one next
+  // per ring) rather than the raw stored status — so changing the ring count
+  // immediately surfaces the right number of active matches on the public
+  // bidding page. applyScheduleStatus preserves completed/skipped, so the
+  // completed-transition sync below still behaves correctly.
+  let effective = matches;
+  for (const d of DIVISIONS) {
+    effective = applyScheduleStatus(effective, schedules[d], d);
+  }
+
   try {
-    await syncCompletedMatches(beforeStatusById, matches);
+    await syncCompletedMatches(beforeStatusById, effective);
   } catch (err) {
     console.error("[bracket] betting sync failed:", err);
   }
 
   try {
-    await reconcileBettingMatches(new Map(matches.map(m => [m.id, m])));
+    await reconcileBettingMatches(new Map(effective.map(m => [m.id, m])));
   } catch (err) {
     console.error("[bracket] betting reconcile failed:", err);
   }

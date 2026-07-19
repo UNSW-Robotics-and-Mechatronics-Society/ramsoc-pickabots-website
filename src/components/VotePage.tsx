@@ -1,5 +1,6 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { getBrowserSupabase } from '@/lib/supabase-browser'
 import Header from './Header'
 import Ring from './Ring'
 import NextMatchCard from './NextMatchCard'
@@ -58,6 +59,32 @@ export default function VotePage() {
     }
     load()
   }, [])
+
+  // ── Live match updates ────────────────────────────────────────────────────────
+  // Re-pull just the matches (bidding open/close, scores, resolution) so the
+  // page reflects admin changes without a manual refresh. Uses Supabase
+  // Realtime when the anon key is configured, else falls back to light polling.
+  const refetchMatches = useCallback(async () => {
+    try {
+      const res = await fetch('/api/matches')
+      if (res.ok) setMatches(await res.json())
+    } catch {
+      /* transient — next event/tick retries */
+    }
+  }, [])
+
+  useEffect(() => {
+    const sb = getBrowserSupabase()
+    if (sb) {
+      const channel = sb
+        .channel('public:matches')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, () => { refetchMatches() })
+        .subscribe()
+      return () => { sb.removeChannel(channel) }
+    }
+    const id = setInterval(refetchMatches, 5000)
+    return () => clearInterval(id)
+  }, [refetchMatches])
 
   // ── Open bet modal ────────────────────────────────────────────────────────────
   function handleVote(matchId: string, side: 'left' | 'right', botName: string, compType: string) {
@@ -190,6 +217,7 @@ export default function VotePage() {
             key={match.id}
             match={match}
             bet={bets[match.id] ?? null}
+            bettingOpen={match.bidding_open}
             onVote={side => handleVote(
               match.id, side,
               side === 'left' ? match.left_name : match.right_name,

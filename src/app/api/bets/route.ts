@@ -31,12 +31,13 @@ export async function POST(req: NextRequest) {
   if (amount < 1 || amount > MAX_BET)
     return NextResponse.json({ error: `Amount must be 1–${MAX_BET}` }, { status: 400 })
 
-  // Match must exist and be active
+  // Match must exist, be live, and have bidding open
   const { data: match } = await supabase
-    .from('matches').select('id, is_active').eq('id', match_id).single()
+    .from('matches').select('id, is_active, bidding_open').eq('id', match_id).single()
 
   if (!match) return NextResponse.json({ error: 'Match not found' }, { status: 404 })
   if (!match.is_active) return NextResponse.json({ error: 'Match is not accepting bets' }, { status: 400 })
+  if (!match.bidding_open) return NextResponse.json({ error: 'Bidding is closed for this match' }, { status: 400 })
 
   // One bet per user per match
   const { data: existing } = await supabase
@@ -81,12 +82,15 @@ export async function DELETE(req: NextRequest) {
 
   if (!bet) return NextResponse.json({ error: 'Bet not found' }, { status: 404 })
 
-  // Confirm match still active
+  // Confirm match still active AND bidding still open — once bidding is
+  // locked, bets are final and can't be undone.
   const { data: match } = await supabase
-    .from('matches').select('is_active').eq('id', bet.match_id).single()
+    .from('matches').select('is_active, bidding_open').eq('id', bet.match_id).single()
 
   if (!match?.is_active)
     return NextResponse.json({ error: 'Cannot undo — match already resolved' }, { status: 400 })
+  if (!match.bidding_open)
+    return NextResponse.json({ error: 'Cannot undo — bidding is closed and bets are locked in' }, { status: 400 })
 
   // Delete and refund
   await supabase.from('bets').delete().eq('id', betId)

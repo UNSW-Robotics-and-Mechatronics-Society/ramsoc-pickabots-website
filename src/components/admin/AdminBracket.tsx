@@ -9,12 +9,14 @@ import {
 } from "@/lib/mock-data";
 import {
   type MatchSchedule,
-  editMatchTime, generateSchedule, defaultScheduleOrder,
+  START_MINUTE,
+  editMatchTime, generateSchedule, rollSchedule,
 } from "@/lib/schedule";
 import { cn } from "@/lib/cn";
 import { MATCH_DRAG_TYPE, SlotRow, TimeCell } from "./MatchTeamSlot";
 import { useAdminPanels } from "./AdminPanelContext";
 import { useTeamFilter, TeamFilterBar, isMatchDimmed } from "./TeamFilterBar";
+import BiddingToggle from "./BiddingToggle";
 import ConfirmDialog from "./ConfirmDialog";
 
 // ── layout constants ───────────────────────────────────────────────────────────
@@ -113,7 +115,7 @@ function MatchCard({
       }}
       onDragEnd={onDragEnd}
       className={cn(
-        "flex flex-col rounded-md border bg-[#0d1018] text-foreground transition-all",
+        "relative flex flex-col rounded-md border bg-[#0d1018] text-foreground transition-all",
         STATUS_BORDER[match.status],
         isBeingDragged  && "opacity-30",
         isMatchDropTgt  && "ring-2 ring-white/60 ring-dashed",
@@ -121,6 +123,14 @@ function MatchCard({
         dimmed          && "opacity-30 grayscale-70",
       )}
     >
+      {match.status === 'active' && (
+        <div className="absolute right-1 top-1 z-20">
+          <BiddingToggle
+            open={match.biddingOpen}
+            onToggle={() => onChange({ ...match, biddingOpen: !match.biddingOpen })}
+          />
+        </div>
+      )}
       {time !== undefined && (
         <div
           className="flex shrink-0 items-center justify-center border-b border-white/[0.14] py-1"
@@ -355,6 +365,7 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
   const [draggingId, setDragging]           = useState<string | null>(null);
   const [bracketView, setBracketView]       = useState<'all' | 'winners' | 'losers' | 'knockouts' | 'finals'>('all');
   const [confirmClear, setConfirmClear]     = useState(false);
+  const [confirmAutoFill, setConfirmAutoFill] = useState(false);
   const { bracketFullscreen: fullscreen, setBracketFullscreen: setFullscreen } = useAdminPanels();
   const containerRef                        = useRef<HTMLDivElement>(null);
 
@@ -465,7 +476,18 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
         : { ...m, slotA: { teamName: '', score: 0 }, slotB: { teamName: '', score: 0 }, status: 'todo' as MatchStatus }
     );
     onMatchesChange(cleared);
-    onScheduleChange(generateSchedule(defaultScheduleOrder(cleared, division)));
+    // Nothing is playable once teams are gone, so the rolling schedule is empty.
+    onScheduleChange(rollSchedule(
+      generateSchedule(
+        [],
+        schedule.concurrentRings,
+        schedule.rings[0]?.[0]?.startMinute ?? START_MINUTE,
+        schedule.matchMinutes,
+        schedule.gapMinutes,
+      ),
+      cleared,
+      division,
+    ));
     setConfirmClear(false);
   }
 
@@ -524,6 +546,19 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
     seeded = propagateByes(seeded, division, teamCount);
 
     onMatchesChange(seeded);
+    // Rebuild as a rolling schedule — only currently-playable matches (real R1
+    // + bye-advanced R2), never the waiting ones. Keep ring count and timing.
+    onScheduleChange(rollSchedule(
+      generateSchedule(
+        [],
+        schedule.concurrentRings,
+        schedule.rings[0]?.[0]?.startMinute ?? START_MINUTE,
+        schedule.matchMinutes,
+        schedule.gapMinutes,
+      ),
+      seeded,
+      division,
+    ));
   }
 
   // Group matches for rendering
@@ -626,7 +661,7 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
             Clear Teams
           </button>
           <button
-            onClick={autoFillTeams}
+            onClick={() => setConfirmAutoFill(true)}
             className="rounded-lg border border-white/25 bg-white/8 px-3 py-1 text-xs text-foreground transition-colors hover:bg-white/15"
           >
             Auto Fill
@@ -851,6 +886,17 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
           confirmLabel="Clear Teams"
           onConfirm={applyClearTeams}
           onCancel={() => setConfirmClear(false)}
+        />
+      )}
+
+      {/* Confirm auto-fill (re-seeds Round 1 from the team list) */}
+      {confirmAutoFill && (
+        <ConfirmDialog
+          title="Auto-fill the bracket?"
+          message="Round 1 will be re-seeded from the team list (by seed, then random), overwriting any team names, scores, and results already entered in this bracket. This can't be undone."
+          confirmLabel="Auto Fill"
+          onConfirm={() => { autoFillTeams(); setConfirmAutoFill(false); }}
+          onCancel={() => setConfirmAutoFill(false)}
         />
       )}
     </div>
