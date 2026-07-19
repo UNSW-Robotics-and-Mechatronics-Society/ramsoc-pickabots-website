@@ -102,12 +102,12 @@ const BracketZoomPan = forwardRef<BracketZoomPanHandle, Props>(function BracketZ
   }
 
   // Keeps the content's own edges from ever being dragged/zoomed past the
-  // viewport's edges — e.g. you can't pan down far enough to reveal blank
-  // space above the top of the content (the "Winners Bracket" / "Ring 1"
-  // header), nor past its other edges. When an axis's content is smaller
-  // than the viewport, the valid range collapses to "somewhere between
-  // flush-start and flush-end" instead of totally free — still bounded,
-  // never further than the content's own natural extent.
+  // viewport's edges, AND pins the content's top-left corner to the viewport's
+  // top-left: maxX/maxY are 0, so you can never reveal blank space above or to
+  // the left of the bracket (the "Winners Bracket" / "Ring 1" header stays
+  // flush to the corner). When an axis's content is smaller than the viewport,
+  // that axis collapses to exactly 0 (flush start) — any slack shows on the
+  // bottom/right, never the top/left.
   function clampTransform(t: Transform): Transform {
     const container = containerRef.current
     const content   = contentRef.current
@@ -118,9 +118,9 @@ const BracketZoomPan = forwardRef<BracketZoomPanHandle, Props>(function BracketZ
     const contentH = content.scrollHeight * t.scale
     if (!cw || !ch || !contentW || !contentH) return t
     const minX = Math.min(0, cw - contentW)
-    const maxX = Math.max(0, cw - contentW)
+    const maxX = 0
     const minY = Math.min(0, ch - contentH)
-    const maxY = Math.max(0, ch - contentH)
+    const maxY = 0
     return { scale: t.scale, x: clamp(t.x, minX, maxX), y: clamp(t.y, minY, maxY) }
   }
 
@@ -141,11 +141,10 @@ const BracketZoomPan = forwardRef<BracketZoomPanHandle, Props>(function BracketZ
     const contentH = content.scrollHeight
     if (!cw || !ch || !contentW || !contentH) return
     const scale = clamp(Math.min(cw / contentW, ch / contentH, 1), getMinScale(), MAX_SCALE)
-    setClampedTransform({
-      scale,
-      x: (cw - contentW * scale) / 2,
-      y: (ch - contentH * scale) / 2,
-    })
+    // Anchor the whole bracket to the top-left corner (rather than centering)
+    // so its top and left edges always touch the screen edges — clampTransform
+    // then keeps it there.
+    setClampedTransform({ scale, x: 0, y: 0 })
   }
 
   // Frame a round-of-N target: scaled so the anchor's width PLUS `extraWidth`

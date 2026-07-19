@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Coins, Trophy, Swords, CalendarClock, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { useAdminPanels } from "@/components/admin/AdminPanelContext";
 
 type Item = {
   href: string;
@@ -20,9 +21,13 @@ const ITEMS: Item[] = [
 
 export default function BottomNav() {
   const pathname = usePathname();
-  
-  // Hide on sign-in/sign-up/standby, and on admin (admin has its own inline nav)
+  const { bracketFullscreen } = useAdminPanels();
+
+  // Hide on sign-in/sign-up/standby, on admin (admin has its own inline nav),
+  // and while the bracket is in full-screen mode (which wants a bare canvas +
+  // exit button only).
   if (
+    bracketFullscreen ||
     pathname.startsWith("/sign-in") ||
     pathname.startsWith("/sign-up") ||
     pathname.startsWith("/standby") ||

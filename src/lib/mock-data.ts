@@ -1,6 +1,9 @@
 export type Division   = 'standards' | 'open';
 export type TeamCount  = 4 | 8 | 16 | 32 | 64;
-export type BracketSide = 'winners' | 'losers' | 'finals-semi' | 'finals-final' | 'finals-third';
+// 'exhibition' = an ad-hoc extra match the admin inserts into a ring's schedule
+// (e.g. an unplanned/filler match). It is NOT part of the bracket tree, has no
+// advancement, and never appears in the winners/losers/finals renderers.
+export type BracketSide = 'winners' | 'losers' | 'finals-semi' | 'finals-final' | 'finals-third' | 'exhibition';
 
 export type Team = {
   id: string;
@@ -27,6 +30,10 @@ export type BracketMatch = {
   slotB: MatchSlot;
   targetScore: number;
   status: MatchStatus;
+  // Whether the public may place bids on this match. Only meaningful while the
+  // match is active (on the ring); the admin toggles it to open/lock bidding.
+  // Defaults open so an active match accepts bids immediately.
+  biddingOpen: boolean;
 };
 
 // ── round count helpers ────────────────────────────────────────────────────────
@@ -109,6 +116,7 @@ export function generateDoubleElimBracket(teamCount: TeamCount, division: Divisi
         slotB: { teamName: '', score: 0 },
         targetScore: 2,
         status: 'todo',
+        biddingOpen: true,
       });
     }
   }
@@ -127,6 +135,7 @@ export function generateDoubleElimBracket(teamCount: TeamCount, division: Divisi
         slotB: { teamName: '', score: 0 },
         targetScore: 2,
         status: 'todo',
+        biddingOpen: true,
       });
     }
   }
@@ -144,6 +153,7 @@ export function generateDoubleElimBracket(teamCount: TeamCount, division: Divisi
       slotB: { teamName: '', score: 0 },
       targetScore: 2,
       status: 'todo',
+      biddingOpen: true,
     });
   }
   matches.push({
@@ -156,6 +166,7 @@ export function generateDoubleElimBracket(teamCount: TeamCount, division: Divisi
     slotB: { teamName: '', score: 0 },
     targetScore: 2,
     status: 'todo',
+    biddingOpen: true,
   });
   // 3rd place: the two semi-final losers play each other.
   matches.push({
@@ -168,6 +179,7 @@ export function generateDoubleElimBracket(teamCount: TeamCount, division: Divisi
     slotB: { teamName: '', score: 0 },
     targetScore: 2,
     status: 'todo',
+    biddingOpen: true,
   });
 
   // Seed first two WB R1 matches as active / next
@@ -211,6 +223,7 @@ export function transferBracket(
       target.slotB       = { ...old.slotB };
       target.targetScore = old.targetScore;
       target.status      = old.status;
+      target.biddingOpen = old.biddingOpen;
     }
   }
 
@@ -348,6 +361,77 @@ export function applyStatusChange(
   }
 
   return next;
+}
+
+/**
+ * Default placeholder text for every empty slot — "Winner of R64 M3", "Loser of
+ * WB Final", etc — derived by walking the SAME advancement mappings
+ * applyStatusChange uses, but forwards: for each match, where its winner/loser
+ * lands. Returns a map from a match's id to its slot-A/slot-B labels. Used as
+ * placeholder text so an upcoming match reads as the feeder that will fill it,
+ * while the admin can still type a real team name to override.
+ */
+export function computeSlotDefaults(
+  matches: BracketMatch[],
+  division: Division,
+  teamCount: TeamCount,
+): Map<string, { a?: string; b?: string }> {
+  const wbRounds = wbRoundsFor(teamCount);
+  const lbRounds = lbRoundsFor(teamCount);
+  const out = new Map<string, { a?: string; b?: string }>();
+
+  const destId = (side: BracketSide, round: number, match: number) =>
+    side === 'winners'      ? `${division}-wb-r${round}-m${match}` :
+    side === 'losers'       ? `${division}-lb-r${round}-m${match}` :
+    side === 'finals-semi'  ? `${division}-finals-semi-m${match}` :
+    side === 'finals-final' ? `${division}-finals-final` :
+                              `${division}-finals-third`;
+
+  function setDefault(side: BracketSide, round: number, match: number, slot: 'a' | 'b', label: string) {
+    const id = destId(side, round, match);
+    const entry = out.get(id) ?? {};
+    entry[slot] = label;
+    out.set(id, entry);
+  }
+
+  function feeder(m: BracketMatch): string {
+    if (m.side === 'winners') return m.round === wbRounds ? 'WB Final' : `R${teamCount / 2 ** (m.round - 1)} M${m.matchNumber}`;
+    if (m.side === 'losers')  return m.round === lbRounds ? 'LB Final' : `LB R${m.round} M${m.matchNumber}`;
+    if (m.side === 'finals-semi') return `Semi ${m.matchNumber}`;
+    return '';
+  }
+
+  for (const m of matches) {
+    if (m.division !== division) continue;
+    const w = `Winner of ${feeder(m)}`;
+    const l = `Loser of ${feeder(m)}`;
+
+    if (m.side === 'winners') {
+      if (m.round === wbRounds) {
+        setDefault('finals-semi', 1, 1, 'a', w);
+        setDefault('finals-semi', 1, 2, 'a', l);
+      } else {
+        const ns: 'a' | 'b' = m.matchNumber % 2 === 1 ? 'a' : 'b';
+        setDefault('winners', m.round + 1, Math.ceil(m.matchNumber / 2), ns, w);
+        const lb = wbLossToLBEntry(m.round, m.matchNumber);
+        setDefault('losers', lb.round, lb.match, lb.slot, l);
+      }
+    } else if (m.side === 'losers') {
+      if (m.round === lbRounds) {
+        setDefault('finals-semi', 1, 2, 'b', w);
+        setDefault('finals-semi', 1, 1, 'b', l);
+      } else {
+        const adv = lbWinnerNext(m.round, m.matchNumber, lbRounds);
+        if (adv) setDefault('losers', adv.round, adv.match, adv.slot, w);
+      }
+    } else if (m.side === 'finals-semi') {
+      const ns: 'a' | 'b' = m.matchNumber === 1 ? 'a' : 'b';
+      setDefault('finals-final', 1, 1, ns, w);
+      setDefault('finals-third', 1, 1, ns, l);
+    }
+  }
+
+  return out;
 }
 
 // ── mock teams ─────────────────────────────────────────────────────────────────

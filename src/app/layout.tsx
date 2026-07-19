@@ -5,6 +5,7 @@ import { Suspense } from "react";
 import ShaderBackground from "@/components/ShaderBackground";
 import BottomNav from "@/components/BottomNav";
 import AdminSidePanel from "@/components/AdminSidePanel";
+import MainShell from "@/components/MainShell";
 import { AdminPanelProvider } from "@/components/admin/AdminPanelContext";
 import "./globals.css";
 
@@ -48,10 +49,10 @@ export default function RootLayout({
         <body className="min-h-dvh antialiased" suppressHydrationWarning>
           <AdminPanelProvider>
             <ShaderBackground />
-            {/* pb leaves room for the fixed glass bottom nav */}
-            <main className="relative z-10 mx-auto flex min-h-dvh w-full max-w-md flex-col px-4 pb-32 pt-6">
-              {children}
-            </main>
+            {/* Centered reading column for most routes; full-width for the
+                bracket / matches pages (see MainShell). pb on the centered
+                variant leaves room for the fixed glass bottom nav. */}
+            <MainShell>{children}</MainShell>
             <BottomNav />
             {/* Suspense required because AdminSidePanel uses useSearchParams() */}
             <Suspense>

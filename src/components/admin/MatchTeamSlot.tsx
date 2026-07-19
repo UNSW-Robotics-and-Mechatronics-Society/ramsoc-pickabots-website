@@ -54,12 +54,13 @@ export function TimeCell({ minute, onCommit, className }: TimeCellProps) {
 // commit/validation behavior, which let a drop be accepted in one view and
 // silently reverted in the other.
 export function MatchTeamInput({
-  value, datalistId, onCommit, isValid,
+  value, datalistId, onCommit, isValid, placeholder = "Team…",
 }: {
   value: string;
   datalistId: string;
   onCommit: (v: string) => void;
   isValid?: (v: string) => boolean;
+  placeholder?: string;
 }) {
   const [local, setLocal]     = useState(value);
   const committed              = useRef(value);
@@ -87,11 +88,11 @@ export function MatchTeamInput({
     <input
       list={datalistId}
       value={local}
-      placeholder="Team…"
+      placeholder={placeholder}
       onChange={e => setLocal(e.target.value)}
       onBlur={() => { if (local !== committed.current) commit(local); }}
       onKeyDown={e => { if (e.key === 'Enter') commit(local); }}
-      className="min-w-0 flex-1 bg-transparent text-[0.6rem] outline-none placeholder:text-foreground/20 truncate"
+      className="min-w-0 flex-1 bg-transparent text-[0.6rem] outline-none placeholder:text-foreground/40 placeholder:italic truncate"
     />
   );
 }
@@ -104,12 +105,14 @@ export type SlotRowProps = {
   isValid?: (v: string) => boolean;
   onNameCommit: (n: string) => void;
   onScoreDelta: (d: number) => void;
+  /** Default placeholder shown when the slot is empty (e.g. "Winner of R64 M3"). */
+  placeholder?: string;
 };
 
 // Defined as a stable, named component (not inline) so React never remounts
 // it — an inline component here previously caused the input to lose focus
 // after every keystroke.
-export function SlotRow({ slotData, won, lost, datalistId, isValid, onNameCommit, onScoreDelta }: SlotRowProps) {
+export function SlotRow({ slotData, won, lost, datalistId, isValid, onNameCommit, onScoreDelta, placeholder }: SlotRowProps) {
   return (
     <div
       className={cn(
@@ -118,7 +121,7 @@ export function SlotRow({ slotData, won, lost, datalistId, isValid, onNameCommit
         lost && "opacity-40",
       )}
     >
-      <MatchTeamInput value={slotData.teamName} datalistId={datalistId} onCommit={onNameCommit} isValid={isValid} />
+      <MatchTeamInput value={slotData.teamName} datalistId={datalistId} onCommit={onNameCommit} isValid={isValid} placeholder={placeholder} />
       {won  && <span className="shrink-0 text-amber-300 text-[0.55rem]">★</span>}
       {lost && <span className="shrink-0 text-red-400/70 text-[0.55rem]">✗</span>}
       <button

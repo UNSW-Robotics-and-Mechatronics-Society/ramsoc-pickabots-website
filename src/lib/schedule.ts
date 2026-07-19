@@ -1,4 +1,4 @@
-import { type BracketMatch } from "@/lib/mock-data";
+import { type BracketMatch, type Division, type MatchStatus } from "@/lib/mock-data";
 
 export type ConcurrentRings = 1 | 2 | 3 | 4;
 
@@ -20,7 +20,61 @@ export type MatchSchedule = {
   concurrentRings: ConcurrentRings;
   matchMinutes: number;
   gapMinutes: number;
+  // Dedicated rings for ad-hoc exhibition matches — kept entirely separate
+  // from the bracket rings so they never affect the tournament schedule. The
+  // admin adds these rings/matches by hand; the roller never puts bracket
+  // matches into them.
+  exhibitionRings?: RingMatch[][];
 };
+
+/**
+ * Derives active/next/todo statuses from the schedule for one division.
+ * Each ring is independent: the first non-completed/non-skipped match in
+ * that ring's own queue → active, the second → next. This guarantees at most
+ * one active and one next match PER RING (so the totals never exceed the ring
+ * count). Completed and skipped statuses are always preserved.
+ *
+ * Shared by the admin editor and the public bracket / match-list views so all
+ * three show the same, ring-capped statuses.
+ */
+export function applyScheduleStatus(
+  matches: BracketMatch[],
+  schedule: MatchSchedule,
+  division: Division,
+): BracketMatch[] {
+  const byId = new Map(matches.map(m => [m.id, m]));
+
+  const activeSet = new Set<string>();
+  const nextSet   = new Set<string>();
+
+  // Bracket rings AND exhibition rings each get their own active/next.
+  for (const ring of [...schedule.rings, ...(schedule.exhibitionRings ?? [])]) {
+    // Only READY matches (both teams known) can be active/next — an upcoming
+    // match whose teams aren't decided yet is shown for its schedule slot but
+    // stays "to-do", never a "waiting" active/biddable match.
+    const readyPending = ring
+      .map(e => e.matchId)
+      .filter(id => {
+        const m = byId.get(id);
+        return m && m.status !== 'completed' && m.status !== 'skipped'
+          && !!m.slotA.teamName && !!m.slotB.teamName;
+      });
+    if (readyPending[0]) activeSet.add(readyPending[0]);
+    if (readyPending[1]) nextSet.add(readyPending[1]);
+  }
+
+  return matches.map(m => {
+    if (m.division !== division) return m;
+    if (m.status === 'completed' || m.status === 'skipped') return m;
+
+    const newStatus: MatchStatus =
+      activeSet.has(m.id) ? 'active' :
+      nextSet.has(m.id)   ? 'next'   :
+      'todo';
+
+    return m.status === newStatus ? m : { ...m, status: newStatus };
+  });
+}
 
 export function formatTime(minute: number): string {
   const h = Math.floor(minute / 60);
@@ -176,6 +230,148 @@ export function editMatchTime(schedule: MatchSchedule, matchId: string, newMinut
 }
 
 /**
+ * Rolling schedule. Playable matches (both teams known, or already played) are
+ * laid out first and get the early time slots; the still-upcoming matches (teams
+ * TBD) are appended after them so you can still see roughly when future rounds
+ * play — but they always sort last, so ready matches keep the early slots and
+ * (via applyScheduleStatus's readiness check) an upcoming match is never made
+ * active/biddable. This is what keeps adding rings safe: only ready matches can
+ * ever be active, so extra rings never surface "waiting" active matches.
+ *
+ * Rules per division:
+ *  - Keep existing placements (order, times, manual reordering) for ready/played
+ *    matches.
+ *  - Drop byes (auto-completed) and skipped matches entirely.
+ *  - Exhibition matches are always kept (admin-managed, filled in by hand).
+ *  - Append newly-ready matches, then the upcoming/TBD matches, to whichever
+ *    ring frees up earliest (empty rings start "now").
+ *
+ * Idempotent: rolling an already-rolled schedule leaves it unchanged.
+ */
+export function rollSchedule(
+  schedule: MatchSchedule,
+  matches: BracketMatch[],
+  division: string,
+  /** Ignore existing placements and re-spread every match across the ring count
+   *  (used when the ring count changes, so adding/removing a ring rebalances). */
+  redistribute = false,
+): MatchSchedule {
+  const dur = slotDuration(schedule);
+  const byId = new Map(matches.map(m => [m.id, m]));
+
+  function schedulable(id: string): boolean {
+    const m = byId.get(id);
+    if (!m || m.division !== division) return false;
+    if (m.status === 'skipped') return false;
+    if (m.side === 'exhibition') return false;                // exhibition matches live in their own rings, not bracket rings
+    if (isByeMatch(m)) return false;                          // auto-completed bye, never played
+    return !!m.slotA.teamName && !!m.slotB.teamName;          // both teams known = ready (completed real matches too)
+  }
+
+  const ringCount = Math.max(1, schedule.concurrentRings);
+
+  // 1. Start empty when redistributing (re-spread everything); otherwise keep
+  //    still-schedulable placements (preserves order/time/manual reorder).
+  const rings: RingMatch[][] = redistribute
+    ? Array.from({ length: ringCount }, () => [])
+    : Array.from({ length: ringCount }, (_, ri) =>
+        (schedule.rings[ri] ?? []).filter(e => schedulable(e.matchId)));
+
+  // 2. Schedulable matches for this division not yet placed = newly ready.
+  const placed = new Set(rings.flat().map(e => e.matchId));
+  const order = defaultScheduleOrder(matches, division);
+  const orderIndex = new Map(order.map((id, i) => [id, i] as const));
+  const newlyReady = matches
+    .filter(m => m.division === division && !placed.has(m.id) && schedulable(m.id))
+    .map(m => m.id)
+    .sort((a, b) => (orderIndex.get(a) ?? Number.MAX_SAFE_INTEGER) - (orderIndex.get(b) ?? Number.MAX_SAFE_INTEGER));
+
+  // 3. Append newly-ready, then still-upcoming (empty/TBD) matches — load-
+  //    balanced by ring length. Upcoming matches are shown for their schedule
+  //    slot but, since their teams aren't known, applyScheduleStatus never
+  //    makes them active/next (they stay "to-do").
+  function appendToShortestRing(id: string) {
+    let best = 0;
+    for (let ri = 1; ri < ringCount; ri++) if (rings[ri].length < rings[best].length) best = ri;
+    rings[best].push({ matchId: id, startMinute: 0 });
+  }
+  for (const id of newlyReady) appendToShortestRing(id);
+  const placedNow = new Set(rings.flat().map(e => e.matchId));
+  for (const upId of order.filter(id => !placedNow.has(id))) appendToShortestRing(upId);
+
+  // 4. Re-time by position: ring slot k gets base + k*dur. This keeps the whole
+  //    schedule contiguous (consecutive matches exactly one slot apart, no gaps
+  //    that grow as results come in) and parallel across rings — and makes the
+  //    result deterministic + idempotent regardless of prior times. `base`
+  //    preserves a manually-set start time (the earliest slot in the schedule).
+  const existingStarts = [...schedule.rings.flat(), ...(schedule.exhibitionRings ?? []).flat()].map(e => e.startMinute);
+  const base = existingStarts.length ? Math.min(...existingStarts) : START_MINUTE;
+  const retimed = rings.map(ring => ring.map((e, k) => ({ ...e, startMinute: base + k * dur })));
+
+  // Preserve the exhibition rings (admin-managed): drop matches that were
+  // deleted or skipped, keep the rest (including blank ones being set up), and
+  // re-time them the same way. Empty exhibition rings are kept so you can add to them.
+  const exhibitionRings = (schedule.exhibitionRings ?? []).map(ring =>
+    ring
+      .filter(e => {
+        const m = byId.get(e.matchId);
+        return m && m.division === division && m.side === 'exhibition' && m.status !== 'skipped';
+      })
+      .map((e, k) => ({ ...e, startMinute: base + k * dur })),
+  );
+
+  return { ...schedule, rings: retimed, exhibitionRings };
+}
+
+/**
+ * Insert a match at the front of a ring's PENDING section — right before its
+ * current active (first non-completed) match. The new match takes the old
+ * active match's time slot; the old active match and everything after it shift
+ * down one slot (so the old active becomes "next"). Completed matches at the
+ * front keep their frozen times.
+ */
+export function prependMatchToRing(
+  schedule: MatchSchedule,
+  matches: BracketMatch[],
+  ringIndex: number,
+  matchId: string,
+): MatchSchedule {
+  const dur = slotDuration(schedule);
+  const rings = schedule.rings.map((ring, ri) => {
+    if (ri !== ringIndex) return ring;
+    const firstPending = ring.findIndex(e => !isCompleted(matches, e.matchId));
+    const insertAt = firstPending === -1 ? ring.length : firstPending;
+    const startMinute = ring[insertAt]?.startMinute
+      ?? (ring[insertAt - 1] ? ring[insertAt - 1].startMinute + dur : START_MINUTE);
+    const before = ring.slice(0, insertAt);
+    const after  = ring.slice(insertAt).map(e => ({ ...e, startMinute: e.startMinute + dur }));
+    return [...before, { matchId, startMinute }, ...after];
+  });
+  return { ...schedule, rings };
+}
+
+// ── exhibition rings ─────────────────────────────────────────────────────────
+// Dedicated rings for ad-hoc matches, entirely separate from the bracket rings.
+
+/** Add a new, empty exhibition ring (a dedicated column for ad-hoc matches). */
+export function addExhibitionRing(schedule: MatchSchedule): MatchSchedule {
+  return { ...schedule, exhibitionRings: [...(schedule.exhibitionRings ?? []), []] };
+}
+
+/** Remove an exhibition ring by index (its matches should be deleted by the caller). */
+export function removeExhibitionRing(schedule: MatchSchedule, index: number): MatchSchedule {
+  return { ...schedule, exhibitionRings: (schedule.exhibitionRings ?? []).filter((_, i) => i !== index) };
+}
+
+/** Append a match id to an exhibition ring's queue (time is normalised by rollSchedule). */
+export function addMatchToExhibitionRing(schedule: MatchSchedule, index: number, matchId: string): MatchSchedule {
+  const exhibitionRings = (schedule.exhibitionRings ?? []).map((ring, i) =>
+    i === index ? [...ring, { matchId, startMinute: START_MINUTE }] : ring,
+  );
+  return { ...schedule, exhibitionRings };
+}
+
+/**
  * Returns match IDs in tournament day order:
  *
  * Alternates WB and LB by round index (WB1, LB1, WB2, LB2, …) until WB
@@ -187,11 +383,24 @@ export function editMatchTime(schedule: MatchSchedule, matchId: string, newMinut
  * and N) play their first match last — e.g. 8 matches → [4,5,3,6,2,7,1,8].
  * All other rounds use natural match order (M1 → MN).
  */
+/**
+ * A match auto-completed as a bye — one slot has a team, the other is empty,
+ * and it's marked completed (the present team advanced without playing). These
+ * never actually happen on a ring, so they're skipped in the schedule.
+ */
+export function isByeMatch(m: { status?: string; slotA?: { teamName?: string }; slotB?: { teamName?: string } }): boolean {
+  const aEmpty = !m.slotA?.teamName;
+  const bEmpty = !m.slotB?.teamName;
+  return m.status === 'completed' && aEmpty !== bEmpty;
+}
+
 export function defaultScheduleOrder(
-  matches: Array<{ id: string; division: string; side: string; round: number; matchNumber: number }>,
+  matches: Array<{ id: string; division: string; side: string; round: number; matchNumber: number; status?: string; slotA?: { teamName?: string }; slotB?: { teamName?: string } }>,
   division: string,
 ): string[] {
-  const div = matches.filter(m => m.division === division);
+  // Skip bye matches (auto-completed, never played) so they don't clutter the
+  // schedule / match list.
+  const div = matches.filter(m => m.division === division && !isByeMatch(m));
 
   // Expand from the center pair outward.  For N=8 → [4,5,3,6,2,7,1,8].
   function middleFirst(n: number): number[] {
