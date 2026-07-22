@@ -104,7 +104,8 @@ export type SlotRowProps = {
   datalistId: string;
   isValid?: (v: string) => boolean;
   onNameCommit: (n: string) => void;
-  onScoreDelta: (d: number) => void;
+  /** Undefined means scoring is locked for this match — buttons render as disabled. */
+  onScoreDelta?: (d: number) => void;
   /** Default placeholder shown when the slot is empty (e.g. "Winner of R64 M3"). */
   placeholder?: string;
 };
@@ -113,6 +114,7 @@ export type SlotRowProps = {
 // it — an inline component here previously caused the input to lose focus
 // after every keystroke.
 export function SlotRow({ slotData, won, lost, datalistId, isValid, onNameCommit, onScoreDelta, placeholder }: SlotRowProps) {
+  const locked = onScoreDelta === undefined;
   return (
     <div
       className={cn(
@@ -125,13 +127,15 @@ export function SlotRow({ slotData, won, lost, datalistId, isValid, onNameCommit
       {won  && <span className="shrink-0 text-amber-300 text-[0.55rem]">★</span>}
       {lost && <span className="shrink-0 text-red-400/70 text-[0.55rem]">✗</span>}
       <button
-        onClick={e => { e.stopPropagation(); onScoreDelta(-1); }}
-        className="shrink-0 px-0.5 text-[0.65rem] text-foreground/70 hover:text-foreground"
+        disabled={locked}
+        onClick={e => { e.stopPropagation(); onScoreDelta!(-1); }}
+        className={cn("shrink-0 px-0.5 text-[0.65rem]", locked ? "cursor-not-allowed opacity-20" : "text-foreground/70 hover:text-foreground")}
       >−</button>
       <span className="shrink-0 w-3.5 text-center text-[0.65rem] tabular-nums">{slotData.score}</span>
       <button
-        onClick={e => { e.stopPropagation(); onScoreDelta(1); }}
-        className="shrink-0 px-0.5 text-[0.65rem] text-foreground/70 hover:text-foreground"
+        disabled={locked}
+        onClick={e => { e.stopPropagation(); onScoreDelta!(1); }}
+        className={cn("shrink-0 px-0.5 text-[0.65rem]", locked ? "cursor-not-allowed opacity-20" : "text-foreground/70 hover:text-foreground")}
       >+</button>
     </div>
   );

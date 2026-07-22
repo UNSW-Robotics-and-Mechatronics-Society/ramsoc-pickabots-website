@@ -31,8 +31,8 @@ export type BracketMatch = {
   targetScore: number;
   status: MatchStatus;
   // Whether the public may place bids on this match. Only meaningful while the
-  // match is active (on the ring); the admin toggles it to open/lock bidding.
-  // Defaults open so an active match accepts bids immediately.
+  // match is active (on the ring); the admin toggles it open after betting closes.
+  // Defaults closed — admin must explicitly open bidding.
   biddingOpen: boolean;
 };
 
@@ -116,7 +116,7 @@ export function generateDoubleElimBracket(teamCount: TeamCount, division: Divisi
         slotB: { teamName: '', score: 0 },
         targetScore: 2,
         status: 'todo',
-        biddingOpen: true,
+        biddingOpen: false,
       });
     }
   }
@@ -135,7 +135,7 @@ export function generateDoubleElimBracket(teamCount: TeamCount, division: Divisi
         slotB: { teamName: '', score: 0 },
         targetScore: 2,
         status: 'todo',
-        biddingOpen: true,
+        biddingOpen: false,
       });
     }
   }
