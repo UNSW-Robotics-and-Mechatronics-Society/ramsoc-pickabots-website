@@ -58,3 +58,8 @@ export function useTeamFilter(matches: BracketMatch[], onAdd?: (name: string) =>
 export function isMatchDimmed(m: BracketMatch, filterSet: Set<string>): boolean {
   return filterSet.size > 0 && !filterSet.has(m.slotA.teamName) && !filterSet.has(m.slotB.teamName);
 }
+
+/** True when a team filter is active and one of this match's slots is a selected team. */
+export function isMatchSelected(m: BracketMatch, filterSet: Set<string>): boolean {
+  return filterSet.size > 0 && (filterSet.has(m.slotA.teamName) || filterSet.has(m.slotB.teamName));
+}

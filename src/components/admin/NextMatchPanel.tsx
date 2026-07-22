@@ -31,7 +31,7 @@ export default function NextMatchPanel({ matches, division, teamCount }: Props) 
       // active before next
       if (a.status !== b.status) return a.status === 'active' ? -1 : 1;
       // winners before losers before finals day
-      const sideOrder = { winners: 0, losers: 1, 'finals-semi': 2, 'finals-third': 3, 'finals-final': 4 };
+      const sideOrder = { winners: 0, losers: 1, 'finals-semi': 2, 'finals-third': 3, 'finals-final': 4, exhibition: 5 };
       if (a.side !== b.side) return sideOrder[a.side] - sideOrder[b.side];
       if (a.round !== b.round) return a.round - b.round;
       return a.matchNumber - b.matchNumber;

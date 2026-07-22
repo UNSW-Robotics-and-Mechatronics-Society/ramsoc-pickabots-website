@@ -3,10 +3,11 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   type BracketMatch, type Division, type TeamCount,
-  wbRoundsFor, lbRoundsFor, lbRoundLabel, winner, findTeamTargetMatch,
+  wbRoundsFor, lbRoundsFor, lbRoundLabel, winner, findTeamTargetMatch, computeSlotDefaults,
 } from '@/lib/mock-data'
-import { type MatchSchedule, formatTime } from '@/lib/schedule'
-import { useTeamFilter, isMatchDimmed } from '@/lib/teamFilter'
+import { type MatchSchedule, formatTime, applyScheduleStatus } from '@/lib/schedule'
+import { useTeamFilter, isMatchDimmed, isMatchSelected } from '@/lib/teamFilter'
+import { useAdminPanels } from '@/components/admin/AdminPanelContext'
 import BracketZoomPan, { type BracketZoomPanHandle, type FocusTarget } from './BracketZoomPan'
 import { ROUND_W, CONN_W, SLOT_H, MatchCard } from './BracketMatchCard'
 import TeamFilterBar from './TeamFilterBar'
@@ -69,10 +70,10 @@ function ConnectorSVG({ fromMatches, height }: { fromMatches: BracketMatch[]; he
 type RegisterMatchRef = (id: string, el: HTMLDivElement | null) => void
 
 function RoundColumn({
-  matches, height, registerRef, filterSet, times,
+  matches, height, registerRef, filterSet, times, slotDefaults,
 }: {
   matches: BracketMatch[]; height: number; registerRef?: RegisterMatchRef
-  filterSet?: Set<string>; times: Map<string, number>
+  filterSet?: Set<string>; times: Map<string, number>; slotDefaults?: Map<string, { a?: string; b?: string }>
 }) {
   return (
     <div style={{ width: ROUND_W, height, display: 'flex', flexDirection: 'column', justifyContent: 'space-around', flexShrink: 0 }}>
@@ -87,6 +88,8 @@ function RoundColumn({
             match={m}
             time={times.has(m.id) ? formatTime(times.get(m.id)!) : undefined}
             dimmed={!!filterSet?.size && !filterSet.has(m.slotA.teamName) && !filterSet.has(m.slotB.teamName)}
+            selected={!!filterSet?.size && (filterSet.has(m.slotA.teamName) || filterSet.has(m.slotB.teamName))}
+            defaults={slotDefaults?.get(m.id)}
           />
         </div>
       ))}
@@ -95,16 +98,16 @@ function RoundColumn({
 }
 
 function BracketStrip({
-  rounds, matchesByRound, height, registerRef, filterSet, times,
+  rounds, matchesByRound, height, registerRef, filterSet, times, slotDefaults,
 }: {
   rounds: number[]; matchesByRound: BracketMatch[][]; height: number; registerRef?: RegisterMatchRef
-  filterSet?: Set<string>; times: Map<string, number>
+  filterSet?: Set<string>; times: Map<string, number>; slotDefaults?: Map<string, { a?: string; b?: string }>
 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'stretch', height }}>
       {rounds.map((round, i) => (
         <div key={i} style={{ display: 'flex', alignItems: 'stretch' }}>
-          <RoundColumn matches={matchesByRound[i]} height={height} registerRef={registerRef} filterSet={filterSet} times={times} />
+          <RoundColumn matches={matchesByRound[i]} height={height} registerRef={registerRef} filterSet={filterSet} times={times} slotDefaults={slotDefaults} />
           {i < rounds.length - 1 && matchesByRound[i].length >= 2 && (
             <ConnectorSVG fromMatches={matchesByRound[i]} height={height} />
           )}
@@ -145,7 +148,11 @@ function computeDefaultRound(byRound: BracketMatch[][], roundsCount: number): Ro
 export default function BracketPage({ matches, teamCount, schedules }: Props) {
   const [division, setDivision] = useState<Division>('standards')
   const [view, setView]         = useState<BracketView>('all')
-  const [fullscreen, setFullscreen] = useState(false)
+  // Full-screen lives in the shared app context (not local state) so it can
+  // also drive the bottom nav / admin side-panel out of the way. Reset it on
+  // unmount so leaving the page can never leave the flag stuck on.
+  const { bracketFullscreen: fullscreen, setBracketFullscreen: setFullscreen } = useAdminPanels()
+  useEffect(() => () => setFullscreen(false), [setFullscreen])
   // Each side-filter remembers its own round selection independently —
   // switching filters never carries a pick over from another filter.
   // Unset (no entry yet) falls back to the computed "earliest active round".
@@ -165,12 +172,20 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
   const wbRounds = wbRoundsFor(teamCount)
   const lbRounds = lbRoundsFor(teamCount)
 
-  const divMatches = useMemo(() => matches.filter(m => m.division === division), [matches, division])
   const schedule = schedules[division]
+  // Re-derive active/next/todo from the schedule so at most one match per ring
+  // is active (and one next) — the public bracket shows the same ring-capped
+  // statuses as the admin view, not whatever raw status happens to be stored.
+  const divMatches = useMemo(
+    () => applyScheduleStatus(matches, schedule, division).filter(m => m.division === division),
+    [matches, schedule, division],
+  )
   const timeByMatchId = useMemo(
     () => new Map(schedule.rings.flat().map(e => [e.matchId, e.startMinute])),
     [schedule],
   )
+  // Feeder placeholders for empty slots ("Winner of R64 M3", etc).
+  const slotDefaults = useMemo(() => computeSlotDefaults(matches, division, teamCount), [matches, division, teamCount])
   const wbByRound = Array.from({ length: wbRounds }, (_, i) =>
     divMatches.filter(m => m.side === 'winners' && m.round === i + 1).sort((a, b) => a.matchNumber - b.matchNumber))
   const lbByRound = Array.from({ length: lbRounds }, (_, i) =>
@@ -200,6 +215,10 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
 
   function isDimmed(m: BracketMatch): boolean {
     return isMatchDimmed(m, filterSet)
+  }
+
+  function isSelected(m: BracketMatch): boolean {
+    return isMatchSelected(m, filterSet)
   }
 
   function timeFor(matchId: string): string | undefined {
@@ -274,7 +293,7 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
           <div style={{ width: ROUND_W, height, display: 'flex', flexDirection: 'column', justifyContent: 'space-around', flexShrink: 0 }}>
             {finalsSemis.map(m => (
               <div key={m.id} ref={el => registerMatchRef(m.id, el)}>
-                <MatchCard match={m} time={timeFor(m.id)} dimmed={isDimmed(m)} />
+                <MatchCard match={m} time={timeFor(m.id)} dimmed={isDimmed(m)} selected={isSelected(m)} defaults={slotDefaults.get(m.id)} />
               </div>
             ))}
           </div>
@@ -292,7 +311,7 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
                   Grand Final
                 </span>
                 <div ref={el => registerMatchRef(finalsFinal.id, el)}>
-                  <MatchCard match={finalsFinal} time={timeFor(finalsFinal.id)} dimmed={isDimmed(finalsFinal)} />
+                  <MatchCard match={finalsFinal} time={timeFor(finalsFinal.id)} dimmed={isDimmed(finalsFinal)} selected={isSelected(finalsFinal)} defaults={slotDefaults.get(finalsFinal.id)} />
                 </div>
               </div>
             )}
@@ -302,7 +321,7 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
                   3rd Place
                 </span>
                 <div ref={el => registerMatchRef(finalsThird.id, el)}>
-                  <MatchCard match={finalsThird} time={timeFor(finalsThird.id)} dimmed={isDimmed(finalsThird)} />
+                  <MatchCard match={finalsThird} time={timeFor(finalsThird.id)} dimmed={isDimmed(finalsThird)} selected={isSelected(finalsThird)} defaults={slotDefaults.get(finalsThird.id)} />
                 </div>
               </div>
             )}
@@ -370,6 +389,7 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
             registerRef={registerMatchRef}
             filterSet={filterSet}
             times={timeByMatchId}
+            slotDefaults={slotDefaults}
           />
         </div>
       </div>
@@ -429,37 +449,36 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
       display: 'flex', flexDirection: 'column',
       minHeight: fullscreen ? undefined : '100dvh',
       paddingBottom: fullscreen ? 0 : 88,
+      // Full-screen is transparent like the normal view, so the app's shader
+      // background shows through (the bottom nav is hidden separately, so
+      // nothing else bleeds in).
       ...(fullscreen ? { position: 'fixed' as const, inset: 0, zIndex: 60 } : {}),
     }}>
-      {/* Page header — position+zIndex is deliberate: backdropFilter below
-          creates its own stacking context, which otherwise traps the team
-          filter's dropdown (position: absolute, overflows past this box)
-          behind the canvas sibling underneath, since that sibling comes
-          later in DOM order. This keeps the whole header (dropdown and
-          all) painted — and clickable — above the canvas. */}
+      {/* Page header — hidden entirely in full-screen (which shows only the
+          bracket + an exit button). position+zIndex is deliberate:
+          backdropFilter below creates its own stacking context, which
+          otherwise traps the team filter's dropdown (position: absolute,
+          overflows past this box) behind the canvas sibling underneath, since
+          that sibling comes later in DOM order. This keeps the whole header
+          (dropdown and all) painted — and clickable — above the canvas. */}
+      {!fullscreen && (
       <div style={{
         flexShrink: 0, position: 'relative', zIndex: 5,
-        padding: fullscreen ? '10px 16px 6px' : '28px 16px 8px',
+        padding: '28px 16px 8px',
         background: 'rgba(4,2,12,0.7)',
         backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
         borderBottom: '1px solid rgba(255,107,0,0.12)',
       }}>
-        {!fullscreen && (
-          <>
-            <div style={{ fontSize: '0.42rem', letterSpacing: 8, fontWeight: 900, color: 'rgba(255,107,0,0.5)', textTransform: 'uppercase', marginBottom: 6 }}>
-              ◆ PICKABOTS 2026 ◆
-            </div>
-            <div style={{ fontSize: '1.6rem', fontWeight: 900, letterSpacing: 4, color: '#FF6B00', textTransform: 'uppercase', textShadow: '0 0 24px rgba(255,107,0,0.5), 0 0 48px rgba(255,60,0,0.2)' }}>
-              BRACKET
-            </div>
-          </>
-        )}
+        <div style={{ fontSize: '0.42rem', letterSpacing: 8, fontWeight: 900, color: 'rgba(255,107,0,0.5)', textTransform: 'uppercase', marginBottom: 6 }}>
+          ◆ PICKABOTS 2026 ◆
+        </div>
+        <div style={{ fontSize: '1.6rem', fontWeight: 900, letterSpacing: 4, color: '#FF6B00', textTransform: 'uppercase', textShadow: '0 0 24px rgba(255,107,0,0.5), 0 0 48px rgba(255,60,0,0.2)' }}>
+          BRACKET
+        </div>
 
-        {/* Division toggle, plus Reset View / Full Screen on the same line
-            — its own row (not just flex-wrap order in a shared row) so it
-            can't get bumped onto a third line by the filter row below at
-            in-between widths. */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: fullscreen ? 0 : 12, flexWrap: 'wrap' }}>
+        {/* Division toggle on the left; Full Screen + Reset on the right,
+            all on one line. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', gap: 6 }}>
             {(['standards', 'open'] as Division[]).map(d => (
               <button key={d} onClick={() => setDivision(d)} style={pillStyle(division === d)}>
@@ -469,11 +488,11 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
           </div>
 
           <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
-            <button onClick={() => zoomPanRef.current?.resetView()} style={pillStyle(false)}>
-              ⟲ Reset View
+            <button onClick={() => setFullscreen(true)} style={pillStyle(false)}>
+              ⛶ Full Screen
             </button>
-            <button onClick={() => setFullscreen(f => !f)} style={pillStyle(fullscreen)}>
-              {fullscreen ? '✕ Exit' : '⛶ Full Screen'}
+            <button onClick={() => zoomPanRef.current?.resetView()} style={pillStyle(false)}>
+              ⟲ Reset
             </button>
           </div>
         </div>
@@ -537,6 +556,7 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
           />
         </div>
       </div>
+      )}
 
       {/* Bracket canvas — pinch/pan/zoom scoped to just this area */}
       <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
@@ -560,26 +580,7 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
             ✕
           </button>
         )}
-
-        {fullscreen && (
-          <div className="rotate-hint" style={{
-            position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)',
-            padding: '5px 12px', borderRadius: 999,
-            background: 'rgba(4,2,12,0.85)', border: '1px solid rgba(255,107,0,0.3)',
-            fontSize: '0.5rem', fontWeight: 900, letterSpacing: 1, color: 'rgba(255,255,255,0.6)',
-            textTransform: 'uppercase', pointerEvents: 'none', zIndex: 10,
-          }}>
-            ↻ Rotate for a wider view
-          </div>
-        )}
       </div>
-
-      <style>{`
-        .rotate-hint { display: none; }
-        @media (orientation: portrait) and (max-width: 600px) {
-          .rotate-hint { display: block; }
-        }
-      `}</style>
     </div>
   )
 }

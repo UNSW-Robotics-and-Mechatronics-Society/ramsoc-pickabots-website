@@ -2,12 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  type BracketMatch, type Division, type MatchStatus, type Team, type TeamCount,
+  type BracketMatch, type Division, type Team, type TeamCount,
   generateDoubleElimBracket, transferBracket,
 } from "@/lib/mock-data";
 import {
   type MatchSchedule,
-  generateSchedule, defaultScheduleOrder, START_MINUTE,
+  generateSchedule, applyScheduleStatus, rollSchedule, START_MINUTE,
 } from "@/lib/schedule";
 import { cn } from "@/lib/cn";
 import { useAdminPanels, type PanelId } from "./AdminPanelContext";
@@ -162,25 +162,33 @@ export default function AdminPageClient({ division, initialTeams, initialBracket
     const otherMatches = generateDoubleElimBracket(n, otherDiv);
     const newMatches   = [...transferred, ...otherMatches];
     setMatches(newMatches);
-    // Rebuild schedules for both divisions, preserving ring count and timing params
-    setSchedules(prev => ({
-      [division]: generateSchedule(
-        defaultScheduleOrder(newMatches, division),
-        prev[division].concurrentRings,
-        prev[division].rings[0]?.[0]?.startMinute ?? START_MINUTE,
-        prev[division].matchMinutes,
-        prev[division].gapMinutes,
-      ),
-      [otherDiv]: generateSchedule(
-        defaultScheduleOrder(newMatches, otherDiv),
-        prev[otherDiv].concurrentRings,
-        prev[otherDiv].rings[0]?.[0]?.startMinute ?? START_MINUTE,
-        prev[otherDiv].matchMinutes,
-        prev[otherDiv].gapMinutes,
-      ),
-    } as Record<Division, MatchSchedule>));
+    // Rebuild schedules for both divisions as rolling schedules (only the
+    // currently-playable matches), preserving ring count and timing params.
+    setSchedules(prev => {
+      const rebuild = (d: Division) => rollSchedule(
+        generateSchedule(
+          [],
+          prev[d].concurrentRings,
+          prev[d].rings[0]?.[0]?.startMinute ?? START_MINUTE,
+          prev[d].matchMinutes,
+          prev[d].gapMinutes,
+        ),
+        newMatches,
+        d,
+      );
+      return { [division]: rebuild(division), [otherDiv]: rebuild(otherDiv) } as Record<Division, MatchSchedule>;
+    });
     setTeamCount(n);
     setPending(null);
+  }
+
+  // Any change to matches re-rolls the current division's schedule: newly-ready
+  // matches (teams just decided by a completed feeder) get appended, anything
+  // no longer playable is dropped — keeping the match list a rolling list of
+  // only-playable matches.
+  function commitMatches(next: BracketMatch[]) {
+    setMatches(next);
+    setSchedules(prev => ({ ...prev, [division]: rollSchedule(prev[division], next, division) }));
   }
 
   // ── build panel list for MultiPanelSplit ─────────────────────────────────────
@@ -223,7 +231,7 @@ export default function AdminPageClient({ division, initialTeams, initialBracket
               division={division}
               teamCount={teamCount}
               schedule={schedules[division]}
-              onMatchesChange={setMatches}
+              onMatchesChange={commitMatches}
               onScheduleChange={s => setSchedules(prev => ({ ...prev, [division]: s }))}
             />
           </div>
@@ -238,7 +246,7 @@ export default function AdminPageClient({ division, initialTeams, initialBracket
           onScheduleChange={s =>
             setSchedules(prev => ({ ...prev, [division]: s }))
           }
-          onMatchesChange={setMatches}
+          onMatchesChange={commitMatches}
         />
       ) : (
         <BettingPanel />

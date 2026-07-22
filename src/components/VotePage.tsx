@@ -1,5 +1,6 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { getBrowserSupabase } from '@/lib/supabase-browser'
 import Header from './Header'
 import Ring from './Ring'
 import NextMatchCard from './NextMatchCard'

@@ -40,6 +40,8 @@ interface RingProps {
 export default function Ring({ match, bet, odds, onVote, onUndo }: RingProps) {
   const meta = COMP_META[match.comp_type] ?? COMP_META.standard
   const voted = !!bet
+  // Sides are non-interactive once the user has bet OR bidding is closed.
+  const locked = voted || !bettingOpen
   const [lWord] = useState(rw)
   const [rWord] = useState(rw)
 
