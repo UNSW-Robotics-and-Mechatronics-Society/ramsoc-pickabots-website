@@ -71,6 +71,10 @@ export function applyScheduleStatus(
       activeSet.has(m.id) ? 'active' :
       nextSet.has(m.id)   ? 'next'   :
       'todo';
+  if (newStatus === 'active' && m.status !== 'active') {
+      return { ...m, status: 'active', biddingOpen: false };
+    }
+
 
     return m.status === newStatus ? m : { ...m, status: newStatus };
   });
