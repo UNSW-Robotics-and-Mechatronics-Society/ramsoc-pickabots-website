@@ -20,8 +20,8 @@ export default function MainShell({ children }: { children: ReactNode }) {
   const fullBleed = FULL_BLEED.some(p => pathname.startsWith(p));
 
   const className = fullBleed
-    ? "relative z-10 flex min-h-dvh w-full flex-col"
-    : "relative z-10 mx-auto flex min-h-dvh w-full max-w-md flex-col px-4 pb-32 pt-6";
+    ? "relative flex min-h-dvh w-full flex-col"
+    : "relative mx-auto flex min-h-dvh w-full max-w-md flex-col px-4 pb-32 pt-6";
 
   return <main className={className}>{children}</main>;
 }

@@ -6,6 +6,7 @@ import {
 } from "@/lib/mock-data";
 import { type MatchSchedule, generateSchedule, applyScheduleStatus, rollSchedule } from "@/lib/schedule";
 import { toDbCategory, fromDbCategory } from "./division";
+import { payoutMatch } from "./payouts";
 
 const DIVISIONS: Division[] = ["standards", "open"];
 const DEFAULT_TEAM_COUNT: TeamCount = 16;
@@ -117,11 +118,23 @@ async function syncCompletedMatches(beforeStatusById: Map<string, MatchStatus>, 
   for (const m of after) {
     if (m.status !== "completed" || beforeStatusById.get(m.id) === m.status) continue;
     const w = winner(m);
+    console.log("[syncCompletedMatches] newly completed:", m.id, "winner:", w);
     if (!w) continue;
-    await supabase
+    const winnerSide = w === "a" ? "left" : "right";
+    const { data: matchRows, error: updateErr } = await supabase
       .from("matches")
-      .update({ winner_side: w === "a" ? "left" : "right", is_active: false })
-      .eq("bracket_match_id", m.id);
+      .update({ winner_side: winnerSide, is_active: false })
+      .eq("bracket_match_id", m.id)
+      .select("id");
+
+    console.log("[syncCompletedMatches] matches updated:", matchRows, "err:", updateErr);
+
+    for (const row of matchRows ?? []) {
+      console.log("[syncCompletedMatches] paying out match", row.id, "winner:", winnerSide);
+      await payoutMatch(row.id, winnerSide).catch(err =>
+        console.error("[syncCompletedMatches] payout failed for match", row.id, err)
+      );
+    }
   }
 }
 

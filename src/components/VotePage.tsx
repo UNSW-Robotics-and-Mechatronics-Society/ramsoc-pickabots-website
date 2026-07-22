@@ -7,7 +7,7 @@ import NextMatchCard from './NextMatchCard'
 import BetModal from './BetModal'
 import ComicFlash, { useComicFlash } from './ComicFlash'
 import Toast, { useToast } from './Toast'
-import type { Match, Bet } from '@/lib/types'
+import type { Match, Bet, OddsData } from '@/lib/types'
 
 interface ModalCtx {
   matchId: string
@@ -26,6 +26,7 @@ export default function VotePage() {
   const [error, setError]       = useState<string | null>(null)
   const [modalCtx, setModalCtx] = useState<ModalCtx | null>(null)
   const [filter, setFilter]     = useState<CompFilter>('standard')
+  const [odds, setOdds]         = useState<Record<string, OddsData>>({})
 
   const { state: flash, trigger: triggerFlash } = useComicFlash()
   const { toast, show: showToast } = useToast()
@@ -60,14 +61,40 @@ export default function VotePage() {
     load()
   }, [])
 
+  // ── Poll live odds for active matches ────────────────────────────────────────
+  useEffect(() => {
+    const activeIds = matches.filter(m => m.is_active).map(m => m.id)
+    if (activeIds.length === 0) return
+    async function fetchOdds() {
+      const results = await Promise.all(
+        activeIds.map(id => fetch(`/api/matches/${id}/odds`).then(r => r.json()).catch(() => null))
+      )
+      setOdds(prev => {
+        const next = { ...prev }
+        activeIds.forEach((id, i) => { if (results[i]) next[id] = results[i] })
+        return next
+      })
+    }
+    fetchOdds()
+    const interval = setInterval(fetchOdds, 3000)
+    return () => clearInterval(interval)
+  }, [matches])
+
   // ── Live match updates ────────────────────────────────────────────────────────
   // Re-pull just the matches (bidding open/close, scores, resolution) so the
   // page reflects admin changes without a manual refresh. Uses Supabase
   // Realtime when the anon key is configured, else falls back to light polling.
   const refetchMatches = useCallback(async () => {
     try {
-      const res = await fetch('/api/matches')
-      if (res.ok) setMatches(await res.json())
+      const [matchRes, userRes] = await Promise.all([
+        fetch('/api/matches'),
+        fetch('/api/user'),
+      ])
+      if (matchRes.ok) setMatches(await matchRes.json())
+      if (userRes.ok) {
+        const userData = await userRes.json()
+        setTokens(userData.tokens)
+      }
     } catch {
       /* transient — next event/tick retries */
     }
@@ -157,7 +184,11 @@ export default function VotePage() {
   const nextMatches   = matches.filter(m => !m.is_active && m.winner_side === null)
   // Bossbot matches aren't gated by the Standard/Open filter — they're a
   // one-off exhibition category, not part of either division's bracket.
-  const visibleActive = activeMatches.filter(m => m.comp_type === 'bossbot' || m.comp_type === filter)
+  const visibleActive = activeMatches.filter(m =>
+    (m.comp_type === 'bossbot' || m.comp_type === filter) &&
+    m.left_name && m.left_name !== 'TBD' &&
+    m.right_name && m.right_name !== 'TBD'
+  )
 
   return (
     <>
@@ -217,6 +248,7 @@ export default function VotePage() {
             key={match.id}
             match={match}
             bet={bets[match.id] ?? null}
+            odds={odds[match.id] ?? null}
             bettingOpen={match.bidding_open}
             onVote={side => handleVote(
               match.id, side,

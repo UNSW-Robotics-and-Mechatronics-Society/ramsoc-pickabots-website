@@ -315,16 +315,6 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
                 </div>
               </div>
             )}
-            {finalsThird && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <span style={{ textAlign: 'center', fontSize: '0.5rem', fontWeight: 900, letterSpacing: 2, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase' }}>
-                  3rd Place
-                </span>
-                <div ref={el => registerMatchRef(finalsThird.id, el)}>
-                  <MatchCard match={finalsThird} time={timeFor(finalsThird.id)} dimmed={isDimmed(finalsThird)} selected={isSelected(finalsThird)} defaults={slotDefaults.get(finalsThird.id)} />
-                </div>
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -337,7 +327,6 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
         {[
           { medal: '🥇', name: first,  bg: 'rgba(255,215,0,0.22)',  color: '#FFD700' },
           { medal: '🥈', name: second, bg: 'rgba(200,200,200,0.16)', color: '#e5e5e5' },
-          { medal: '🥉', name: third,  bg: 'rgba(255,140,60,0.16)', color: '#ffb066' },
         ].map(p => (
           <div key={p.medal} style={{
             width: '100%', display: 'flex', alignItems: 'center', gap: 8,

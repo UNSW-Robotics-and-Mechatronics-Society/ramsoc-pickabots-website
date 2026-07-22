@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import BotSvg from './BotSvg'
-import type { Match, Bet } from '@/lib/types'
+import type { Match, Bet, OddsData } from '@/lib/types'
 
 export const COMP_META = {
   standard: { color: '#FF6B00', label: '⚙ STANDARD' },
@@ -17,13 +17,14 @@ const GRAIN = `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http:
 interface RingProps {
   match: Match
   bet: Bet | null
+  odds: OddsData | null
   /** Whether bidding is currently open. When false, vote buttons are disabled and bets are locked. */
   bettingOpen?: boolean
   onVote: (side: 'left' | 'right') => void
   onUndo: () => void
 }
 
-export default function Ring({ match, bet, bettingOpen = true, onVote, onUndo }: RingProps) {
+export default function Ring({ match, bet, odds, bettingOpen = true, onVote, onUndo }: RingProps) {
   const meta = COMP_META[match.comp_type] ?? COMP_META.standard
   const voted = !!bet
   // Sides are non-interactive once the user has bet OR bidding is closed.
@@ -78,10 +79,12 @@ export default function Ring({ match, bet, bettingOpen = true, onVote, onUndo }:
         <Side bot={{ name: match.left_name, color: match.left_color, shape: match.left_shape }}
               side="left"  isBossbot={match.is_bossbot} ringColor={meta.color}
               impactWord={lWord} disabled={locked}
+              mult={odds && !odds.noData ? odds.multiplierIfLeftWins : null}
               onClick={() => !locked && onVote('left')} />
         <Side bot={{ name: match.right_name, color: match.right_color, shape: match.right_shape }}
               side="right" isBossbot={match.is_bossbot} ringColor={meta.color}
               impactWord={rWord} disabled={locked}
+              mult={odds && !odds.noData ? odds.multiplierIfRightWins : null}
               onClick={() => !locked && onVote('right')} />
 
         {/* VS / ⚡ badge */}
@@ -109,7 +112,7 @@ export default function Ring({ match, bet, bettingOpen = true, onVote, onUndo }:
 
       {/* Comp badge */}
       <div style={{
-        position: 'absolute', bottom: 8, left: 10, zIndex: 12,
+        position: 'absolute', top: 8, left: 10, zIndex: 12,
         background: `color-mix(in srgb, ${meta.color} 8%, rgba(0,0,0,0.45))`,
         border: `1px solid color-mix(in srgb, ${meta.color} 30%, transparent)`,
         backdropFilter: 'blur(8px)',
@@ -142,8 +145,18 @@ export default function Ring({ match, bet, bettingOpen = true, onVote, onUndo }:
               {bet.side === 'left' ? match.left_name : match.right_name}
             </div>
             <div style={{ fontSize: '0.78rem', fontWeight: 900, color: '#FFD700', letterSpacing: 1 }}>🪙 {bet.amount}</div>
-            <div style={{ fontSize: '0.58rem', color: '#4cff00', marginTop: 2, letterSpacing: 2 }}>RETURN · {bet.amount * 2}</div>
-            {bettingOpen ? (
+            {(() => {
+              const mult = odds && !odds.noData
+                ? (bet.side === 'left' ? odds.multiplierIfLeftWins : odds.multiplierIfRightWins)
+                : null
+              const expectedReturn = mult != null ? Math.round(bet.amount * mult) : bet.amount * 2
+              return (
+                <div style={{ fontSize: '0.58rem', color: '#4cff00', marginTop: 2, letterSpacing: 2 }}>
+                  RETURN · {expectedReturn}
+                </div>
+              )
+            })()}
+        {bettingOpen ? (
               <button onClick={onUndo} style={{
                 display: 'block', marginTop: 8, fontSize: '0.52rem', color: '#444',
                 background: 'none', border: 'none', textDecoration: 'underline', fontWeight: 900, letterSpacing: 2,
@@ -176,6 +189,45 @@ export default function Ring({ match, bet, bettingOpen = true, onVote, onUndo }:
         </div>
       )}
 
+      {/* Odds footer — zIndex 25 keeps it above the voted overlay (zIndex 20) */}
+      <div style={{
+        position: 'relative', zIndex: 25,
+        borderTop: '1px solid rgba(255,255,255,0.07)',
+        display: 'flex', overflow: 'hidden', height: 28,
+      }}>
+        {/* Blue fill */}
+        <div style={{
+          position: 'absolute', left: 0, top: 0, bottom: 0,
+          width: `${odds && !odds.noData ? odds.pctLeft : 50}%`,
+          background: 'rgba(26,108,255,0.18)', transition: 'width 0.5s ease',
+        }}/>
+        {/* Red fill */}
+        <div style={{
+          position: 'absolute', right: 0, top: 0, bottom: 0,
+          width: `${odds && !odds.noData ? odds.pctRight : 50}%`,
+          background: 'rgba(255,45,45,0.18)', transition: 'width 0.5s ease',
+        }}/>
+        {/* Left label */}
+        <div style={{
+          flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
+          justifyContent: 'center', padding: '0 10px', position: 'relative',
+          borderRight: '1px solid rgba(255,255,255,0.07)',
+        }}>
+          <span style={{ fontSize: '0.65rem', fontWeight: 900, color: odds && !odds.noData ? '#fff' : '#2a2a2a' }}>
+            {odds && !odds.noData ? `${odds.pctLeft}%` : '—'}
+          </span>
+        </div>
+        {/* Right label */}
+        <div style={{
+          flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
+          justifyContent: 'center', padding: '0 10px', position: 'relative',
+        }}>
+          <span style={{ fontSize: '0.65rem', fontWeight: 900, color: odds && !odds.noData ? '#fff' : '#2a2a2a' }}>
+            {odds && !odds.noData ? `${odds.pctRight}%` : '—'}
+          </span>
+        </div>
+      </div>
+
       <style>{`@keyframes fadeIn { from{opacity:0} to{opacity:1} }`}</style>
     </div>
   )
@@ -189,10 +241,11 @@ interface SideProps {
   ringColor: string
   impactWord: string
   disabled: boolean
+  mult: number | null
   onClick: () => void
 }
 
-function Side({ bot, side, isBossbot, ringColor, impactWord, disabled, onClick }: SideProps) {
+function Side({ bot, side, isBossbot, ringColor, impactWord, disabled, mult, onClick }: SideProps) {
   const [hovered, setHovered] = useState(false)
   const isRight = side === 'right'
 
@@ -292,7 +345,7 @@ function Side({ bot, side, isBossbot, ringColor, impactWord, disabled, onClick }
           color: ringColor,
           border: `1px solid color-mix(in srgb, ${ringColor} 30%, transparent)`,
         }}>
-          2× WIN
+          {mult != null ? `~${mult}× WIN` : '? WIN'}
         </div>
       )}
 

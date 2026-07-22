@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import supabase from '@/lib/supabase'
 
-const MAX_BET = 50
+const MAX_BET_FRAC = 0.5
 
 // GET /api/bets — the signed-in user's bets
 export async function GET() {
@@ -28,16 +28,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'match_id, side and amount are required' }, { status: 400 })
   if (!['left', 'right'].includes(side))
     return NextResponse.json({ error: 'side must be "left" or "right"' }, { status: 400 })
-  if (amount < 1 || amount > MAX_BET)
-    return NextResponse.json({ error: `Amount must be 1–${MAX_BET}` }, { status: 400 })
+  if (amount < 1 || !Number.isInteger(amount))
+    return NextResponse.json({ error: 'Amount must be a positive whole number' }, { status: 400 })
 
-  // Match must exist, be live, and have bidding open
+  // Match must exist and be live
   const { data: match } = await supabase
     .from('matches').select('id, is_active, bidding_open').eq('id', match_id).single()
 
   if (!match) return NextResponse.json({ error: 'Match not found' }, { status: 404 })
   if (!match.is_active) return NextResponse.json({ error: 'Match is not accepting bets' }, { status: 400 })
-  if (!match.bidding_open) return NextResponse.json({ error: 'Bidding is closed for this match' }, { status: 400 })
+  if (match.bidding_open === false) return NextResponse.json({ error: 'Bidding is closed for this match' }, { status: 400 })
 
   // One bet per user per match
   const { data: existing } = await supabase
@@ -45,10 +45,14 @@ export async function POST(req: NextRequest) {
 
   if (existing) return NextResponse.json({ error: 'Already bet on this match' }, { status: 409 })
 
-  // Check token balance
-  const { data: user } = await supabase.from('users').select('tokens').eq('id', userId).single()
+  // Check token balance (limit(1) tolerates duplicate rows; real fix: add PK to users table)
+  const { data: userRows } = await supabase.from('users').select('tokens').eq('id', userId).limit(1)
+  const user = userRows?.[0] ?? null
   if (!user || user.tokens < amount)
     return NextResponse.json({ error: 'Not enough tokens' }, { status: 400 })
+  const maxAllowed = Math.floor(user.tokens * MAX_BET_FRAC)
+  if (amount > maxAllowed)
+    return NextResponse.json({ error: `Max bet is 50% of your balance (${maxAllowed} tokens)` }, { status: 400 })
 
   // Deduct tokens
   const { error: deductErr } = await supabase
@@ -89,14 +93,14 @@ export async function DELETE(req: NextRequest) {
 
   if (!match?.is_active)
     return NextResponse.json({ error: 'Cannot undo — match already resolved' }, { status: 400 })
-  if (!match.bidding_open)
+  if (match.bidding_open === false)
     return NextResponse.json({ error: 'Cannot undo — bidding is closed and bets are locked in' }, { status: 400 })
 
   // Delete and refund
   await supabase.from('bets').delete().eq('id', betId)
 
-  const { data: user } = await supabase.from('users').select('tokens').eq('id', userId).single()
-  const newTokens = (user?.tokens ?? 0) + bet.amount
+  const { data: userRows2 } = await supabase.from('users').select('tokens').eq('id', userId).limit(1)
+  const newTokens = (userRows2?.[0]?.tokens ?? 0) + bet.amount
   await supabase.from('users').update({ tokens: newTokens }).eq('id', userId)
 
   return NextResponse.json({ tokens: newTokens })
