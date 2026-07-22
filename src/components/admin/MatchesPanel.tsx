@@ -121,6 +121,9 @@ function MatchCard({
     match.status === 'skipped'   ? 'border-red-400 shadow-[0_0_10px_rgba(248,113,113,0.45)]' :
     'border-white/[0.28]';
 
+  // Scoring only when active AND betting is closed — bets must be locked before scores change.
+  const scoringAllowed = match.status === 'active' && !match.biddingOpen;
+
   function setScore(slot: 'a' | 'b', delta: number) {
     const updated: BracketMatch = {
       ...match,
@@ -228,7 +231,7 @@ function MatchCard({
         datalistId={datalistId}
         isValid={isValidTeamName}
         onNameCommit={n => setName('a', n)}
-        onScoreDelta={d => setScore('a', d)}
+        onScoreDelta={scoringAllowed ? d => setScore('a', d) : undefined}
         placeholder={defaults?.a}
       />
       <div className="border-t border-white/[0.14]" />
@@ -239,7 +242,7 @@ function MatchCard({
         datalistId={datalistId}
         isValid={isValidTeamName}
         onNameCommit={n => setName('b', n)}
-        onScoreDelta={d => setScore('b', d)}
+        onScoreDelta={scoringAllowed ? d => setScore('b', d) : undefined}
         placeholder={defaults?.b}
       />
 

@@ -8,7 +8,7 @@ import {
   winner, applyStatusChange, isTeamNameTaken,
 } from "@/lib/mock-data";
 import {
-  type MatchSchedule,
+  type ConcurrentRings, type MatchSchedule,
   START_MINUTE,
   editMatchTime, generateSchedule, rollSchedule,
 } from "@/lib/schedule";
@@ -69,6 +69,10 @@ function MatchCard({
   const swappable       = match.status === 'todo' || match.status === 'next';
   const isBeingDragged  = draggingId === match.id;
   const isMatchDropTgt  = draggingId !== null && draggingId !== match.id && swappable;
+
+  // Scoring is only allowed when the match is active AND betting is closed.
+  // This ensures bets are locked in before any score is entered.
+  const scoringAllowed = match.status === 'active' && !match.biddingOpen;
 
   function setScore(slot: 'a' | 'b', delta: number) {
     const updated: BracketMatch = {
@@ -142,13 +146,15 @@ function MatchCard({
       <SlotRow
         slotData={match.slotA} won={w === 'a'} lost={w !== null && w !== 'a'}
         datalistId={datalistId} isValid={n => isValidTeamName(match.id, n)}
-        onNameCommit={n => setName('a', n)} onScoreDelta={d => setScore('a', d)}
+        onNameCommit={n => setName('a', n)}
+        onScoreDelta={scoringAllowed ? d => setScore('a', d) : undefined}
       />
       <div className="border-t border-white/[0.14]" />
       <SlotRow
         slotData={match.slotB} won={w === 'b'} lost={w !== null && w !== 'b'}
         datalistId={datalistId} isValid={n => isValidTeamName(match.id, n)}
-        onNameCommit={n => setName('b', n)} onScoreDelta={d => setScore('b', d)}
+        onNameCommit={n => setName('b', n)}
+        onScoreDelta={scoringAllowed ? d => setScore('b', d) : undefined}
       />
 
       <div className="flex items-center justify-between border-t border-white/[0.14] px-1.5 py-1.5">
@@ -310,41 +316,7 @@ function BracketStrip({
   );
 }
 
-// ── bye handling ───────────────────────────────────────────────────────────────
-/**
- * Auto-advances a winners-side match whose bracket slot has no opponent
- * (fewer real teams than bracket capacity). Round 1 byes are known from
- * seeding; a round N>1 "bye" is only resolved once BOTH of its feeder
- * matches have completed, so a genuinely pending 2-team match is never
- * short-circuited.
- */
-function propagateByes(list: BracketMatch[], division: Division, teamCount: TeamCount): BracketMatch[] {
-  const wbRounds = wbRoundsFor(teamCount);
-  for (let round = 1; round <= wbRounds; round++) {
-    for (const m of list.filter(x => x.division === division && x.side === 'winners' && x.round === round)) {
-      const cur = list.find(x => x.id === m.id)!;
-      if (cur.status === 'completed') continue;
 
-      const aFilled = !!cur.slotA.teamName;
-      const bFilled = !!cur.slotB.teamName;
-      if (aFilled === bFilled) continue; // both filled (real match) or both empty (dead) — leave alone
-
-      if (round > 1) {
-        const feeders = list.filter(x =>
-          x.division === division && x.side === 'winners' && x.round === round - 1 &&
-          (x.matchNumber === 2 * cur.matchNumber - 1 || x.matchNumber === 2 * cur.matchNumber),
-        );
-        if (feeders.some(f => f.status !== 'completed')) continue; // a real match is still pending
-      }
-
-      const advancing = aFilled
-        ? { ...cur, slotA: { ...cur.slotA, score: cur.targetScore } }
-        : { ...cur, slotB: { ...cur.slotB, score: cur.targetScore } };
-      list = applyStatusChange(list, advancing, 'completed', teamCount);
-    }
-  }
-  return list;
-}
 
 // ── AdminBracket ───────────────────────────────────────────────────────────────
 type Props = {
@@ -471,16 +443,24 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
   // 'completed'/'active'/'next' or a customized time would be stale and
   // meaningless once the teams that earned that state are gone.
   function applyClearTeams() {
-    const cleared = matches.map(m =>
-      m.division !== division ? m
-        : { ...m, slotA: { teamName: '', score: 0 }, slotB: { teamName: '', score: 0 }, status: 'todo' as MatchStatus }
-    );
+    // Remove exhibition matches for this division entirely (they're ad-hoc and
+    // should be re-added manually after clearing) so they don't leave orphaned
+    // entries that keep exhibition ring columns alive in the schedule.
+    const cleared = matches
+      .filter(m => m.side !== 'exhibition' || m.division !== division)
+      .map(m =>
+        m.division !== division ? m
+          : { ...m, slotA: { teamName: '', score: 0 }, slotB: { teamName: '', score: 0 }, status: 'todo' as MatchStatus }
+      );
     onMatchesChange(cleared);
     // Nothing is playable once teams are gone, so the rolling schedule is empty.
+    // generateSchedule has no exhibitionRings, so rollSchedule drops them too.
+    // Clamp concurrentRings to [1,4] in case old DB data has an out-of-range value.
+    const safeRings = Math.min(4, Math.max(1, schedule.concurrentRings)) as ConcurrentRings;
     onScheduleChange(rollSchedule(
       generateSchedule(
         [],
-        schedule.concurrentRings,
+        safeRings,
         schedule.rings[0]?.[0]?.startMinute ?? START_MINUTE,
         schedule.matchMinutes,
         schedule.gapMinutes,
@@ -541,9 +521,10 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
       };
     });
 
-    // Byes: when there are fewer real teams than bracket slots, the present
-    // (higher-seeded) team auto-advances instead of facing a blank opponent.
-    seeded = propagateByes(seeded, division, teamCount);
+    // Don't propagate byes here — if there are fewer teams than bracket slots
+    // some R1 matches will have one empty slot. The admin handles those manually
+    // (or they auto-complete when scored), rather than pre-marking a wave of
+    // R1/R2 matches as "completed" before the event even starts.
 
     onMatchesChange(seeded);
     // Rebuild as a rolling schedule — only currently-playable matches (real R1

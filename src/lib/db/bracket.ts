@@ -37,8 +37,8 @@ function rowToMatch(r: BracketMatchRow): BracketMatch {
     slotB: { teamName: r.slot_b_name, score: r.slot_b_score },
     targetScore: r.target_score,
     status: r.status as MatchStatus,
-    // Default open for rows created before this column existed.
-    biddingOpen: r.bidding_open ?? true,
+    // Default closed for rows created before this column existed.
+    biddingOpen: r.bidding_open ?? false,
   };
 }
 
@@ -176,9 +176,9 @@ async function reconcileBettingMatches(bracketMatchById: Map<string, BracketMatc
     const desired = {
       comp_type: toDbCategory(bm.division),
       is_active: bm.status === "active",
-      // Bidding open state is driven by the admin's per-match toggle. Default
-      // open so an active match accepts bids immediately unless explicitly locked.
-      bidding_open: bm.biddingOpen ?? true,
+      // Only active matches can have bidding opened; non-active are always closed.
+      // Active matches default closed — admin explicitly opens bidding.
+      bidding_open: bm.status === "active" ? (bm.biddingOpen ?? false) : false,
       left_name: bm.slotA.teamName || "TBD",
       right_name: bm.slotB.teamName || "TBD",
     };

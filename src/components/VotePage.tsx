@@ -188,7 +188,7 @@ export default function VotePage() {
     (m.comp_type === 'bossbot' || m.comp_type === filter) &&
     m.left_name && m.left_name !== 'TBD' &&
     m.right_name && m.right_name !== 'TBD'
-  )
+  ).slice(0, 2)
 
   return (
     <>
