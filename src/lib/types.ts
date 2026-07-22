@@ -25,6 +25,19 @@ export interface Bet {
   botName?: string
 }
 
+export interface OddsData {
+  poolLeft: number
+  poolRight: number
+  totalPool: number
+  votesLeft: number
+  votesRight: number
+  pctLeft: number
+  pctRight: number
+  multiplierIfLeftWins: number | null
+  multiplierIfRightWins: number | null
+  noData: boolean
+}
+
 export interface UserData {
   tokens: number
   bets: Bet[]
