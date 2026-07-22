@@ -89,9 +89,9 @@ export async function DELETE(req: NextRequest) {
   // Confirm match still active AND bidding still open — once bidding is
   // locked, bets are final and can't be undone.
   const { data: match } = await supabase
-    .from('matches').select('is_active, bidding_open').eq('id', bet.match_id).single()
+    .from('matches').select('is_active, bidding_open, winner_side').eq('id', bet.match_id).single()
 
-  if (!match?.is_active)
+  if (!match?.is_active || match.winner_side !== null)
     return NextResponse.json({ error: 'Cannot undo — match already resolved' }, { status: 400 })
   if (match.bidding_open === false)
     return NextResponse.json({ error: 'Cannot undo — bidding is closed and bets are locked in' }, { status: 400 })

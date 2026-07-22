@@ -180,7 +180,7 @@ export default function VotePage() {
   // Only a match the admin has actually put "on the ring" is biddable.
   // "Next" matches (queued, not yet active, not yet resolved) get their own
   // read-only preview segment instead of appearing here.
-  const activeMatches = matches.filter(m => m.is_active)
+  const activeMatches = matches.filter(m => m.is_active && m.winner_side === null)
   const nextMatches   = matches.filter(m => !m.is_active && m.winner_side === null)
   // Bossbot matches aren't gated by the Standard/Open filter — they're a
   // one-off exhibition category, not part of either division's bracket.
