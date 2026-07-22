@@ -12,12 +12,12 @@ export default function ShaderGradientScene() {
           type="waterPlane"
           animate="on"
           uSpeed={0.025}
-          uStrength={2.2}
+          uStrength={1.4}
           uDensity={1.3}
-          uFrequency={4}
-          uAmplitude={5}
-          color1="#FF5500"
-          color2="#3a0800"
+          uFrequency={5}
+          uAmplitude={2.5}
+          color1="#39648e"
+          color2="#0d1e2a"
           color3="#000005"
           rotationX={48}
           rotationY={0}

@@ -15,6 +15,7 @@ import MultiPanelSplit from "./MultiPanelSplit";
 import TeamList        from "./TeamList";
 import AdminBracket    from "./AdminBracket";
 import MatchesPanel, { MIN_MATCH_LIST_W } from "./MatchesPanel";
+import BettingPanel    from "./BettingPanel";
 import ConfirmDialog   from "./ConfirmDialog";
 
 // ── eliminated teams (only LB losers; WB losers still alive in LB) ────────────
@@ -30,7 +31,48 @@ function computeEliminated(matches: BracketMatch[]): Set<string> {
   return out;
 }
 
-const ALL_PANEL_IDS: PanelId[] = ['teams', 'bracket', 'matches'];
+/**
+ * Derives active/next/todo statuses from the schedule for one division.
+ * Each ring is independent: the first non-completed/non-skipped match in
+ * that ring's own queue → active, the second → next. This guarantees
+ * exactly one active match per ring, by construction.
+ * Completed and skipped statuses are always preserved.
+ */
+function applyScheduleStatus(
+  matches: BracketMatch[],
+  schedule: MatchSchedule,
+  division: Division,
+): BracketMatch[] {
+  const byId = new Map(matches.map(m => [m.id, m]));
+
+  const activeSet = new Set<string>();
+  const nextSet   = new Set<string>();
+
+  for (const ring of schedule.rings) {
+    const pending = ring
+      .map(e => e.matchId)
+      .filter(id => {
+        const m = byId.get(id);
+        return m && m.status !== 'completed' && m.status !== 'skipped';
+      });
+    if (pending[0]) activeSet.add(pending[0]);
+    if (pending[1]) nextSet.add(pending[1]);
+  }
+
+  return matches.map(m => {
+    if (m.division !== division) return m;
+    if (m.status === 'completed' || m.status === 'skipped') return m;
+
+    const newStatus: MatchStatus =
+      activeSet.has(m.id) ? 'active' :
+      nextSet.has(m.id)   ? 'next'   :
+      'todo';
+
+    return m.status === newStatus ? m : { ...m, status: newStatus };
+  });
+}
+
+const ALL_PANEL_IDS: PanelId[] = ['teams', 'bracket', 'matches', 'betting'];
 const TEAM_COUNTS: TeamCount[] = [4, 8, 16, 32, 64];
 // Stable reference: 25% / 50% / 25% when all three panels are visible
 const DEFAULT_3_PANEL_DIVIDERS = [25, 75];
@@ -194,7 +236,7 @@ export default function AdminPageClient({ division, initialTeams, initialBracket
             />
           </div>
         </div>
-      ) : (
+      ) : p === 'matches' ? (
         <MatchesPanel
           matches={effectiveMatches}
           division={division}
@@ -206,6 +248,8 @@ export default function AdminPageClient({ division, initialTeams, initialBracket
           }
           onMatchesChange={commitMatches}
         />
+      ) : (
+        <BettingPanel />
       ),
     }));
 

@@ -7,7 +7,7 @@ import NextMatchCard from './NextMatchCard'
 import BetModal from './BetModal'
 import ComicFlash, { useComicFlash } from './ComicFlash'
 import Toast, { useToast } from './Toast'
-import type { Match, Bet } from '@/lib/types'
+import type { Match, Bet, OddsData } from '@/lib/types'
 
 interface ModalCtx {
   matchId: string
@@ -26,6 +26,7 @@ export default function VotePage() {
   const [error, setError]       = useState<string | null>(null)
   const [modalCtx, setModalCtx] = useState<ModalCtx | null>(null)
   const [filter, setFilter]     = useState<CompFilter>('standard')
+  const [odds, setOdds]         = useState<Record<string, OddsData>>({})
 
   const { state: flash, trigger: triggerFlash } = useComicFlash()
   const { toast, show: showToast } = useToast()
@@ -41,15 +42,24 @@ export default function VotePage() {
         ])
         if (!matchRes.ok) throw new Error('Failed to load matches')
         if (!userRes.ok)  throw new Error('Failed to load user data')
-        if (!betsRes.ok)  throw new Error('Failed to load bets')
 
-        const [matchData, userData, betsData] = await Promise.all([matchRes.json(), userRes.json(), betsRes.json()])
+        const matchData = await matchRes.json()
+        const userData  = await userRes.json()
+        const betsData  = betsRes.ok ? await betsRes.json() : []
+        if (!betsRes.ok) console.error('[VotePage] bets load failed:', betsRes.status)
         setMatches(matchData)
         if (userData._supabaseError) console.error('[VotePage] Supabase error:', userData._supabaseError)
         setTokens(userData.tokens)
 
+        const matchMap = new Map((matchData as Match[]).map(m => [m.id, m]))
         const betsByMatch: Record<string, Bet> = {}
-        for (const b of betsData as Bet[]) betsByMatch[b.match_id] = b
+        for (const b of betsData as Bet[]) {
+          const m = matchMap.get(b.match_id)
+          betsByMatch[b.match_id] = {
+            ...b,
+            botName: m ? (b.side === 'left' ? m.left_name : m.right_name) : undefined,
+          }
+        }
         setBets(betsByMatch)
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : 'Unknown error')
@@ -60,31 +70,28 @@ export default function VotePage() {
     load()
   }, [])
 
-  // ── Live match updates ────────────────────────────────────────────────────────
-  // Re-pull just the matches (bidding open/close, scores, resolution) so the
-  // page reflects admin changes without a manual refresh. Uses Supabase
-  // Realtime when the anon key is configured, else falls back to light polling.
-  const refetchMatches = useCallback(async () => {
-    try {
-      const res = await fetch('/api/matches')
-      if (res.ok) setMatches(await res.json())
-    } catch {
-      /* transient — next event/tick retries */
-    }
-  }, [])
-
+  // ── Poll live odds for active matches ────────────────────────────────────────
   useEffect(() => {
-    const sb = getBrowserSupabase()
-    if (sb) {
-      const channel = sb
-        .channel('public:matches')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, () => { refetchMatches() })
-        .subscribe()
-      return () => { sb.removeChannel(channel) }
+    const activeIds = matches.filter(m => m.is_active).map(m => m.id)
+    if (activeIds.length === 0) return
+
+    async function fetchOdds() {
+      const results = await Promise.all(
+        activeIds.map(id =>
+          fetch(`/api/matches/${id}/odds`).then(r => r.json()).catch(() => null)
+        )
+      )
+      setOdds(prev => {
+        const next = { ...prev }
+        activeIds.forEach((id, i) => { if (results[i]) next[id] = results[i] })
+        return next
+      })
     }
-    const id = setInterval(refetchMatches, 5000)
-    return () => clearInterval(id)
-  }, [refetchMatches])
+
+    fetchOdds()
+    const interval = setInterval(fetchOdds, 3000)
+    return () => clearInterval(interval)
+  }, [matches])
 
   // ── Open bet modal ────────────────────────────────────────────────────────────
   function handleVote(matchId: string, side: 'left' | 'right', botName: string, compType: string) {
@@ -105,17 +112,17 @@ export default function VotePage() {
     const current = tokens ?? 0
     if (current < amount) { showToast('Not enough tokens!'); return }
 
-    const optimisticBet: Bet = { id: `pending-${matchId}`, match_id: matchId, side, amount, botName }
+    const optimisticBet: Bet = { id: `pending-${matchId}`, match_id: matchId, side, amount, payout: null, refunded: false, botName }
     setBets(prev => ({ ...prev, [matchId]: optimisticBet }))
     setTokens(current - amount)
     triggerFlash()
     showToast(`🪙 ${amount} locked on ${botName}!`)
 
     try {
-      const res = await fetch('/api/bets', {
+      const res = await fetch(`/api/matches/${matchId}/bet`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ match_id: matchId, side, amount }),
+        body: JSON.stringify({ side, amount }),
       })
       const body = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(body.error ?? 'Bet failed')
@@ -217,7 +224,7 @@ export default function VotePage() {
             key={match.id}
             match={match}
             bet={bets[match.id] ?? null}
-            bettingOpen={match.bidding_open}
+            odds={odds[match.id] ?? null}
             onVote={side => handleVote(
               match.id, side,
               side === 'left' ? match.left_name : match.right_name,
@@ -241,7 +248,7 @@ export default function VotePage() {
         )}
       </main>
 
-      <BetModal ctx={modalCtx} tokens={tokens ?? 0} onConfirm={handleConfirm} onClose={() => setModalCtx(null)} />
+      <BetModal ctx={modalCtx} tokens={tokens ?? 0} odds={modalCtx ? (odds[modalCtx.matchId] ?? null) : null} onConfirm={handleConfirm} onClose={() => setModalCtx(null)} />
       <ComicFlash state={flash} />
       <Toast toast={toast} />
 

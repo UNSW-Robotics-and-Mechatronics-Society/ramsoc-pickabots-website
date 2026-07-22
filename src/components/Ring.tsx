@@ -1,7 +1,22 @@
 'use client'
 import { useState } from 'react'
 import BotSvg from './BotSvg'
-import type { Match, Bet } from '@/lib/types'
+import type { Match, Bet, OddsData } from '@/lib/types'
+
+const SHAPES = ['wedge', 'spinner', 'drum', 'flipper', 'lifter', 'fullbody'] as const
+
+function hashStr(s: string): number {
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0
+  return Math.abs(h)
+}
+
+function pickShape(matchId: string, side: 'left' | 'right'): string {
+  return SHAPES[hashStr(matchId + side) % SHAPES.length]
+}
+
+const LEFT_COLOR  = '#1A6CFF'
+const RIGHT_COLOR = '#FF2D2D'
 
 export const COMP_META = {
   standard: { color: '#FF6B00', label: '⚙ STANDARD' },
@@ -17,13 +32,12 @@ const GRAIN = `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http:
 interface RingProps {
   match: Match
   bet: Bet | null
-  /** Whether bidding is currently open. When false, vote buttons are disabled and bets are locked. */
-  bettingOpen?: boolean
+  odds: OddsData | null
   onVote: (side: 'left' | 'right') => void
   onUndo: () => void
 }
 
-export default function Ring({ match, bet, bettingOpen = true, onVote, onUndo }: RingProps) {
+export default function Ring({ match, bet, odds, onVote, onUndo }: RingProps) {
   const meta = COMP_META[match.comp_type] ?? COMP_META.standard
   const voted = !!bet
   // Sides are non-interactive once the user has bet OR bidding is closed.
@@ -73,16 +87,35 @@ export default function Ring({ match, bet, bettingOpen = true, onVote, onUndo }:
         ))}
       </svg>
 
+      {/* Betting closed banner */}
+      {!voted && match.status === 'closed' && (
+        <div style={{
+          position: 'absolute', top: 0, left: 0, right: 0, zIndex: 15,
+          background: 'rgba(255,170,0,0.08)',
+          borderBottom: '1px solid rgba(255,170,0,0.18)',
+          backdropFilter: 'blur(4px)',
+          padding: '5px 12px',
+          fontSize: '0.48rem', fontWeight: 900,
+          textTransform: 'uppercase', letterSpacing: 4,
+          color: '#FFB800', textAlign: 'center',
+          pointerEvents: 'none',
+        }}>
+          BETTING CLOSED
+        </div>
+      )}
+
       {/* Inner row */}
       <div style={{ display: 'flex', minHeight: 140, position: 'relative', zIndex: 1 }}>
-        <Side bot={{ name: match.left_name, color: match.left_color, shape: match.left_shape }}
+        <Side bot={{ name: match.left_name, color: LEFT_COLOR, shape: pickShape(match.id, 'left') }}
               side="left"  isBossbot={match.is_bossbot} ringColor={meta.color}
-              impactWord={lWord} disabled={locked}
-              onClick={() => !locked && onVote('left')} />
-        <Side bot={{ name: match.right_name, color: match.right_color, shape: match.right_shape }}
+              impactWord={lWord} disabled={voted || match.status !== 'open'}
+              mult={odds && !odds.noData ? odds.multiplierIfLeftWins : null}
+              onClick={() => !voted && match.status === 'open' && onVote('left')} />
+        <Side bot={{ name: match.right_name, color: match.is_bossbot ? '#9B30FF' : RIGHT_COLOR, shape: match.is_bossbot ? 'bossbot' : pickShape(match.id, 'right') }}
               side="right" isBossbot={match.is_bossbot} ringColor={meta.color}
-              impactWord={rWord} disabled={locked}
-              onClick={() => !locked && onVote('right')} />
+              impactWord={rWord} disabled={voted || match.status !== 'open'}
+              mult={odds && !odds.noData ? odds.multiplierIfRightWins : null}
+              onClick={() => !voted && match.status === 'open' && onVote('right')} />
 
         {/* VS / ⚡ badge */}
         <div style={{
@@ -109,7 +142,7 @@ export default function Ring({ match, bet, bettingOpen = true, onVote, onUndo }:
 
       {/* Comp badge */}
       <div style={{
-        position: 'absolute', bottom: 8, left: 10, zIndex: 12,
+        position: 'absolute', top: 8, left: 10, zIndex: 12,
         background: `color-mix(in srgb, ${meta.color} 8%, rgba(0,0,0,0.45))`,
         border: `1px solid color-mix(in srgb, ${meta.color} 30%, transparent)`,
         backdropFilter: 'blur(8px)',
@@ -137,44 +170,111 @@ export default function Ring({ match, bet, bettingOpen = true, onVote, onUndo }:
             boxShadow: '0 0 40px rgba(255,215,0,0.1)',
             backdropFilter: 'blur(12px)',
           }}>
-            <div style={{ fontSize: '0.48rem', fontWeight: 900, color: '#444', textTransform: 'uppercase', letterSpacing: 4 }}>BET LOCKED</div>
+            {/* Header label changes based on resolution state */}
+            <div style={{ fontSize: '0.48rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: 4,
+              color: bet.payout === null ? '#444' : bet.refunded ? '#FFD700' : bet.payout > 0 ? '#4cff00' : '#ff4444',
+            }}>
+              {bet.payout === null ? 'BET LOCKED' : bet.refunded ? 'REFUNDED' : bet.payout > 0 ? 'YOU WON' : 'YOU LOST'}
+            </div>
+
             <div style={{ fontSize: '1rem', fontWeight: 900, color: '#fff', margin: '4px 0', letterSpacing: 1 }}>
               {bet.side === 'left' ? match.left_name : match.right_name}
             </div>
             <div style={{ fontSize: '0.78rem', fontWeight: 900, color: '#FFD700', letterSpacing: 1 }}>🪙 {bet.amount}</div>
-            <div style={{ fontSize: '0.58rem', color: '#4cff00', marginTop: 2, letterSpacing: 2 }}>RETURN · {bet.amount * 2}</div>
-            {bettingOpen ? (
+
+            {/* Return line: real payout when resolved, net-profit estimate when pending */}
+            {bet.payout !== null ? (
+              <div style={{ fontSize: '0.58rem', fontWeight: 900, marginTop: 2, letterSpacing: 2,
+                color: bet.refunded ? '#FFD700' : bet.payout > 0 ? '#4cff00' : '#ff4444',
+              }}>
+                {bet.refunded
+                  ? `REFUNDED · ${bet.payout} 🪙`
+                  : bet.payout > 0
+                    ? `PAYOUT · ${bet.payout} 🪙`
+                    : 'LOST · 0 🪙'}
+              </div>
+            ) : (
+              <div style={{ fontSize: '0.58rem', marginTop: 2, letterSpacing: 2 }}>
+                {(() => {
+                  const mult = bet.side === 'left' ? odds?.multiplierIfLeftWins : odds?.multiplierIfRightWins
+                  if (mult == null) return <span style={{ color: '#444' }}>PROFIT · TBD</span>
+                  const profit = Math.round(bet.amount * mult) - bet.amount
+                  if (profit === 0) return <span style={{ color: '#555' }}>NO PROFIT · no opposing bets</span>
+                  return <span style={{ color: '#4cff00' }}>EST. PROFIT · +{profit} 🪙</span>
+                })()}
+              </div>
+            )}
+
+            {/* Undo only while betting window is open */}
+            {bet.payout === null && match.status === 'open' &&
+              (!match.betting_closes_at || new Date(match.betting_closes_at) > new Date()) && (
               <button onClick={onUndo} style={{
                 display: 'block', marginTop: 8, fontSize: '0.52rem', color: '#444',
                 background: 'none', border: 'none', textDecoration: 'underline', fontWeight: 900, letterSpacing: 2,
               }}>UNDO</button>
-            ) : (
-              <div style={{ marginTop: 8, fontSize: '0.5rem', fontWeight: 900, color: '#888', letterSpacing: 2 }}>🔒 LOCKED IN</div>
             )}
           </div>
         </div>
       )}
 
-      {/* Bidding-closed overlay — shown when bidding is off and the user has NOT bet */}
-      {!voted && !bettingOpen && (
+      {/* Odds footer — zIndex 25 keeps it above the voted overlay (zIndex 20) */}
+      <div style={{
+        position: 'relative', zIndex: 25,
+        borderTop: '1px solid rgba(255,255,255,0.07)',
+        display: 'flex', overflow: 'hidden',
+        pointerEvents: 'none',
+      }}>
+        {/* Colored fill — proportional to each side's odds */}
         <div style={{
-          position: 'absolute', inset: 0, zIndex: 20,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: 'rgba(2,0,6,0.72)', backdropFilter: 'blur(8px)',
-          WebkitBackdropFilter: 'blur(8px)', animation: 'fadeIn 0.25s ease',
+          position: 'absolute', left: 0, top: 0, bottom: 0,
+          width: `${odds && !odds.noData ? odds.pctLeft : 50}%`,
+          background: 'rgba(26,108,255,0.28)',
+          transition: 'width 0.6s ease',
+        }} />
+        <div style={{
+          position: 'absolute', right: 0, top: 0, bottom: 0,
+          width: `${odds && !odds.noData ? odds.pctRight : 50}%`,
+          background: 'rgba(255,45,45,0.28)',
+          transition: 'width 0.6s ease',
+        }} />
+
+        {/* Left half */}
+        <div style={{
+          position: 'relative', zIndex: 2, flex: 1,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          padding: '4px 0',
+          borderRight: '1px solid rgba(255,255,255,0.07)',
         }}>
-          <div style={{
-            background: 'rgba(5,2,14,0.92)', border: '1px solid rgba(255,255,255,0.18)',
-            borderRadius: 12, padding: '10px 20px', textAlign: 'center',
-            backdropFilter: 'blur(12px)',
-          }}>
-            <div style={{ fontSize: '1rem' }}>🔒</div>
-            <div style={{ fontSize: '0.6rem', fontWeight: 900, color: '#fff', marginTop: 4, textTransform: 'uppercase', letterSpacing: 3 }}>
-              Bidding Closed
-            </div>
-          </div>
+          <span style={{ fontSize: '0.65rem', fontWeight: 900, letterSpacing: 1,
+            color: odds && !odds.noData ? '#fff' : '#2a2a2a' }}>
+            {odds && !odds.noData ? `${odds.pctLeft}%` : '—'}
+          </span>
+          {odds && !odds.noData && (
+            <span style={{ fontSize: '0.5rem', fontWeight: 900, letterSpacing: 2, marginTop: 1,
+              color: 'rgba(26,108,255,0.6)' }}>
+              {odds.votesLeft} {odds.votesLeft === 1 ? 'vote' : 'votes'}
+            </span>
+          )}
         </div>
-      )}
+
+        {/* Right half */}
+        <div style={{
+          position: 'relative', zIndex: 2, flex: 1,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          padding: '4px 0',
+        }}>
+          <span style={{ fontSize: '0.65rem', fontWeight: 900, letterSpacing: 1,
+            color: odds && !odds.noData ? '#fff' : '#2a2a2a' }}>
+            {odds && !odds.noData ? `${odds.pctRight}%` : '—'}
+          </span>
+          {odds && !odds.noData && (
+            <span style={{ fontSize: '0.5rem', fontWeight: 900, letterSpacing: 2, marginTop: 1,
+              color: 'rgba(255,45,45,0.6)' }}>
+              {odds.votesRight} {odds.votesRight === 1 ? 'vote' : 'votes'}
+            </span>
+          )}
+        </div>
+      </div>
 
       <style>{`@keyframes fadeIn { from{opacity:0} to{opacity:1} }`}</style>
     </div>
@@ -189,10 +289,11 @@ interface SideProps {
   ringColor: string
   impactWord: string
   disabled: boolean
+  mult: number | null
   onClick: () => void
 }
 
-function Side({ bot, side, isBossbot, ringColor, impactWord, disabled, onClick }: SideProps) {
+function Side({ bot, side, isBossbot, ringColor, impactWord, disabled, mult, onClick }: SideProps) {
   const [hovered, setHovered] = useState(false)
   const isRight = side === 'right'
 
@@ -215,7 +316,7 @@ function Side({ bot, side, isBossbot, ringColor, impactWord, disabled, onClick }
       }}
     >
       {/* Nebula glow on hover */}
-      {hovered && (
+      {hovered && !disabled && (
         <div style={{
           position: 'absolute', inset: 0, pointerEvents: 'none',
           background: `radial-gradient(ellipse at 50% 55%, color-mix(in srgb, ${ringColor} 18%, transparent) 0%, transparent 65%)`,
@@ -224,7 +325,7 @@ function Side({ bot, side, isBossbot, ringColor, impactWord, disabled, onClick }
       )}
 
       {/* Hyperspace warp rings */}
-      {hovered && [0, 0.28, 0.56].map(delay => (
+      {hovered && !disabled && [0, 0.28, 0.56].map(delay => (
         <div key={delay} style={{
           position: 'absolute', left: '50%', top: '44%',
           width: 58, height: 58,
@@ -244,7 +345,7 @@ function Side({ bot, side, isBossbot, ringColor, impactWord, disabled, onClick }
         color: '#FF6B00',
         textShadow: '0 0 12px rgba(255,107,0,0.8), 0 0 24px rgba(255,60,0,0.4)',
         pointerEvents: 'none', zIndex: 5,
-        opacity: hovered ? 1 : 0,
+        opacity: hovered && !disabled ? 1 : 0,
         transform: hovered
           ? `scale(1) rotate(${isRight ? '8deg' : '-8deg'})`
           : `scale(0.4) rotate(${isRight ? '8deg' : '-8deg'})`,
@@ -292,7 +393,7 @@ function Side({ bot, side, isBossbot, ringColor, impactWord, disabled, onClick }
           color: ringColor,
           border: `1px solid color-mix(in srgb, ${ringColor} 30%, transparent)`,
         }}>
-          2× WIN
+          {mult != null ? `~${mult}× WIN` : '? WIN'}
         </div>
       )}
 

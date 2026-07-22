@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
+import type { OddsData } from '@/lib/types'
 
 const MAX_BET_FRAC = 0.5  // max 50% of balance per bet
 
@@ -16,11 +17,12 @@ interface ModalCtx {
 interface BetModalProps {
   ctx: ModalCtx | null
   tokens: number
+  odds: OddsData | null
   onConfirm: (amount: number) => void
   onClose: () => void
 }
 
-export default function BetModal({ ctx, tokens, onConfirm, onClose }: BetModalProps) {
+export default function BetModal({ ctx, tokens, odds, onConfirm, onClose }: BetModalProps) {
   const [amount, setAmount] = useState(10)
   const isOpen = ctx !== null
 
@@ -173,14 +175,47 @@ export default function BetModal({ ctx, tokens, onConfirm, onClose }: BetModalPr
             ))}
           </div>
 
-          {/* Win preview */}
-          <div style={{
-            background: 'rgba(0,40,10,0.4)', border: '1px solid rgba(76,255,0,0.15)', borderRadius: 10,
-            padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12,
-          }}>
-            <span style={{ fontSize: '0.5rem', color: '#4caf50', fontWeight: 900, textTransform: 'uppercase', letterSpacing: 4 }}>Return</span>
-            <span style={{ fontSize: '0.95rem', fontWeight: 900, color: '#69ff4c', letterSpacing: 1 }}>+{amount} → {amount * 2} 🪙</span>
-          </div>
+          {/* Win preview — future parimutuel profit (includes user's own bet in the pool) */}
+          {(() => {
+            // Compute what the multiplier will be AFTER this bet lands, so
+            // the estimate responds to the slider and isn't just "current mult × amount".
+            let futureMult: number | null = null
+            if (ctx && odds) {
+              const newLeft  = odds.poolLeft  + (ctx.side === 'left'  ? amount : 0)
+              const newRight = odds.poolRight + (ctx.side === 'right' ? amount : 0)
+              const newTotal = newLeft + newRight
+              const winPool  = ctx.side === 'left' ? newLeft : newRight
+              if (winPool > 0) futureMult = newTotal / winPool
+            }
+
+            const grossReturn = futureMult != null ? Math.round(amount * futureMult) : null
+            const profit      = grossReturn != null ? grossReturn - amount : null
+
+            const isNoOpposition = profit === 0
+            return (
+              <div style={{
+                background: isNoOpposition ? 'rgba(30,20,0,0.4)' : 'rgba(0,40,10,0.4)',
+                border: `1px solid ${isNoOpposition ? 'rgba(255,180,0,0.15)' : 'rgba(76,255,0,0.15)'}`,
+                borderRadius: 10, padding: '10px 14px', marginBottom: 8,
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.5rem', color: isNoOpposition ? '#998844' : '#4caf50', fontWeight: 900, textTransform: 'uppercase', letterSpacing: 4 }}>
+                    Est. Profit
+                  </span>
+                  <span style={{ fontSize: '0.95rem', fontWeight: 900, color: isNoOpposition ? '#cc9900' : '#69ff4c', letterSpacing: 1 }}>
+                    {profit != null ? (profit > 0 ? `+${profit} 🪙` : '0 🪙') : '? 🪙'}
+                  </span>
+                </div>
+                <div style={{ marginTop: 4, fontSize: '0.42rem', color: '#444', fontWeight: 900, textTransform: 'uppercase', letterSpacing: 3, textAlign: 'right' }}>
+                  {futureMult != null
+                    ? isNoOpposition
+                      ? 'no opposing bets — stake returned if you win'
+                      : `~${Math.round(futureMult * 100) / 100}× payout · shifts as bets come in`
+                    : 'first bet — odds TBD'}
+                </div>
+              </div>
+            )
+          })()}
 
           <div style={{ textAlign: 'center', fontSize: '0.48rem', color: '#333', fontWeight: 900, textTransform: 'uppercase', letterSpacing: 4, marginBottom: 14 }}>
             Max 50% of balance · <strong style={{ color: '#555' }}>{cap}</strong> credits

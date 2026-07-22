@@ -13,6 +13,9 @@ export interface Match {
   is_active: boolean
   bidding_open: boolean
   winner_side: 'left' | 'right' | null
+  status: 'open' | 'closed' | 'resolved'
+  betting_closes_at: string | null
+  resolved_at: string | null
   created_at: string
 }
 
@@ -21,8 +24,23 @@ export interface Bet {
   match_id: string
   side: 'left' | 'right'
   amount: number
+  payout: number | null
+  refunded: boolean
   // Client-side only, derived from match data
   botName?: string
+}
+
+export interface OddsData {
+  poolLeft: number
+  poolRight: number
+  totalPool: number
+  votesLeft: number
+  votesRight: number
+  pctLeft: number
+  pctRight: number
+  multiplierIfLeftWins: number | null
+  multiplierIfRightWins: number | null
+  noData: boolean
 }
 
 export interface UserData {

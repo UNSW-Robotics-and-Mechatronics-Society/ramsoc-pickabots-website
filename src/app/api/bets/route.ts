@@ -10,7 +10,7 @@ export async function GET() {
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { data, error } = await supabase
-    .from('bets').select('id, match_id, side, amount').eq('user_id', userId)
+    .from('bets').select('id, match_id, side, amount, payout, refunded').eq('user_id', userId)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data)
@@ -82,15 +82,14 @@ export async function DELETE(req: NextRequest) {
 
   if (!bet) return NextResponse.json({ error: 'Bet not found' }, { status: 404 })
 
-  // Confirm match still active AND bidding still open — once bidding is
-  // locked, bets are final and can't be undone.
+  // Confirm betting window is still open
   const { data: match } = await supabase
-    .from('matches').select('is_active, bidding_open').eq('id', bet.match_id).single()
+    .from('matches').select('status, betting_closes_at').eq('id', bet.match_id).single()
 
-  if (!match?.is_active)
-    return NextResponse.json({ error: 'Cannot undo — match already resolved' }, { status: 400 })
-  if (!match.bidding_open)
-    return NextResponse.json({ error: 'Cannot undo — bidding is closed and bets are locked in' }, { status: 400 })
+  if (!match || match.status !== 'open')
+    return NextResponse.json({ error: 'Cannot undo — betting is closed' }, { status: 400 })
+  if (match.betting_closes_at && new Date(match.betting_closes_at) < new Date())
+    return NextResponse.json({ error: 'Cannot undo — betting window has passed' }, { status: 400 })
 
   // Delete and refund
   await supabase.from('bets').delete().eq('id', betId)

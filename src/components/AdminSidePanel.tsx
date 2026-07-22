@@ -11,6 +11,7 @@ const PANEL_LABELS: { id: PanelId; label: string }[] = [
   { id: 'teams',   label: 'Teams' },
   { id: 'bracket', label: 'Bracket' },
   { id: 'matches', label: 'Matches' },
+  { id: 'betting', label: 'Betting' },
 ];
 
 export default function AdminSidePanel() {
