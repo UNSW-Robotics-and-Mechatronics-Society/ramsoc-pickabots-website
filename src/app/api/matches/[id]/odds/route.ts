@@ -21,10 +21,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const total = odds.totalPool
   const noData = total === 0
 
+  const votesLeft  = (bets ?? []).filter(b => b.side === 'left').length
+  const votesRight = (bets ?? []).filter(b => b.side === 'right').length
+
   return NextResponse.json({
     poolLeft: odds.poolA,
     poolRight: odds.poolB,
     totalPool: total,
+    votesLeft,
+    votesRight,
     pctLeft:  noData ? 50 : Math.round(odds.poolA / total * 100),
     pctRight: noData ? 50 : Math.round(odds.poolB / total * 100),
     multiplierIfLeftWins:  odds.multiplierIfAWins,

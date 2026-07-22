@@ -33,6 +33,8 @@ export interface OddsData {
   poolLeft: number
   poolRight: number
   totalPool: number
+  votesLeft: number
+  votesRight: number
   pctLeft: number
   pctRight: number
   multiplierIfLeftWins: number | null

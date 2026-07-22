@@ -16,11 +16,18 @@ export async function GET() {
   }
 
   if (!user) {
-    // First visit — create the row, tagging it with a display name for the leaderboard
     const clerkUser = await currentUser()
     const displayName = clerkUser?.fullName || clerkUser?.username || 'Anonymous Pilot'
-    const { error: insertErr } = await supabase
+
+    let { error: insertErr } = await supabase
       .from('users').insert({ id: userId, tokens: 100, display_name: displayName })
+
+    // If display_name column doesn't exist yet (schema not migrated), retry without it
+    if (insertErr?.message?.includes('display_name')) {
+      ;({ error: insertErr } = await supabase
+        .from('users').insert({ id: userId, tokens: 100 }))
+    }
+
     if (insertErr) {
       console.error('[GET /api/user] insert failed:', insertErr)
       return NextResponse.json({ tokens: 100, _supabaseError: insertErr.message })

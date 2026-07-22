@@ -15,6 +15,7 @@ import MultiPanelSplit from "./MultiPanelSplit";
 import TeamList        from "./TeamList";
 import AdminBracket    from "./AdminBracket";
 import MatchesPanel, { MIN_MATCH_LIST_W } from "./MatchesPanel";
+import BettingPanel    from "./BettingPanel";
 import ConfirmDialog   from "./ConfirmDialog";
 
 // ── eliminated teams (only LB losers; WB losers still alive in LB) ────────────
@@ -71,7 +72,7 @@ function applyScheduleStatus(
   });
 }
 
-const ALL_PANEL_IDS: PanelId[] = ['teams', 'bracket', 'matches'];
+const ALL_PANEL_IDS: PanelId[] = ['teams', 'bracket', 'matches', 'betting'];
 const TEAM_COUNTS: TeamCount[] = [4, 8, 16, 32, 64];
 // Stable reference: 25% / 50% / 25% when all three panels are visible
 const DEFAULT_3_PANEL_DIVIDERS = [25, 75];
@@ -227,7 +228,7 @@ export default function AdminPageClient({ division, initialTeams, initialBracket
             />
           </div>
         </div>
-      ) : (
+      ) : p === 'matches' ? (
         <MatchesPanel
           matches={effectiveMatches}
           division={division}
@@ -239,6 +240,8 @@ export default function AdminPageClient({ division, initialTeams, initialBracket
           }
           onMatchesChange={setMatches}
         />
+      ) : (
+        <BettingPanel />
       ),
     }));
 

@@ -41,15 +41,24 @@ export default function VotePage() {
         ])
         if (!matchRes.ok) throw new Error('Failed to load matches')
         if (!userRes.ok)  throw new Error('Failed to load user data')
-        if (!betsRes.ok)  throw new Error('Failed to load bets')
 
-        const [matchData, userData, betsData] = await Promise.all([matchRes.json(), userRes.json(), betsRes.json()])
+        const matchData = await matchRes.json()
+        const userData  = await userRes.json()
+        const betsData  = betsRes.ok ? await betsRes.json() : []
+        if (!betsRes.ok) console.error('[VotePage] bets load failed:', betsRes.status)
         setMatches(matchData)
         if (userData._supabaseError) console.error('[VotePage] Supabase error:', userData._supabaseError)
         setTokens(userData.tokens)
 
+        const matchMap = new Map((matchData as Match[]).map(m => [m.id, m]))
         const betsByMatch: Record<string, Bet> = {}
-        for (const b of betsData as Bet[]) betsByMatch[b.match_id] = b
+        for (const b of betsData as Bet[]) {
+          const m = matchMap.get(b.match_id)
+          betsByMatch[b.match_id] = {
+            ...b,
+            botName: m ? (b.side === 'left' ? m.left_name : m.right_name) : undefined,
+          }
+        }
         setBets(betsByMatch)
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : 'Unknown error')
@@ -102,7 +111,7 @@ export default function VotePage() {
     const current = tokens ?? 0
     if (current < amount) { showToast('Not enough tokens!'); return }
 
-    const optimisticBet: Bet = { id: `pending-${matchId}`, match_id: matchId, side, amount, botName }
+    const optimisticBet: Bet = { id: `pending-${matchId}`, match_id: matchId, side, amount, payout: null, refunded: false, botName }
     setBets(prev => ({ ...prev, [matchId]: optimisticBet }))
     setTokens(current - amount)
     triggerFlash()
