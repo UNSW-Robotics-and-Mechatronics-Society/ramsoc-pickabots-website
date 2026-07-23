@@ -31,29 +31,47 @@ function pillStyle(active: boolean): CSSProperties {
   }
 }
 
+type ViewMode = Division | 'exhibition'
+
 type Props = { matches: BracketMatch[]; teamCount: TeamCount; schedules: Record<Division, MatchSchedule> }
 
 export default function MatchList({ matches, teamCount, schedules }: Props) {
   useRealtimeRefresh(['bracket_matches', 'bracket_config', 'bracket_schedule'])
-  const [division, setDivision] = useState<Division>('standards')
+  const [viewMode, setViewMode] = useState<ViewMode>('standards')
   const [selectedTeam, setSelectedTeam] = useState<string | null>(null)
   const matchRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const zoomPanRef = useRef<BracketZoomPanHandle>(null)
 
-  const schedule = schedules[division]
+  const isExhibition = viewMode === 'exhibition'
+
   // Ring-capped statuses (see applyScheduleStatus): at most one active + one
-  // next per ring, matching the bracket and admin views.
-  const divMatches = useMemo(
-    () => applyScheduleStatus(matches, schedule, division).filter(m => m.division === division),
-    [matches, schedule, division],
-  )
+  // next per ring, matching the bracket and admin views. The bracket-round
+  // view is scoped to one division; Exhibition combines both, since an
+  // ad-hoc match can be added under either division's exhibition ring and
+  // there's no reason to make the user pick a division just to see them.
+  const divMatches = useMemo(() => {
+    const divisions: Division[] = isExhibition ? ['standards', 'open'] : [viewMode as Division]
+    return divisions.flatMap(d => applyScheduleStatus(matches, schedules[d], d).filter(m => m.division === d))
+  }, [matches, schedules, viewMode, isExhibition])
   const matchById = useMemo(() => new Map(divMatches.map(m => [m.id, m])), [divMatches])
-  const slotDefaults = useMemo(() => computeSlotDefaults(matches, division, teamCount), [matches, division, teamCount])
-  // Bracket rings then dedicated exhibition rings, shown as extra columns.
-  const ringCols = [
-    ...schedule.rings.map((ring, i) => ({ ring, label: `Ring ${i + 1}` })),
-    ...(schedule.exhibitionRings ?? []).map((ring, i) => ({ ring, label: `Exhibition ${i + 1}` })),
-  ]
+  const slotDefaults = useMemo(() => {
+    const divisions: Division[] = isExhibition ? ['standards', 'open'] : [viewMode as Division]
+    const merged = new Map<string, { a?: string; b?: string }>()
+    for (const d of divisions) {
+      for (const [k, v] of computeSlotDefaults(matches, d, teamCount)) merged.set(k, v)
+    }
+    return merged
+  }, [matches, teamCount, viewMode, isExhibition])
+
+  // Bracket view: this division's rings only, never exhibition ones (those
+  // get their own tab instead of mixing into a division's view). Exhibition
+  // view: every exhibition ring from BOTH divisions, labeled by source
+  // division so it's clear which bracket an ad-hoc match was added under.
+  const ringCols = isExhibition
+    ? (['standards', 'open'] as Division[]).flatMap(d => (schedules[d].exhibitionRings ?? []).map((ring, i) => ({
+        ring, label: `${d === 'standards' ? 'Standard' : 'Open'} Exhibition ${i + 1}`,
+      })))
+    : schedules[viewMode as Division].rings.map((ring, i) => ({ ring, label: `Ring ${i + 1}` }))
   const nRings = ringCols.length
   const maxLen = ringCols.reduce((mx, c) => Math.max(mx, c.ring.length), 0)
   const isEmpty = maxLen === 0
@@ -165,9 +183,9 @@ export default function MatchList({ matches, teamCount, schedules }: Props) {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', gap: 6 }}>
-            {(['standards', 'open'] as Division[]).map(d => (
-              <button key={d} onClick={() => setDivision(d)} style={pillStyle(division === d)}>
-                {d === 'standards' ? 'Standard' : 'Open'}
+            {(['standards', 'open', 'exhibition'] as ViewMode[]).map(v => (
+              <button key={v} onClick={() => setViewMode(v)} style={pillStyle(viewMode === v)}>
+                {v === 'standards' ? 'Standard' : v === 'open' ? 'Open' : 'Exhibition'}
               </button>
             ))}
           </div>
@@ -199,14 +217,14 @@ export default function MatchList({ matches, teamCount, schedules }: Props) {
             <p style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.3)' }}>No matches scheduled</p>
           </div>
         ) : (
-          <BracketZoomPan ref={zoomPanRef} key={division} fitAxis="width">
+          <BracketZoomPan ref={zoomPanRef} key={viewMode} fitAxis="width">
             {tableContent}
           </BracketZoomPan>
         )}
       </div>
 
       <TeamLedgerModal
-        target={selectedTeam ? { name: selectedTeam, division } : null}
+        target={selectedTeam ? { name: selectedTeam, division: isExhibition ? undefined : (viewMode as Division) } : null}
         onClose={() => setSelectedTeam(null)}
       />
     </div>

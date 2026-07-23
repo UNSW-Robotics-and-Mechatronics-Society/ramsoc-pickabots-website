@@ -154,20 +154,27 @@ async function syncCompletedMatches(beforeStatusById: Map<string, MatchStatus>, 
  * deleted row are refunded first, since the FK is ON DELETE CASCADE and
  * would otherwise silently drop the vote along with the user's already-
  * deducted tokens.
+ *
+ * Deliberately does NOT filter out rows with a null bracket_match_id: a row
+ * can only get one through this function's own insert below (always set),
+ * so a null one is never legitimate — usually a manual test insert via the
+ * Supabase dashboard — and should be swept up as stale exactly like any
+ * other orphan, not silently left active forever.
  */
 async function reconcileVotingMatches(bracketMatchById: Map<string, BracketMatch>): Promise<void> {
   const { data: rows, error } = await supabase
     .from("matches")
-    .select("id, bracket_match_id, is_active, voting_open, left_name, right_name")
-    .is("winner_side", null)
-    .not("bracket_match_id", "is", null);
+    .select("id, bracket_match_id, is_active, voting_open, is_exhibition, left_name, right_name")
+    .is("winner_side", null);
   if (error || !rows) return;
 
-  const rowByBracketId = new Map(rows.map(r => [r.bracket_match_id as string, r]));
+  const rowByBracketId = new Map(
+    rows.filter(r => r.bracket_match_id !== null).map(r => [r.bracket_match_id as string, r]),
+  );
   const toDelete: string[] = [];
 
   for (const row of rows) {
-    const bm = bracketMatchById.get(row.bracket_match_id as string);
+    const bm = row.bracket_match_id ? bracketMatchById.get(row.bracket_match_id as string) : undefined;
     if (bm?.status !== "active" && bm?.status !== "next") toDelete.push(row.id as string);
   }
 
@@ -179,6 +186,7 @@ async function reconcileVotingMatches(bracketMatchById: Map<string, BracketMatch
       // Only active matches can have voting opened; non-active are always closed.
       // Active matches default closed — admin explicitly opens voting.
       voting_open: bm.status === "active" ? (bm.votingOpen ?? false) : false,
+      is_exhibition: bm.side === "exhibition",
       left_name: bm.slotA.teamName || "TBD",
       right_name: bm.slotB.teamName || "TBD",
     };
@@ -188,6 +196,7 @@ async function reconcileVotingMatches(bracketMatchById: Map<string, BracketMatch
     } else if (
       existing.is_active !== desired.is_active ||
       existing.voting_open !== desired.voting_open ||
+      existing.is_exhibition !== desired.is_exhibition ||
       existing.left_name !== desired.left_name ||
       existing.right_name !== desired.right_name
     ) {

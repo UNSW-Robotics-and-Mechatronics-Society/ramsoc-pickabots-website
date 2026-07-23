@@ -308,9 +308,15 @@ type Props = {
   onMatchesChange:  (matches: BracketMatch[]) => void;
 };
 
+type MatchesMode = 'bracket' | 'exhibition';
+
 export default function MatchesPanel({
   matches, division, teamCount, schedule, teams, specialTeams, onScheduleChange, onMatchesChange,
 }: Props) {
+  // Bracket-round matches and exhibition (ad-hoc) matches show in separate
+  // tabs — mirrors the public voting page/match list split, so exhibition
+  // matches never mix into the bracket-round view here either.
+  const [mode, setMode] = useState<MatchesMode>('bracket');
   const divMatches = matches.filter(m => m.division === division);
   const matchById = new Map(divMatches.map(m => [m.id, m]));
   // Feeder placeholder text for empty slots ("Winner of R64 M3", etc).
@@ -404,11 +410,16 @@ export default function MatchesPanel({
   // height so a match's box always exactly fills its own slot — card size
   // never changes, only the (visible) gap after it grows/shrinks with gap time.
   const exhibitionRings = schedule.exhibitionRings ?? [];
-  const allEntries = [...schedule.rings.flat(), ...exhibitionRings.flat()];
-  // Show the ring area if there are any matches OR any exhibition rings (even
-  // empty ones, so you can add matches to a freshly-created exhibition ring).
-  const isEmpty = allEntries.length === 0 && exhibitionRings.length === 0;
-  const starts = allEntries.map(e => e.startMinute);
+  // Only the rings for the active mode are shown/measured — bracket-round
+  // and exhibition matches no longer share one combined view.
+  const shownEntries = mode === 'exhibition' ? exhibitionRings.flat() : schedule.rings.flat();
+  // Show the ring area if there are any matches OR (in exhibition mode) any
+  // exhibition rings at all — even empty ones, so you can add matches to a
+  // freshly-created exhibition ring.
+  const isEmpty = mode === 'exhibition'
+    ? shownEntries.length === 0 && exhibitionRings.length === 0
+    : shownEntries.length === 0;
+  const starts = shownEntries.map(e => e.startMinute);
   const globalStart = starts.length ? Math.min(...starts) : START_MINUTE;
   const globalEnd = starts.length
     ? Math.max(...starts) + schedule.matchMinutes + schedule.gapMinutes
@@ -535,6 +546,24 @@ export default function MatchesPanel({
           always stays. */}
       <div className="flex shrink-0 flex-nowrap items-center gap-x-3 gap-y-1 overflow-hidden border-b border-white/10 px-3 py-2">
         <div className="flex shrink-0 items-center gap-1">
+          {(['bracket', 'exhibition'] as MatchesMode[]).map(m => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={cn(
+                "rounded px-2 py-0.5 text-[0.6rem] font-medium uppercase tracking-wide transition-colors",
+                mode === m ? "bg-white/20 text-foreground" : "text-foreground/40 hover:text-foreground/70",
+              )}
+            >
+              {m === 'bracket' ? 'Bracket Matches' : 'Exhibition Matches'}
+            </button>
+          ))}
+        </div>
+
+        <div className="h-3 w-px shrink-0 bg-white/15" />
+
+        <div className="flex shrink-0 items-center gap-1">
           <span className="mr-0.5 text-[0.55rem] uppercase tracking-widest text-foreground/40">Rings</span>
           {RING_OPTIONS.map(n => (
             <button
@@ -581,15 +610,18 @@ export default function MatchesPanel({
           <span className="text-[0.55rem] text-foreground/30">min</span>
         </div>
 
-        {/* Add a dedicated exhibition ring (separate from the bracket rings) */}
-        <button
-          type="button"
-          onClick={() => onScheduleChange(addExhibitionRing(schedule))}
-          title="Add a dedicated exhibition ring for ad-hoc matches"
-          className="ml-auto flex shrink-0 items-center gap-1 rounded border border-violet-400/50 bg-violet-400/10 px-2 py-0.5 text-[0.6rem] font-medium text-violet-200 transition-colors hover:bg-violet-400/20"
-        >
-          + Exhibition Ring
-        </button>
+        {/* Add a dedicated exhibition ring (separate from the bracket rings) —
+            only relevant while looking at the exhibition tab. */}
+        {mode === 'exhibition' && (
+          <button
+            type="button"
+            onClick={() => onScheduleChange(addExhibitionRing(schedule))}
+            title="Add a dedicated exhibition ring for ad-hoc matches"
+            className="ml-auto flex shrink-0 items-center gap-1 rounded border border-violet-400/50 bg-violet-400/10 px-2 py-0.5 text-[0.6rem] font-medium text-violet-200 transition-colors hover:bg-violet-400/20"
+          >
+            + Exhibition Ring
+          </button>
+        )}
       </div>
 
       {/* Team filter — type/pick a team to dim every other match in the list */}
@@ -616,12 +648,13 @@ export default function MatchesPanel({
           </div>
         ) : (
           <div className="flex items-start" style={{ zoom: scale }}>
-            {schedule.rings.map((ring, ri) => renderRingColumn(ring, `b${ri}`, `Ring ${ri + 1}`))}
-            {exhibitionRings.map((ring, ei) => renderRingColumn(ring, `e${ei}`, `Exhibition ${ei + 1}`, {
-              onAddMatch: () => addExhibitionMatch(ei),
-              onRemoveRing: () => handleRemoveExhibitionRing(ei),
-              accent: true,
-            }))}
+            {mode === 'bracket'
+              ? schedule.rings.map((ring, ri) => renderRingColumn(ring, `b${ri}`, `Ring ${ri + 1}`))
+              : exhibitionRings.map((ring, ei) => renderRingColumn(ring, `e${ei}`, `Exhibition ${ei + 1}`, {
+                  onAddMatch: () => addExhibitionMatch(ei),
+                  onRemoveRing: () => handleRemoveExhibitionRing(ei),
+                  accent: true,
+                }))}
           </div>
         )}
       </div>
