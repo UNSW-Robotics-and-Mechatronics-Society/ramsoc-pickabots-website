@@ -69,9 +69,7 @@ type ClickSendResponse = {
 
 /** Send a batch of messages. Never throws — every recipient gets a result row. */
 export async function sendManySms(messages: SmsMessage[]): Promise<SmsResult[]> {
-  const clean = messages
-    .map((m) => ({ raw: m, to: normaliseAuMobile(m.to) }))
-    .filter((m) => m.body ?? true);
+  const clean = messages.map((m) => ({ raw: m, to: normaliseAuMobile(m.to) }));
 
   // Anything that failed number normalisation is reported as skipped up-front.
   const skipped: SmsResult[] = clean

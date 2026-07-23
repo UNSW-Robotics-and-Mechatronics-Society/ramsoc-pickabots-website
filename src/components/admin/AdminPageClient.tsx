@@ -91,6 +91,32 @@ export default function AdminPageClient({ division, initialTeams, initialBracket
 
   const eliminatedTeams = useMemo(() => computeEliminated(matches), [matches]);
 
+  // Auto-notify captains by SMS the moment a match becomes "next" on-deck, for
+  // both divisions (the admin may only be viewing one at a time). The server
+  // dedups persistently via `captain_notified`, so a stray duplicate POST from
+  // this ref resetting (e.g. remount) is harmless.
+  const notifiedNextRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const d of ["standards", "open"] as Division[]) {
+      const eff = applyScheduleStatus(matches, schedules[d], d);
+      for (const m of eff) {
+        if (
+          m.status === "next" &&
+          m.slotA.teamName &&
+          m.slotB.teamName &&
+          !notifiedNextRef.current.has(m.id)
+        ) {
+          notifiedNextRef.current.add(m.id);
+          fetch("/api/admin/notify-next", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ matchId: m.id }),
+          }).catch(() => {});
+        }
+      }
+    }
+  }, [matches, schedules]);
+
   // Schedule-derived active/next/todo status for the current division.
   // Completed and skipped are preserved; the schedule order determines everything else.
   const effectiveMatches = useMemo(
