@@ -123,7 +123,7 @@ export async function getTeamLedger(name: string, divisionHint?: Division): Prom
   const poolSize = poolEntries.length;
 
   // ── matches this team has played ───────────────────────────────────────────
-  const { matches, schedules } = bracketState;
+  const { matches, schedules, exhibitionSchedule } = bracketState;
   const teamMatches = matches.filter(m => m.slotA.teamName === name || m.slotB.teamName === name);
 
   let wins = 0;
@@ -164,7 +164,7 @@ export async function getTeamLedger(name: string, divisionHint?: Division): Prom
     const isA = m.slotA.teamName === name;
     const schedule = schedules[m.division];
     const timeByMatchId = new Map(
-      [...schedule.rings.flat(), ...(schedule.exhibitionRings ?? []).flat()].map(e => [e.matchId, e.startMinute])
+      [...schedule.rings.flat(), ...exhibitionSchedule.rings.flat()].map(e => [e.matchId, e.startMinute])
     );
     const minute = timeByMatchId.get(m.id);
     nextMatch = {
