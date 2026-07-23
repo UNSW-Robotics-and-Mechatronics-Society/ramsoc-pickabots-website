@@ -3,7 +3,9 @@ import { currentUser } from "@clerk/nextjs/server";
 import { isAdminUser } from "@/lib/auth";
 import { sendManySms, type SmsMessage } from "@/lib/sms";
 import { getTeamContacts, getTeamById } from "@/lib/db/profiles";
-import { getBracketMatchTeams, setCaptainNotified, upNextMessage, logSmsResults } from "@/lib/db/notify";
+import { getBracketMatchTeams, setCaptainNotified, logSmsResults } from "@/lib/db/notify";
+import { getSmsUpNextTemplate } from "@/lib/db/config";
+import { renderSmsTemplate } from "@/lib/sms-template";
 
 type NotifyNextRequestBody = {
   matchId?: unknown;
@@ -38,6 +40,9 @@ export async function POST(req: NextRequest) {
     const messages: SmsMessage[] = [];
     const messageTeamIds: (string | null)[] = [];
 
+    // The admin-configured template, rendered per team.
+    const template = await getSmsUpNextTemplate();
+
     for (const slot of slots) {
       if (!slot.teamId) continue;
       const [contacts, team] = await Promise.all([
@@ -47,7 +52,7 @@ export async function POST(req: NextRequest) {
       const teamName = team?.name ?? slot.fallbackName;
       const captains = contacts.filter((c) => c.role === "captain" && c.phone);
       for (const captain of captains) {
-        messages.push({ to: captain.phone, body: upNextMessage(teamName, m.division) });
+        messages.push({ to: captain.phone, body: renderSmsTemplate(template, { team: teamName, division: m.division }) });
         messageTeamIds.push(slot.teamId);
       }
     }

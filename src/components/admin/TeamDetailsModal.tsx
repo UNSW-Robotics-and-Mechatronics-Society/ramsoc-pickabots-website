@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, Phone, Send, X } from "lucide-react";
 import { type Division } from "@/lib/mock-data";
 import { cn } from "@/lib/cn";
+import { renderSmsTemplate, DEFAULT_SMS_UP_NEXT } from "@/lib/sms-template";
 
 type Contact = {
   profileId: string;
@@ -16,6 +17,7 @@ type ContactsResponse = {
   contacts: Contact[];
   sender: string;
   smsConfigured: boolean;
+  upNextTemplate: string;
 };
 
 type SmsResult = {
@@ -41,16 +43,13 @@ function divisionLabel(division: Division): string {
   return division === "standards" ? "Standard" : "Open";
 }
 
-function upNextMessage(teamName: string, division: Division): string {
-  return `RAMSOC Pickabots: Team "${teamName}" you're UP NEXT in ${divisionLabel(division)}. Please head to the arena and check in with a judge.`;
-}
-
 export default function TeamDetailsModal({ teamId, teamName, division, onClose }: Props) {
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState<string | null>(null);
   const [contacts, setContacts]         = useState<Contact[]>([]);
   const [sender, setSender]             = useState<string>("");
   const [smsConfigured, setSmsConfigured] = useState(true);
+  const [upNextTemplate, setUpNextTemplate] = useState<string>(DEFAULT_SMS_UP_NEXT);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [message, setMessage]   = useState("");
@@ -72,6 +71,7 @@ export default function TeamDetailsModal({ teamId, teamName, division, onClose }
         setContacts(data.contacts);
         setSender(data.sender);
         setSmsConfigured(data.smsConfigured);
+        setUpNextTemplate(data.upNextTemplate ?? DEFAULT_SMS_UP_NEXT);
         // default selection: captains with a phone number
         setSelected(
           new Set(
@@ -144,6 +144,10 @@ export default function TeamDetailsModal({ teamId, teamName, division, onClose }
 
   function handleSend() {
     sendSms(selectedPhones, message);
+  }
+
+  function upNextMessage(name: string, div: Division): string {
+    return renderSmsTemplate(upNextTemplate, { team: name, division: div });
   }
 
   function handleTextCaptainsUpNext() {

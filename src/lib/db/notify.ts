@@ -89,17 +89,17 @@ export async function setCaptainNotified(matchId: string, value: boolean): Promi
   if (error) console.error("[notify] failed to set captain_notified:", error.message);
 }
 
-/** Human label for a division, for message copy. */
-export function divisionLabel(d: Division): string {
-  return d === "standards" ? "Standard" : "Open";
-}
+export { divisionLabelFor as divisionLabel } from "@/lib/sms-template";
+import { getSmsUpNextTemplate } from "./config";
+import { renderSmsTemplate } from "@/lib/sms-template";
 
 /**
- * "Up next" SMS copy, kept under 160 chars (one message part) so it bills as a
- * single SMS. Recipients see it from the "RAMSOC" sender.
+ * "Up next" SMS copy, rendered from the admin-configured template (falls back
+ * to the built-in default). Recipients see it from the "RAMSOC" sender.
  */
-export function upNextMessage(teamName: string, division: Division): string {
-  return `RAMSOC Pickabots: Team "${teamName}" you're UP NEXT in ${divisionLabel(division)}. Please head to the arena and check in with a judge.`;
+export async function upNextMessage(teamName: string, division: Division): Promise<string> {
+  const template = await getSmsUpNextTemplate();
+  return renderSmsTemplate(template, { team: teamName, division });
 }
 
 export { getTeamContacts, getTeamById, type TeamContact };

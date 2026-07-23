@@ -13,9 +13,11 @@ import type { OnboardingTeam, ProfileInput, TeamRole } from "@/lib/db/profiles";
 import BegDial from "@/components/BegDial";
 import TeamDetailsModal from "@/components/admin/TeamDetailsModal";
 import PlayersPanel from "@/components/admin/PlayersPanel";
+import SettingsPanel from "@/components/admin/SettingsPanel";
 import Ring from "@/components/Ring";
 import type { Match, Vote, VoteStandings } from "@/lib/types";
 import { standingsFromMatch } from "@/lib/vote-pool";
+import { DEFAULT_SMS_UP_NEXT } from "@/lib/sms-template";
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Mock fetch shim — installed once at module scope. Intercepts the handful of
@@ -131,6 +133,11 @@ type BegMockMode = "eligible" | "cooldown" | "spent";
  *  reassigning a module-level `let` from a component). */
 const begMock: { mode: BegMockMode } = { mode: "eligible" };
 
+/** Mutable holder so the Settings panel mock can echo back saved values
+ *  across GET/PUT calls (a const object property, per the React Compiler
+ *  restriction on reassigning module-level `let`s from a component). */
+const smsConfigMock: { template: string } = { template: DEFAULT_SMS_UP_NEXT };
+
 function begState() {
   switch (begMock.mode) {
     case "cooldown":
@@ -186,7 +193,35 @@ if (typeof window !== "undefined" && !(window as unknown as { __devGalleryFetchP
 
     // GET /api/admin/teams/{id}/contacts
     if (method === "GET" && /\/api\/admin\/teams\/[^/]+\/contacts$/.test(url)) {
-      return jsonResponse({ contacts: MOCK_CONTACTS, sender: "RAMSOC", smsConfigured: true });
+      return jsonResponse({
+        contacts: MOCK_CONTACTS,
+        sender: "RAMSOC",
+        smsConfigured: true,
+        upNextTemplate: smsConfigMock.template,
+      });
+    }
+
+    // GET /api/admin/config
+    if (method === "GET" && /\/api\/admin\/config$/.test(url)) {
+      return jsonResponse({
+        smsUpNextTemplate: smsConfigMock.template,
+        smsUpNextDefault: DEFAULT_SMS_UP_NEXT,
+      });
+    }
+
+    // PUT /api/admin/config
+    if (method === "PUT" && /\/api\/admin\/config$/.test(url)) {
+      let template = smsConfigMock.template;
+      try {
+        const body = JSON.parse((init?.body as string) ?? "{}");
+        if (typeof body.smsUpNextTemplate === "string") {
+          template = body.smsUpNextTemplate.trim() === "" ? DEFAULT_SMS_UP_NEXT : body.smsUpNextTemplate;
+        }
+      } catch {
+        // ignore malformed body
+      }
+      smsConfigMock.template = template;
+      return jsonResponse({ ok: true, smsUpNextTemplate: template });
     }
 
     // POST /api/admin/sms
@@ -298,6 +333,7 @@ const SECTIONS = [
   { id: "beg-dial", label: "Beg dial" },
   { id: "team-sms", label: "Team SMS" },
   { id: "players", label: "Players panel" },
+  { id: "settings", label: "Settings panel" },
   { id: "ring", label: "Live odds" },
 ] as const;
 
@@ -394,6 +430,7 @@ export default function DevGallery() {
           <BegDialSection />
           <TeamSmsSection />
           <PlayersSection />
+          <SettingsSection />
           <RingSection />
         </div>
       </div>
@@ -611,7 +648,24 @@ function PlayersSection() {
   );
 }
 
-// ─── 5. Live odds (Ring) ────────────────────────────────────────────────────
+// ─── 5. Settings panel ──────────────────────────────────────────────────────
+
+function SettingsSection() {
+  return (
+    <section id="settings">
+      <SectionHeading
+        id="settings"
+        title="Settings panel"
+        description="Admin editor for the 'up next' SMS template — live preview, placeholder chips, save/reset. Fully self-contained — no external state to wire up."
+      />
+      <div className="glass h-[500px] overflow-hidden rounded-2xl border border-white/10">
+        <SettingsPanel />
+      </div>
+    </section>
+  );
+}
+
+// ─── 6. Live odds (Ring) ────────────────────────────────────────────────────
 
 function RingSection() {
   const { entries, log } = useLog();
