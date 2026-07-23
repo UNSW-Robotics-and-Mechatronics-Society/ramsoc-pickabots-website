@@ -16,6 +16,7 @@ import TeamList        from "./TeamList";
 import AdminBracket    from "./AdminBracket";
 import MatchesPanel, { MIN_MATCH_LIST_W } from "./MatchesPanel";
 import ConfirmDialog   from "./ConfirmDialog";
+import PlayersPanel    from "./PlayersPanel";
 
 // ── eliminated teams (only LB losers; WB losers still alive in LB) ────────────
 function computeEliminated(matches: BracketMatch[]): Set<string> {
@@ -30,7 +31,7 @@ function computeEliminated(matches: BracketMatch[]): Set<string> {
   return out;
 }
 
-const ALL_PANEL_IDS: PanelId[] = ['teams', 'bracket', 'matches'];
+const ALL_PANEL_IDS: PanelId[] = ['teams', 'bracket', 'matches', 'players'];
 const TEAM_COUNTS: TeamCount[] = [4, 8, 16, 32, 64];
 // Stable reference: 25% / 50% / 25% when all three panels are visible
 const DEFAULT_3_PANEL_DIVIDERS = [25, 75];
@@ -220,7 +221,7 @@ export default function AdminPageClient({ division, initialTeams, initialBracket
             />
           </div>
         </div>
-      ) : (
+      ) : p === 'matches' ? (
         <MatchesPanel
           matches={effectiveMatches}
           division={division}
@@ -232,6 +233,8 @@ export default function AdminPageClient({ division, initialTeams, initialBracket
           }
           onMatchesChange={commitMatches}
         />
+      ) : (
+        <PlayersPanel />
       ),
     }));
 

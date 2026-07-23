@@ -13,6 +13,8 @@ import { completeOnboarding } from "@/lib/db/onboarding";
 export type SubmitInput = {
   profileInput: ProfileInput | null; // null when an existing profile was matched
   teamId: string | null; // null => spectator
+  // Answers to pickabots-specific config-driven questions (see extraFields.ts).
+  extra?: Record<string, string | boolean>;
 };
 
 export type SubmitResult = { ok: true } | { ok: false; error: string };
@@ -51,7 +53,7 @@ export async function submitOnboarding(input: SubmitInput): Promise<SubmitResult
       isSpectator = true;
     }
 
-    await completeOnboarding(userId, { profileId, isSpectator, displayName });
+    await completeOnboarding(userId, { profileId, isSpectator, displayName, extra: input.extra });
 
     const cookieStore = await cookies();
     cookieStore.set("pickabots_onboarded", "1", {

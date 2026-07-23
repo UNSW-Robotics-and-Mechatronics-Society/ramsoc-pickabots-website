@@ -34,7 +34,12 @@ export async function getOnboardingState(
  */
 export async function completeOnboarding(
   clerkUserId: string,
-  opts: { profileId: string | null; isSpectator: boolean; displayName?: string | null },
+  opts: {
+    profileId: string | null;
+    isSpectator: boolean;
+    displayName?: string | null;
+    extra?: Record<string, string | boolean>;
+  },
 ): Promise<void> {
   const { data: existing } = await supabase
     .from("users")
@@ -46,6 +51,7 @@ export async function completeOnboarding(
     onboarded: true,
     profile_id: opts.profileId,
     is_spectator: opts.isSpectator,
+    ...(opts.extra ? { onboarding_extra: opts.extra } : {}),
   };
 
   if (existing?.[0]) {

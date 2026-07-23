@@ -7,9 +7,11 @@ import { submitOnboarding } from "./actions";
 import UserTypeStep, { type UserType } from "./_components/UserTypeStep";
 import DetailsForm from "./_components/DetailsForm";
 import TeamStep from "./_components/TeamStep";
+import ExtraFieldsStep from "./_components/ExtraFieldsStep";
+import { EXTRA_FIELDS, defaultExtraAnswers, type ExtraAnswers } from "./_components/extraFields";
 import { BrandHeader, PrimaryButton } from "./_components/ui";
 
-type Phase = "welcome" | "userType" | "details" | "team";
+type Phase = "welcome" | "userType" | "details" | "extras" | "team";
 
 export default function OnboardingFlow({
   email,
@@ -25,13 +27,20 @@ export default function OnboardingFlow({
   const [phase, setPhase] = useState<Phase>("welcome");
   const [userType, setUserType] = useState<UserType | null>(null);
   const [profileInput, setProfileInput] = useState<ProfileInput | null>(null);
+  const [extraAnswers, setExtraAnswers] = useState<ExtraAnswers>(defaultExtraAnswers());
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  const hasExtras = EXTRA_FIELDS.length > 0;
+
   // Steps shown in the progress dots (welcome is excluded).
   const steps: Phase[] = existingProfile
-    ? ["team"]
-    : ["userType", "details", "team"];
+    ? hasExtras
+      ? ["extras", "team"]
+      : ["team"]
+    : hasExtras
+      ? ["userType", "details", "extras", "team"]
+      : ["userType", "details", "team"];
   const stepIndex = steps.indexOf(phase);
 
   async function handleTeamSubmit(teamId: string | null) {
@@ -42,6 +51,7 @@ export default function OnboardingFlow({
       // server-side, so we don't need to send the collected input.
       profileInput: existingProfile ? null : profileInput,
       teamId,
+      extra: hasExtras ? extraAnswers : undefined,
     });
     if (result.ok) {
       // Full navigation so the proxy re-reads the freshly-set gate cookie.
@@ -92,7 +102,11 @@ export default function OnboardingFlow({
                 </p>
               </>
             )}
-            <PrimaryButton onClick={() => setPhase(existingProfile ? "team" : "userType")}>
+            <PrimaryButton
+              onClick={() =>
+                setPhase(existingProfile ? (hasExtras ? "extras" : "team") : "userType")
+              }
+            >
               {existingProfile ? "Continue" : "Get started"}
             </PrimaryButton>
           </div>
@@ -113,6 +127,16 @@ export default function OnboardingFlow({
             submitting={false}
             onComplete={(input) => {
               setProfileInput(input);
+              setPhase(hasExtras ? "extras" : "team");
+            }}
+          />
+        )}
+
+        {phase === "extras" && (
+          <ExtraFieldsStep
+            initial={extraAnswers}
+            onComplete={(answers) => {
+              setExtraAnswers(answers);
               setPhase("team");
             }}
           />

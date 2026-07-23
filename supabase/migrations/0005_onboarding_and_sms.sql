@@ -27,6 +27,14 @@ alter table public.users
 alter table public.users
   add column if not exists is_spectator boolean not null default false;
 
+-- Free-form answers to any PICKABOTS-SPECIFIC onboarding questions (config-
+-- driven in the app, see src/app/onboarding/_components/extraFields.ts). Kept
+-- as JSONB so new questions can be added/removed by editing that config alone —
+-- no migration needed. Core shared fields still live as typed columns on the
+-- shared `profiles` table.
+alter table public.users
+  add column if not exists onboarding_extra jsonb not null default '{}'::jsonb;
+
 -- Dedup flag so the "your team is up next" SMS fires at most once per bracket
 -- match as it enters the on-deck ("next") slot. A manual re-send from the admin
 -- UI ignores this flag.
