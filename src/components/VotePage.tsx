@@ -206,19 +206,18 @@ export default function VotePage() {
   }
 
   // ── Match bucketing ───────────────────────────────────────────────────────────
-  // Always show exactly one ring per division (standard + open), even if no
-  // match is active yet. Bossbots appear as extras below when present.
-  const activeMatches = matches.filter(m => m.is_active && m.winner_side === null)
-  const activeStandard = activeMatches.find(m => m.comp_type === 'standard') ?? null
-  const activeOpen     = activeMatches.find(m => m.comp_type === 'open')     ?? null
-  const activeBossbots = activeMatches.filter(m => m.comp_type === 'bossbot')
+  // Always show exactly 2 rings per division (standard + open), filling with
+  // placeholders if fewer than 2 active matches exist. Bossbots are extras.
+  const activeMatches    = matches.filter(m => m.is_active && m.winner_side === null)
+  const activeStandards  = activeMatches.filter(m => m.comp_type === 'standard').slice(0, 2)
+  const activeOpens      = activeMatches.filter(m => m.comp_type === 'open').slice(0, 2)
+  const activeBossbots   = activeMatches.filter(m => m.comp_type === 'bossbot')
 
-  // Next Matches: at most 1 per division (standard + open) = max 2 total.
-  // Using find() naturally deduplicates within each division.
-  const allNext       = matches.filter(m => !m.is_active && m.winner_side === null)
-  const nextStandard  = allNext.find(m => m.comp_type === 'standard') ?? null
-  const nextOpen      = allNext.find(m => m.comp_type === 'open')     ?? null
-  const nextVisible   = ([nextStandard, nextOpen] as (Match | null)[]).filter(Boolean) as Match[]
+  // Next Matches: at most 2 per division = max 4 total.
+  const allNext      = matches.filter(m => !m.is_active && m.winner_side === null)
+  const nextStandards = allNext.filter(m => m.comp_type === 'standard').slice(0, 2)
+  const nextOpens     = allNext.filter(m => m.comp_type === 'open').slice(0, 2)
+  const nextVisible   = [...nextStandards, ...nextOpens]
 
   return (
     <>
@@ -248,43 +247,37 @@ export default function VotePage() {
           </div>
         )}
 
-        {/* Standard ring — always present */}
-        {!loading && !error && (
-          activeStandard
+        {/* Standard rings — always 2, with placeholders if fewer than 2 active */}
+        {!loading && !error && [0, 1].map(i => {
+          const match = activeStandards[i] ?? null
+          return match
             ? <Ring
-                key={activeStandard.id}
-                match={activeStandard}
-                vote={votes[activeStandard.id] ?? null}
-                standings={standings[activeStandard.id] ?? null}
-                votingOpen={activeStandard.voting_open}
-                onVote={side => handleVote(
-                  activeStandard.id, side,
-                  side === 'left' ? activeStandard.left_name : activeStandard.right_name,
-                  activeStandard.comp_type
-                )}
-                onUndo={() => handleUndo(activeStandard.id)}
+                key={match.id}
+                match={match}
+                vote={votes[match.id] ?? null}
+                standings={standings[match.id] ?? null}
+                votingOpen={match.voting_open}
+                onVote={side => handleVote(match.id, side, side === 'left' ? match.left_name : match.right_name, match.comp_type)}
+                onUndo={() => handleUndo(match.id)}
               />
-            : <PlaceholderRing compType="standard" />
-        )}
+            : <PlaceholderRing key={`std-ph-${i}`} compType="standard" />
+        })}
 
-        {/* Open ring — always present */}
-        {!loading && !error && (
-          activeOpen
+        {/* Open rings — always 2, with placeholders if fewer than 2 active */}
+        {!loading && !error && [0, 1].map(i => {
+          const match = activeOpens[i] ?? null
+          return match
             ? <Ring
-                key={activeOpen.id}
-                match={activeOpen}
-                vote={votes[activeOpen.id] ?? null}
-                standings={standings[activeOpen.id] ?? null}
-                votingOpen={activeOpen.voting_open}
-                onVote={side => handleVote(
-                  activeOpen.id, side,
-                  side === 'left' ? activeOpen.left_name : activeOpen.right_name,
-                  activeOpen.comp_type
-                )}
-                onUndo={() => handleUndo(activeOpen.id)}
+                key={match.id}
+                match={match}
+                vote={votes[match.id] ?? null}
+                standings={standings[match.id] ?? null}
+                votingOpen={match.voting_open}
+                onVote={side => handleVote(match.id, side, side === 'left' ? match.left_name : match.right_name, match.comp_type)}
+                onUndo={() => handleUndo(match.id)}
               />
-            : <PlaceholderRing compType="open" />
-        )}
+            : <PlaceholderRing key={`open-ph-${i}`} compType="open" />
+        })}
 
         {/* Bossbot rings — extras, shown when present */}
         {!loading && !error && activeBossbots.map(match => (
@@ -294,16 +287,12 @@ export default function VotePage() {
             vote={votes[match.id] ?? null}
             standings={standings[match.id] ?? null}
             votingOpen={match.voting_open}
-            onVote={side => handleVote(
-              match.id, side,
-              side === 'left' ? match.left_name : match.right_name,
-              match.comp_type
-            )}
+            onVote={side => handleVote(match.id, side, side === 'left' ? match.left_name : match.right_name, match.comp_type)}
             onUndo={() => handleUndo(match.id)}
           />
         ))}
 
-        {/* Next Matches — max 1 per division (standard + open) = 2 total */}
+        {/* Next Matches — max 2 per division (standard + open) = 4 total */}
         {!loading && !error && nextVisible.length > 0 && (
           <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
             <span style={{ fontSize: '0.55rem', fontWeight: 900, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: 4 }}>
