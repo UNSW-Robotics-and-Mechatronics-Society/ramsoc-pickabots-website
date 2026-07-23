@@ -233,7 +233,7 @@ export default function BegDial({ onClose, onAwarded }: BegDialProps) {
               <div className="text-3xl">🥲</div>
               <p className="text-sm font-semibold text-white/80">{errorMsg ?? reasonMessage(state)}</p>
               <p className="text-[0.6rem] font-black uppercase tracking-[0.25em] text-white/30">
-                Begs used: {state.begsUsed}/{state.begsAllowed}
+                Begs left: {Math.max(0, state.begsAllowed - state.begsUsed)} of {state.begsAllowed}
               </p>
               <CloseButton onClose={onClose} />
             </div>
@@ -268,7 +268,7 @@ export default function BegDial({ onClose, onAwarded }: BegDialProps) {
               </button>
 
               <p className="text-center text-[0.55rem] font-black uppercase tracking-[0.25em] text-white/25">
-                Begs used: {state.begsUsed}/{state.begsAllowed}
+                Begs left: {Math.max(0, state.begsAllowed - state.begsUsed)} of {state.begsAllowed}
               </p>
             </div>
           )}
