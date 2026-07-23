@@ -9,7 +9,9 @@ import type { Match } from '@/lib/types'
  * so it reads as "coming up" rather than "biddable right now".
  */
 export default function NextMatchCard({ match }: { match: Match }) {
-  const meta = COMP_META[match.comp_type] ?? COMP_META.standard
+  // Same override as Ring.tsx — an exhibition match's identity shouldn't
+  // depend on which division's bracket it was created under.
+  const meta = match.is_exhibition ? COMP_META.exhibition : (COMP_META[match.comp_type] ?? COMP_META.standard)
 
   return (
     <div style={{

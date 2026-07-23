@@ -147,12 +147,18 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
   }
 
   const eliminatedTeams = useMemo(() => computeEliminated(matches), [matches]);
+  const otherDivision: Division = division === 'standards' ? 'open' : 'standards';
 
-  // Schedule-derived active/next/todo status for the current division.
+  // Schedule-derived active/next/todo status — computed for BOTH divisions
+  // (mirrors saveBracketState's server-side reconciliation), not just the
+  // currently-selected one, so the matches panel's Exhibition tab can show
+  // an accurate merged view regardless of which division is toggled.
   // Completed and skipped are preserved; the schedule order determines everything else.
   const effectiveMatches = useMemo(
-    () => applyScheduleStatus(matches, schedules[division], division),
-    [matches, schedules, division],
+    () => (['standards', 'open'] as Division[]).reduce(
+      (acc, d) => applyScheduleStatus(acc, schedules[d], d), matches,
+    ),
+    [matches, schedules],
   );
 
   // ── bracket size change ──────────────────────────────────────────────────────
@@ -298,10 +304,14 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
           division={division}
           teamCount={teamCount}
           schedule={schedules[division]}
+          otherSchedule={schedules[otherDivision]}
           teams={teams}
           specialTeams={specialTeams}
           onScheduleChange={s =>
             setSchedules(prev => ({ ...prev, [division]: s }))
+          }
+          onOtherScheduleChange={s =>
+            setSchedules(prev => ({ ...prev, [otherDivision]: s }))
           }
           onMatchesChange={commitMatches}
         />

@@ -302,24 +302,41 @@ type Props = {
   division:         Division;
   teamCount:        TeamCount;
   schedule:         MatchSchedule;
+  /** The non-selected division's schedule — read-only, just so the
+   * Exhibition tab (see MatchesMode below) can show a merged, division-
+   * independent view regardless of which division is globally toggled. */
+  otherSchedule:    MatchSchedule;
   teams:            Team[];
   specialTeams:     SpecialTeam[];
   onScheduleChange: (s: MatchSchedule) => void;
+  /** Writes back to the non-selected division's schedule — used when
+   * adding/removing an exhibition ring or match that belongs to it. */
+  onOtherScheduleChange: (s: MatchSchedule) => void;
   onMatchesChange:  (matches: BracketMatch[]) => void;
 };
 
 type MatchesMode = 'bracket' | 'exhibition';
 
 export default function MatchesPanel({
-  matches, division, teamCount, schedule, teams, specialTeams, onScheduleChange, onMatchesChange,
+  matches, division, teamCount, schedule, otherSchedule, teams, specialTeams,
+  onScheduleChange, onOtherScheduleChange, onMatchesChange,
 }: Props) {
   // Bracket-round matches and exhibition (ad-hoc) matches show in separate
   // tabs — mirrors the public voting page/match list split, so exhibition
   // matches never mix into the bracket-round view here either.
   const [mode, setMode] = useState<MatchesMode>('bracket');
-  const divMatches = matches.filter(m => m.division === division);
-  const matchById = new Map(divMatches.map(m => [m.id, m]));
-  // Feeder placeholder text for empty slots ("Winner of R64 M3", etc).
+  const otherDivision: Division = division === 'standards' ? 'open' : 'standards';
+  // Exhibition mode merges both divisions (see MatchesMode) so it always
+  // looks the same regardless of which division is globally selected;
+  // bracket mode stays scoped to just the selected division, as before.
+  const divMatches = mode === 'exhibition'
+    ? matches.filter(m => m.side === 'exhibition')
+    : matches.filter(m => m.division === division);
+  // Global (not division-scoped) so a merged exhibition ring can look up
+  // cards from either division.
+  const matchById = new Map(matches.map(m => [m.id, m]));
+  // Feeder placeholder text for empty slots ("Winner of R64 M3", etc) —
+  // bracket-round only; exhibition matches have no feeders.
   const slotDefaults = computeSlotDefaults(matches, division, teamCount);
 
   // Uniform zoom for the whole list (scales rings + cards + axis together).
@@ -330,6 +347,15 @@ export default function MatchesPanel({
     teamFilters, teamInput, setTeamInput, showSuggestions, setShowSuggestions,
     teamSuggestions, filterSet, addTeamFilter, removeTeamFilter,
   } = useTeamFilter(divMatches);
+
+  // Resolve the read/write schedule pair for whichever division an
+  // exhibition ring/match actually belongs to (own vs. the other one).
+  function scheduleFor(d: Division): MatchSchedule {
+    return d === division ? schedule : otherSchedule;
+  }
+  function setScheduleFor(d: Division, s: MatchSchedule) {
+    (d === division ? onScheduleChange : onOtherScheduleChange)(s);
+  }
 
   function handleMatchChange(updated: BracketMatch) {
     const prev = matches.find(m => m.id === updated.id);
@@ -348,18 +374,20 @@ export default function MatchesPanel({
   // Add a blank exhibition match to a dedicated exhibition ring. It's a normal
   // exhibition match (fill in the teams, biddable when both are set) and lives
   // entirely in the exhibition ring — it never touches the bracket schedule.
-  function addExhibitionMatch(exhibitionRingIndex: number) {
+  // targetDivision is whichever division's ring this is (own or the other
+  // one, merged into the same Exhibition tab — see MatchesMode).
+  function addExhibitionMatch(targetDivision: Division, exhibitionRingIndex: number) {
     // Next exhibition number for this division — derived from existing ids
     // (pure, and stable across reloads) rather than Date.now()/random.
     const usedNums = matches
-      .filter(m => m.division === division && m.side === 'exhibition')
+      .filter(m => m.division === targetDivision && m.side === 'exhibition')
       .map(m => parseInt(m.id.split('-').pop() ?? '', 10))
       .filter(n => !Number.isNaN(n));
     const seq = (usedNums.length ? Math.max(...usedNums) : 0) + 1;
-    const id = `${division}-exhibition-${seq}`;
+    const id = `${targetDivision}-exhibition-${seq}`;
     const newMatch: BracketMatch = {
       id,
-      division,
+      division: targetDivision,
       side: 'exhibition',
       round: 1,
       matchNumber: seq,
@@ -371,24 +399,29 @@ export default function MatchesPanel({
     };
     const nextMatches = [...matches, newMatch];
     onMatchesChange(nextMatches);
-    onScheduleChange(rollSchedule(addMatchToExhibitionRing(schedule, exhibitionRingIndex, id), nextMatches, division));
+    setScheduleFor(targetDivision, rollSchedule(
+      addMatchToExhibitionRing(scheduleFor(targetDivision), exhibitionRingIndex, id), nextMatches, targetDivision,
+    ));
   }
 
   // Fully delete an exhibition match: remove it from the bracket data; the roll
   // drops it from whichever ring it was in. (reconcile refunds any votes on it
-  // when its voting row is cleaned up.)
+  // when its voting row is cleaned up.) Target division is derived from the
+  // match itself, since callers only have the id.
   function handleRemoveMatch(matchId: string) {
+    const targetDivision = matches.find(m => m.id === matchId)?.division ?? division;
     const nextMatches = matches.filter(m => m.id !== matchId);
     onMatchesChange(nextMatches);
-    onScheduleChange(rollSchedule(schedule, nextMatches, division));
+    setScheduleFor(targetDivision, rollSchedule(scheduleFor(targetDivision), nextMatches, targetDivision));
   }
 
   // Remove an exhibition ring and delete its matches.
-  function handleRemoveExhibitionRing(index: number) {
-    const removedIds = new Set((schedule.exhibitionRings?.[index] ?? []).map(e => e.matchId));
+  function handleRemoveExhibitionRing(targetDivision: Division, index: number) {
+    const targetSchedule = scheduleFor(targetDivision);
+    const removedIds = new Set((targetSchedule.exhibitionRings?.[index] ?? []).map(e => e.matchId));
     const nextMatches = matches.filter(m => !removedIds.has(m.id));
     onMatchesChange(nextMatches);
-    onScheduleChange(rollSchedule(removeExhibitionRing(schedule, index), nextMatches, division));
+    setScheduleFor(targetDivision, rollSchedule(removeExhibitionRing(targetSchedule, index), nextMatches, targetDivision));
   }
 
   const datalistId = `ms-teams-${division}`;
@@ -410,14 +443,19 @@ export default function MatchesPanel({
   // height so a match's box always exactly fills its own slot — card size
   // never changes, only the (visible) gap after it grows/shrinks with gap time.
   const exhibitionRings = schedule.exhibitionRings ?? [];
+  const otherExhibitionRings = otherSchedule.exhibitionRings ?? [];
   // Only the rings for the active mode are shown/measured — bracket-round
-  // and exhibition matches no longer share one combined view.
-  const shownEntries = mode === 'exhibition' ? exhibitionRings.flat() : schedule.rings.flat();
+  // and exhibition matches no longer share one combined view. Exhibition
+  // combines both divisions' rings (see MatchesMode), same as the public
+  // match list's Exhibition tab.
+  const shownEntries = mode === 'exhibition'
+    ? [...exhibitionRings.flat(), ...otherExhibitionRings.flat()]
+    : schedule.rings.flat();
   // Show the ring area if there are any matches OR (in exhibition mode) any
   // exhibition rings at all — even empty ones, so you can add matches to a
   // freshly-created exhibition ring.
   const isEmpty = mode === 'exhibition'
-    ? shownEntries.length === 0 && exhibitionRings.length === 0
+    ? shownEntries.length === 0 && exhibitionRings.length === 0 && otherExhibitionRings.length === 0
     : shownEntries.length === 0;
   const starts = shownEntries.map(e => e.startMinute);
   const globalStart = starts.length ? Math.min(...starts) : START_MINUTE;
@@ -439,6 +477,7 @@ export default function MatchesPanel({
     ring: RingMatch[],
     key: string,
     label: string,
+    cardDivision: Division,
     opts?: { onAddMatch?: () => void; onRemoveRing?: () => void; accent?: boolean },
   ) {
     return (
@@ -481,7 +520,7 @@ export default function MatchesPanel({
               >
                 <TimeCell
                   minute={entry.startMinute}
-                  onCommit={min => onScheduleChange(editMatchTime(schedule, entry.matchId, min))}
+                  onCommit={min => setScheduleFor(cardDivision, editMatchTime(scheduleFor(cardDivision), entry.matchId, min))}
                 />
               </div>
             ))}
@@ -501,10 +540,10 @@ export default function MatchesPanel({
                   <MatchCard
                     match={match}
                     teamCount={teamCount}
-                    onDrop={srcId => onScheduleChange(swapMatchIds(schedule, srcId, match.id))}
+                    onDrop={srcId => setScheduleFor(cardDivision, swapMatchIds(scheduleFor(cardDivision), srcId, match.id))}
                     onChange={handleMatchChange}
                     datalistId={match.side === 'exhibition' ? exhibitionDatalistId : datalistId}
-                    isValidTeamName={name => !isTeamNameTaken(matches, division, match.id, name)}
+                    isValidTeamName={name => !isTeamNameTaken(matches, cardDivision, match.id, name)}
                     dimmed={isMatchDimmed(match, filterSet)}
                     onRemove={handleRemoveMatch}
                     defaults={slotDefaults.get(match.id)}
@@ -649,12 +688,23 @@ export default function MatchesPanel({
         ) : (
           <div className="flex items-start" style={{ zoom: scale }}>
             {mode === 'bracket'
-              ? schedule.rings.map((ring, ri) => renderRingColumn(ring, `b${ri}`, `Ring ${ri + 1}`))
-              : exhibitionRings.map((ring, ei) => renderRingColumn(ring, `e${ei}`, `Exhibition ${ei + 1}`, {
-                  onAddMatch: () => addExhibitionMatch(ei),
-                  onRemoveRing: () => handleRemoveExhibitionRing(ei),
-                  accent: true,
-                }))}
+              ? schedule.rings.map((ring, ri) => renderRingColumn(ring, `b${ri}`, `Ring ${ri + 1}`, division))
+              : [
+                  ...exhibitionRings.map((ring, ei) => renderRingColumn(
+                    ring, `e${ei}`, `${division === 'standards' ? 'Standard' : 'Open'} Exhibition ${ei + 1}`, division, {
+                      onAddMatch: () => addExhibitionMatch(division, ei),
+                      onRemoveRing: () => handleRemoveExhibitionRing(division, ei),
+                      accent: true,
+                    },
+                  )),
+                  ...otherExhibitionRings.map((ring, ei) => renderRingColumn(
+                    ring, `oe${ei}`, `${otherDivision === 'standards' ? 'Standard' : 'Open'} Exhibition ${ei + 1}`, otherDivision, {
+                      onAddMatch: () => addExhibitionMatch(otherDivision, ei),
+                      onRemoveRing: () => handleRemoveExhibitionRing(otherDivision, ei),
+                      accent: true,
+                    },
+                  )),
+                ]}
           </div>
         )}
       </div>

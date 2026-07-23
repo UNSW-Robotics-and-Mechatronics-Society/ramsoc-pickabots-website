@@ -4,9 +4,10 @@ import BotSvg from './BotSvg'
 import type { Match, Vote, VoteStandings } from '@/lib/types'
 
 export const COMP_META = {
-  standard: { color: '#FF6B00', label: '⚙ STANDARD' },
-  open:     { color: '#4cff00', label: '◈ OPEN'      },
-  bossbot:  { color: '#9B30FF', label: '💀 BOSSBOT'   },
+  standard:   { color: '#FF6B00', label: '⚙ STANDARD'   },
+  open:       { color: '#4cff00', label: '◈ OPEN'       },
+  bossbot:    { color: '#9B30FF', label: '💀 BOSSBOT'    },
+  exhibition: { color: '#FFD700', label: '★ EXHIBITION' },
 } as const
 
 const IMPACT_WORDS = ['POW!', 'ZAP!', 'BOOM!', 'WHAM!', 'BAM!', 'NOVA!', 'SMASH!']
@@ -28,7 +29,9 @@ interface RingProps {
 }
 
 export default function Ring({ match, vote, standings, votingOpen = true, onVote, onUndo, onTeamClick }: RingProps) {
-  const meta = COMP_META[match.comp_type] ?? COMP_META.standard
+  // An exhibition match's identity is deliberately independent of which
+  // division's bracket it was created under — same look regardless.
+  const meta = match.is_exhibition ? COMP_META.exhibition : (COMP_META[match.comp_type] ?? COMP_META.standard)
   const voted = !!vote
   // Sides are non-interactive once the user has voted OR voting is closed.
   const locked = voted || !votingOpen
