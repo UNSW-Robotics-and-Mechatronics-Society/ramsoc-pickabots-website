@@ -246,8 +246,17 @@ if (typeof window !== "undefined" && !(window as unknown as { __devGalleryFetchP
       return jsonResponse({ total: 12, withPhone: 10 });
     }
 
-    // POST /api/admin/broadcast
+    // POST /api/admin/broadcast (test send echoes the supplied numbers)
     if (method === "POST" && /\/api\/admin\/broadcast$/.test(url)) {
+      let testNumbers: string[] | null = null;
+      try {
+        const b = JSON.parse((init?.body as string) ?? "{}");
+        if (Array.isArray(b.testNumbers)) testNumbers = b.testNumbers.filter((n: unknown) => typeof n === "string");
+      } catch { /* ignore */ }
+      if (testNumbers && testNumbers.length > 0) {
+        const results = testNumbers.map(to => ({ to, ok: true, status: "sent" as const }));
+        return jsonResponse({ sent: results.length, total: results.length, results, test: true });
+      }
       return jsonResponse({ sent: 10, total: 10, results: MOCK_BROADCAST_RESULTS });
     }
 

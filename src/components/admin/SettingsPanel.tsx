@@ -59,6 +59,12 @@ export default function SettingsPanel() {
   const [broadcastResult, setBroadcastResult] = useState<
     { sent: number; total: number; results: BroadcastResultRow[] } | { note: string } | null
   >(null);
+  // Test send (to manually-entered numbers).
+  const [testNumbersInput, setTestNumbersInput] = useState("");
+  const [testSending, setTestSending] = useState(false);
+  const [testResult, setTestResult] = useState<
+    { sent: number; total: number; results: BroadcastResultRow[] } | { error: string } | null
+  >(null);
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -202,6 +208,33 @@ export default function SettingsPanel() {
       setBroadcastError(err instanceof Error ? err.message : "Send failed");
     } finally {
       setBroadcastSending(false);
+    }
+  }
+
+  function parseTestNumbers(raw: string): string[] {
+    return raw.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
+  }
+
+  async function handleSendTest() {
+    const numbers = parseTestNumbers(testNumbersInput);
+    if (numbers.length === 0 || broadcastBody.trim().length === 0) return;
+    setTestSending(true);
+    setTestResult(null);
+    try {
+      const res = await fetch("/api/admin/broadcast", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: broadcastBody, testNumbers: numbers }),
+      });
+      const data = (await res.json()) as BroadcastPostResponse;
+      if (!res.ok || "error" in data) {
+        throw new Error("error" in data ? data.error : `Test failed (${res.status})`);
+      }
+      setTestResult("note" in data ? { error: data.note } : { sent: data.sent, total: data.total, results: data.results });
+    } catch (err) {
+      setTestResult({ error: err instanceof Error ? err.message : "Test failed" });
+    } finally {
+      setTestSending(false);
     }
   }
 
@@ -415,6 +448,36 @@ export default function SettingsPanel() {
                   )}
                 </div>
               )}
+
+              {/* Test send — fire the message above to your own number(s) first */}
+              <div className="mt-3 rounded-lg border border-white/10 bg-white/[0.03] p-2.5">
+                <span className="text-[0.6rem] uppercase tracking-wider text-foreground/40">Test send</span>
+                <p className="mt-0.5 text-[0.6rem] text-foreground/35">
+                  Send the message above to specific number(s) first. Comma or newline separated.
+                </p>
+                <input
+                  type="text"
+                  value={testNumbersInput}
+                  onChange={e => setTestNumbersInput(e.target.value)}
+                  placeholder="0412 345 678, 0498 765 432"
+                  className="mt-1.5 w-full rounded-lg border border-white/10 bg-white/8 px-2 py-1.5 text-xs text-foreground placeholder:text-foreground/30 outline-none focus:border-white/30"
+                />
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={handleSendTest}
+                    disabled={testSending || broadcastBody.trim().length === 0 || parseTestNumbers(testNumbersInput).length === 0}
+                    className="rounded-lg border border-white/20 bg-white/5 px-3 py-1.5 text-xs text-foreground/80 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {testSending ? "Sending…" : "Send test"}
+                  </button>
+                  {testResult && "error" in testResult && (
+                    <span className="text-[0.65rem] text-red-300">{testResult.error}</span>
+                  )}
+                  {testResult && "sent" in testResult && (
+                    <span className="text-[0.65rem] text-green-300">Test sent {testResult.sent}/{testResult.total}</span>
+                  )}
+                </div>
+              </div>
 
               <div className="mt-3">
                 <button

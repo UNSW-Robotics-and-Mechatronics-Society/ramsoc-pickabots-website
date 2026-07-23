@@ -32,7 +32,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "body (message text) is required" }, { status: 400 });
   }
 
+  // Test send: deliver only to the supplied numbers (rendered with a sample
+  // captain so placeholders show real output), without touching the captain list.
+  const testNumbers = Array.isArray(payload?.testNumbers)
+    ? (payload.testNumbers as unknown[]).filter((n): n is string => typeof n === "string" && n.trim().length > 0)
+    : null;
+
   try {
+    if (testNumbers && testNumbers.length > 0) {
+      const rendered = renderBroadcastTemplate(body, {
+        first: "Alex",
+        captain: "Alex Chen",
+        team: "Iron Fist",
+        division: "standards",
+      });
+      const results = await sendManySms(testNumbers.map(to => ({ to, body: rendered })));
+      await logSmsResults(
+        results.map(r => ({ to: r.to, body: rendered, status: r.status, error: r.error, kind: "manual" })),
+      );
+      return NextResponse.json({ sent: results.filter(r => r.ok).length, total: results.length, results, test: true });
+    }
+
     const captains = await getAllCaptainContacts();
     const recipients = captains.filter(c => c.phone);
     if (recipients.length === 0) {
