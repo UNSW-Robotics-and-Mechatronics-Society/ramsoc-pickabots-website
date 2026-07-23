@@ -1,10 +1,14 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
-const isPublicRoute      = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)"]);
-const isPasswordExempt   = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)", "/standby", "/api/(.*)"]);
+// /dev is a development-only component gallery. It's exempted from every gate
+// here so it's reachable without auth/standby, and the page itself 404s in
+// production (see app/dev/page.tsx), so exempting it is safe.
+const isPublicRoute      = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)", "/dev(.*)"]);
+const isPasswordExempt   = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)", "/standby", "/api/(.*)", "/dev(.*)"]);
 const isOnboardingExempt = createRouteMatcher([
   "/onboarding(.*)",
+  "/dev(.*)",
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/standby",
