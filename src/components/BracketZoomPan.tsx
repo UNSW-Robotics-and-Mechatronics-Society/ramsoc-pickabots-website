@@ -48,6 +48,18 @@ type Props = {
    * below) makes clicking a different round re-frame immediately.
    */
   getFocusElement?: () => FocusTarget | null
+  /**
+   * Which axis the max-zoom-out floor is measured against. 'both' (default,
+   * used by the bracket) never lets either edge overflow the viewport —
+   * right for content whose height is comparable to its width. 'width'
+   * (used by the match list) floors zoom-out at "columns fill the screen
+   * width" only, ignoring how tall the content is — for a schedule that's
+   * naturally much taller than wide, 'both' would force zooming out until
+   * the whole thing (many screens' worth of rows) fits, shrinking the
+   * columns to unreadable; 'width' keeps columns at a readable size and
+   * lets height overflow for panning instead.
+   */
+  fitAxis?: 'both' | 'width'
 }
 
 /**
@@ -66,7 +78,7 @@ type Props = {
  * outside this component (the header's "Reset View" button, team search).
  */
 const BracketZoomPan = forwardRef<BracketZoomPanHandle, Props>(function BracketZoomPan(
-  { children, getFocusElement }, ref,
+  { children, getFocusElement, fitAxis = 'both' }, ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
   const contentRef   = useRef<HTMLDivElement>(null)
@@ -98,16 +110,21 @@ const BracketZoomPan = forwardRef<BracketZoomPanHandle, Props>(function BracketZ
     const contentW = content.scrollWidth
     const contentH = content.scrollHeight
     if (!cw || !ch || !contentW || !contentH) return MIN_SCALE
-    return Math.min(cw / contentW, ch / contentH, 1)
+    return fitAxis === 'width'
+      ? Math.min(cw / contentW, 1)
+      : Math.min(cw / contentW, ch / contentH, 1)
   }
 
   // Keeps the content's own edges from ever being dragged/zoomed past the
-  // viewport's edges, AND pins the content's top-left corner to the viewport's
-  // top-left: maxX/maxY are 0, so you can never reveal blank space above or to
-  // the left of the bracket (the "Winners Bracket" / "Ring 1" header stays
-  // flush to the corner). When an axis's content is smaller than the viewport,
-  // that axis collapses to exactly 0 (flush start) — any slack shows on the
-  // bottom/right, never the top/left.
+  // viewport's edges. Vertically always pins flush-top when there's slack (the
+  // "Winners Bracket" / "Ring 1" header / earliest time slot stays glued to
+  // the top, any slack shows below, never above) — same for both fitAxis
+  // modes. Horizontally, 'both' (the bracket) does the same flush-left pin;
+  // 'width' (the match list) centers instead when the ring columns are
+  // narrower than the viewport (typical on desktop, since ring count is
+  // small and fixed) — there's nothing to reveal by panning sideways once
+  // every ring already fits, so centering reads better than hugging the
+  // left edge with all the slack dumped on the right.
   function clampTransform(t: Transform): Transform {
     const container = containerRef.current
     const content   = contentRef.current
@@ -117,8 +134,10 @@ const BracketZoomPan = forwardRef<BracketZoomPanHandle, Props>(function BracketZ
     const contentW = content.scrollWidth  * t.scale
     const contentH = content.scrollHeight * t.scale
     if (!cw || !ch || !contentW || !contentH) return t
-    const minX = Math.min(0, cw - contentW)
-    const maxX = 0
+    const hSlack = cw - contentW
+    const pinnedX = hSlack < 0 ? 0 : fitAxis === 'width' ? hSlack / 2 : 0
+    const minX = hSlack < 0 ? hSlack : pinnedX
+    const maxX = hSlack < 0 ? 0 : pinnedX
     const minY = Math.min(0, ch - contentH)
     const maxY = 0
     return { scale: t.scale, x: clamp(t.x, minX, maxX), y: clamp(t.y, minY, maxY) }
@@ -140,11 +159,9 @@ const BracketZoomPan = forwardRef<BracketZoomPanHandle, Props>(function BracketZ
     const contentW = content.scrollWidth
     const contentH = content.scrollHeight
     if (!cw || !ch || !contentW || !contentH) return
-    const scale = clamp(Math.min(cw / contentW, ch / contentH, 1), getMinScale(), MAX_SCALE)
-    // Anchor the whole bracket to the top-left corner (rather than centering)
-    // so its top and left edges always touch the screen edges — clampTransform
-    // then keeps it there.
-    setClampedTransform({ scale, x: 0, y: 0 })
+    // getMinScale() IS this axis's fit scale — sharing one formula keeps the
+    // default framing and the max-zoom-out floor from ever disagreeing.
+    setClampedTransform({ scale: getMinScale(), x: 0, y: 0 })
   }
 
   // Frame a round-of-N target: scaled so the anchor's width PLUS `extraWidth`

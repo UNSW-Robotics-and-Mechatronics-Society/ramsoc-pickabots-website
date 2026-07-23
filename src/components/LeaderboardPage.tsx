@@ -1,6 +1,11 @@
 'use client'
 
+import { useState } from 'react'
+import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh'
+import UserLedgerModal from './UserLedgerModal'
+
 interface Player {
+  id: string
   rank: number
   name: string
   credits: number
@@ -17,7 +22,11 @@ const GRAIN = `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http:
 type Props = { players: LeaderboardEntry[] }
 
 export default function LeaderboardPage({ players }: Props) {
+  useRealtimeRefresh(['matches', 'votes'])
+  const [selected, setSelected] = useState<{ id: string; name: string; rank: number } | null>(null)
+
   const PLAYERS: Player[] = players.map((p, i) => ({
+    id: p.id,
     rank: i + 1,
     name: p.name,
     credits: p.tokens,
@@ -80,9 +89,13 @@ export default function LeaderboardPage({ players }: Props) {
           const winRate = p.wins + p.losses > 0 ? Math.round((p.wins / (p.wins + p.losses)) * 100) : 0
           const isTop3  = p.rank <= 3
           return (
-            <div key={p.rank} style={{
+            <button
+              key={p.rank}
+              onClick={() => setSelected({ id: p.id, name: p.name, rank: p.rank })}
+              style={{
               position: 'relative', overflow: 'hidden',
               display: 'flex', alignItems: 'center',
+              width: '100%', textAlign: 'left', cursor: 'pointer', font: 'inherit',
               padding: '13px 12px',
               background: isTop3 ? 'rgba(255,107,0,0.1)' : 'rgba(6,3,16,0.82)',
               backdropFilter: 'blur(16px)',
@@ -160,7 +173,7 @@ export default function LeaderboardPage({ players }: Props) {
               }}>
                 {winRate}%
               </div>
-            </div>
+            </button>
           )
         })}
       </div>
@@ -173,6 +186,8 @@ export default function LeaderboardPage({ players }: Props) {
       }}>
         ◆ Updates after each resolved match ◆
       </div>
+
+      <UserLedgerModal target={selected} onClose={() => setSelected(null)} />
     </div>
   )
 }

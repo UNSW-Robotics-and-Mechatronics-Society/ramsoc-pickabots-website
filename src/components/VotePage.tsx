@@ -5,6 +5,7 @@ import Header from './Header'
 import Ring, { COMP_META } from './Ring'
 import NextMatchCard from './NextMatchCard'
 import VoteModal from './VoteModal'
+import TeamLedgerModal from './TeamLedgerModal'
 import ComicFlash, { useComicFlash } from './ComicFlash'
 import Toast, { useToast, WinLossToast, useWinLossToast } from './Toast'
 import type { Match, Vote, VoteStandings } from '@/lib/types'
@@ -24,6 +25,14 @@ export default function VotePage() {
   const [error, setError]       = useState<string | null>(null)
   const [modalCtx, setModalCtx] = useState<ModalCtx | null>(null)
   const [standings, setStandings] = useState<Record<string, VoteStandings>>({})
+  const [selectedTeam, setSelectedTeam] = useState<{ name: string; division?: 'standards' | 'open' } | null>(null)
+
+  // comp_type is 'standard'/'open'/'bossbot' — map to the app's internal
+  // 'standards'/'open' Division naming used as a best-effort disambiguation
+  // hint by the team ledger lookup (bossbot has no equivalent, left undefined).
+  function handleTeamClick(name: string, compType: string) {
+    setSelectedTeam({ name, division: compType === 'standard' ? 'standards' : compType === 'open' ? 'open' : undefined })
+  }
 
   const { state: flash, trigger: triggerFlash } = useComicFlash()
   const { toast, show: showToast } = useToast()
@@ -259,6 +268,7 @@ export default function VotePage() {
                 votingOpen={match.voting_open}
                 onVote={side => handleVote(match.id, side, side === 'left' ? match.left_name : match.right_name, match.comp_type)}
                 onUndo={() => handleUndo(match.id)}
+                onTeamClick={name => handleTeamClick(name, match.comp_type)}
               />
             : <PlaceholderRing key={`std-ph-${i}`} compType="standard" />
         })}
@@ -275,6 +285,7 @@ export default function VotePage() {
                 votingOpen={match.voting_open}
                 onVote={side => handleVote(match.id, side, side === 'left' ? match.left_name : match.right_name, match.comp_type)}
                 onUndo={() => handleUndo(match.id)}
+                onTeamClick={name => handleTeamClick(name, match.comp_type)}
               />
             : <PlaceholderRing key={`open-ph-${i}`} compType="open" />
         })}
@@ -289,6 +300,7 @@ export default function VotePage() {
             votingOpen={match.voting_open}
             onVote={side => handleVote(match.id, side, side === 'left' ? match.left_name : match.right_name, match.comp_type)}
             onUndo={() => handleUndo(match.id)}
+            onTeamClick={name => handleTeamClick(name, match.comp_type)}
           />
         ))}
 
@@ -306,6 +318,7 @@ export default function VotePage() {
       </main>
 
       <VoteModal ctx={modalCtx} tokens={tokens ?? 0} onConfirm={handleConfirm} onClose={() => setModalCtx(null)} />
+      <TeamLedgerModal target={selectedTeam} onClose={() => setSelectedTeam(null)} />
       <ComicFlash state={flash} />
       <Toast toast={toast} />
       <WinLossToast state={winLossState} />

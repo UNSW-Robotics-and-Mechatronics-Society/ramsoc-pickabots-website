@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   type BracketMatch, type Division, type MatchStatus, type Team, type TeamCount,
   winner, applyStatusChange, isTeamNameTaken, computeSlotDefaults,
@@ -56,8 +56,14 @@ type NumInputProps = { value: number; min?: number; max?: number; onChange: (v: 
 
 function NumInput({ value, min = 1, max = 60, onChange }: NumInputProps) {
   const [draft, setDraft] = useState(String(value));
-
-  useEffect(() => { setDraft(String(value)); }, [value]);
+  // Resets the draft when `value` changes externally — adjusted during
+  // render via a state (not ref) comparison, per React's documented "reset
+  // state when a prop changes" pattern, rather than in an effect.
+  const [prevValue, setPrevValue] = useState(value);
+  if (value !== prevValue) {
+    setPrevValue(value);
+    setDraft(String(value));
+  }
 
   function commit() {
     const v = parseInt(draft, 10);
@@ -286,18 +292,24 @@ function MatchCard({
 
 // ── MatchesPanel ──────────────────────────────────────────────────────────────
 
+// One-time/exhibition team — only its name matters here, for the exhibition
+// match team-name autocomplete (see exhibitionDatalistId below). Duplicated
+// locally rather than imported from the server-only db module.
+type SpecialTeam = { id: string; name: string };
+
 type Props = {
   matches:          BracketMatch[];
   division:         Division;
   teamCount:        TeamCount;
   schedule:         MatchSchedule;
   teams:            Team[];
+  specialTeams:     SpecialTeam[];
   onScheduleChange: (s: MatchSchedule) => void;
   onMatchesChange:  (matches: BracketMatch[]) => void;
 };
 
 export default function MatchesPanel({
-  matches, division, teamCount, schedule, teams, onScheduleChange, onMatchesChange,
+  matches, division, teamCount, schedule, teams, specialTeams, onScheduleChange, onMatchesChange,
 }: Props) {
   const divMatches = matches.filter(m => m.division === division);
   const matchById = new Map(divMatches.map(m => [m.id, m]));
@@ -374,6 +386,16 @@ export default function MatchesPanel({
   }
 
   const datalistId = `ms-teams-${division}`;
+  // Exhibition matches additionally suggest every real team from BOTH
+  // divisions (not just the one currently selected) plus every special
+  // (one-time) team — bracket-round matches don't get either, since those
+  // are for real competitors progressing through elimination in their own
+  // division, not one-off/crossover entries. Team-name inputs everywhere are
+  // free text (see isValidTeamName below — it only rejects duplicate names
+  // within the same division's matches, never rejects a name for belonging
+  // to "the wrong" division), so this is purely a discoverability aid;
+  // typing any team's name in by hand already worked.
+  const exhibitionDatalistId = `ms-teams-exhibition-${division}`;
 
   // One shared axis: every ring uses the same start-time reference and the
   // same pixel-per-minute density, so a given clock time lines up at the
@@ -470,7 +492,7 @@ export default function MatchesPanel({
                     teamCount={teamCount}
                     onDrop={srcId => onScheduleChange(swapMatchIds(schedule, srcId, match.id))}
                     onChange={handleMatchChange}
-                    datalistId={datalistId}
+                    datalistId={match.side === 'exhibition' ? exhibitionDatalistId : datalistId}
                     isValidTeamName={name => !isTeamNameTaken(matches, division, match.id, name)}
                     dimmed={isMatchDimmed(match, filterSet)}
                     onRemove={handleRemoveMatch}
@@ -490,6 +512,19 @@ export default function MatchesPanel({
       {/* Datalist for team autocomplete */}
       <datalist id={datalistId}>
         {teams.filter(t => t.division === division).map(t => (
+          <option key={t.id} value={t.name} />
+        ))}
+      </datalist>
+
+      {/* Exhibition matches suggest every real team from BOTH divisions
+          (a crossover Standards-vs-Open exhibition is a normal thing to
+          want, unlike a bracket-round match) plus every special (one-time)
+          team — see exhibitionDatalistId above. */}
+      <datalist id={exhibitionDatalistId}>
+        {teams.map(t => (
+          <option key={t.id} value={t.name} />
+        ))}
+        {specialTeams.map(t => (
           <option key={t.id} value={t.name} />
         ))}
       </datalist>

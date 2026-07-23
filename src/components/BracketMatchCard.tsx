@@ -33,7 +33,9 @@ export function matchSideLabel(m: BracketMatch): string {
   return `${m.side === 'winners' ? 'W' : 'L'}B R${m.round}`
 }
 
-export function Slot({ name, score, won, lost, placeholder }: { name: string; score: number; won: boolean; lost: boolean; placeholder?: string }) {
+export function Slot({
+  name, score, won, lost, placeholder, onTeamClick,
+}: { name: string; score: number; won: boolean; lost: boolean; placeholder?: string; onTeamClick?: (name: string) => void }) {
   const empty = !name
   return (
     <div style={{
@@ -41,14 +43,18 @@ export function Slot({ name, score, won, lost, placeholder }: { name: string; sc
       flex: 1, padding: '0 5px',
       background: won ? 'rgba(255,107,0,0.14)' : 'transparent',
     }}>
-      <span style={{
-        fontSize: '0.31rem', fontWeight: 900, letterSpacing: 0.25, textTransform: 'uppercase',
-        // Empty slots show their feeder ("Winner of R64 M3") in a dimmer,
-        // italic style so it reads as a placeholder, not a real team.
-        color: empty ? 'rgba(200,200,200,0.5)' : won ? '#fff' : lost ? 'rgba(255,255,255,0.3)' : 'rgba(210,210,210,0.85)',
-        fontStyle: empty ? 'italic' : 'normal',
-        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-      }}>
+      <span
+        onClick={empty ? undefined : e => { e.stopPropagation(); onTeamClick?.(name) }}
+        style={{
+          fontSize: '0.31rem', fontWeight: 900, letterSpacing: 0.25, textTransform: 'uppercase',
+          // Empty slots show their feeder ("Winner of R64 M3") in a dimmer,
+          // italic style so it reads as a placeholder, not a real team.
+          color: empty ? 'rgba(200,200,200,0.5)' : won ? '#fff' : lost ? 'rgba(255,255,255,0.3)' : 'rgba(210,210,210,0.85)',
+          fontStyle: empty ? 'italic' : 'normal',
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          cursor: empty ? 'default' : 'pointer',
+        }}
+      >
         {name || placeholder || 'TBD'}
       </span>
       <span style={{ fontSize: '0.34rem', fontWeight: 900, color: won ? '#FF6B00' : 'rgba(255,255,255,0.35)' }}>
@@ -71,9 +77,11 @@ type MatchCardProps = {
   selected?: boolean
   /** Feeder placeholders for empty slots (e.g. { a: "Winner of R64 M3" }). */
   defaults?: { a?: string; b?: string }
+  /** Opens the team ledger modal for whichever slot's name was clicked. */
+  onTeamClick?: (name: string) => void
 }
 
-export function MatchCard({ match, time, dimmed, selected, defaults }: MatchCardProps) {
+export function MatchCard({ match, time, dimmed, selected, defaults, onTeamClick }: MatchCardProps) {
   const w = winner(match)
   const isDone = match.status === 'completed'
 
@@ -126,9 +134,9 @@ export function MatchCard({ match, time, dimmed, selected, defaults }: MatchCard
           {time}
         </div>
       )}
-      <Slot name={match.slotA.teamName} score={match.slotA.score} won={w === 'a'} lost={w === 'b'} placeholder={defaults?.a} />
+      <Slot name={match.slotA.teamName} score={match.slotA.score} won={w === 'a'} lost={w === 'b'} placeholder={defaults?.a} onTeamClick={onTeamClick} />
       <div style={{ height: 1, background: 'rgba(255,255,255,0.08)' }} />
-      <Slot name={match.slotB.teamName} score={match.slotB.score} won={w === 'b'} lost={w === 'a'} placeholder={defaults?.b} />
+      <Slot name={match.slotB.teamName} score={match.slotB.score} won={w === 'b'} lost={w === 'a'} placeholder={defaults?.b} onTeamClick={onTeamClick} />
     </div>
   )
 }
