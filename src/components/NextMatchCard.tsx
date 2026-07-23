@@ -16,8 +16,9 @@ export default function NextMatchCard({ match }: { match: Match }) {
       display: 'flex', alignItems: 'center', gap: 10,
       borderRadius: 10, padding: '8px 12px',
       border: `1px solid color-mix(in srgb, ${meta.color} 20%, transparent)`,
-      background: 'rgba(3,1,8,0.14)',
-      opacity: 0.6,
+      background: 'rgba(10,6,28,0.55)',
+      backdropFilter: 'blur(12px)',
+      WebkitBackdropFilter: 'blur(12px)',
     }}>
       <Bot name={match.left_name} color={match.left_color} shape={match.left_shape} />
 
