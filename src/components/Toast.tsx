@@ -32,90 +32,136 @@ export default function Toast({ toast }: { toast: { visible: boolean; msg: strin
   )
 }
 
-// ── Big centered win/loss notification ────────────────────────────────────────
+// ── Stacking win/loss notifications ──────────────────────────────────────────
 
 export type WinLossResult = 'win' | 'loss'
 
-interface WinLossState {
-  visible: boolean
+export interface WinLossItem {
+  id: string
   result: WinLossResult
   botName: string
 }
 
 export function useWinLossToast() {
-  const [state, setState] = useState<WinLossState>({ visible: false, result: 'win', botName: '' })
-  const timer = useRef<ReturnType<typeof setTimeout>>(null)
+  const [queue, setQueue] = useState<WinLossItem[]>([])
 
-  const show = useCallback((result: WinLossResult, botName: string) => {
-    clearTimeout(timer.current!)
-    setState({ visible: true, result, botName })
-    timer.current = setTimeout(() => setState(s => ({ ...s, visible: false })), 4000)
+  const showWinLoss = useCallback((result: WinLossResult, botName: string) => {
+    const id = Math.random().toString(36).slice(2)
+    setQueue(prev => [...prev, { id, result, botName }])
   }, [])
 
-  return { winLossState: state, showWinLoss: show }
+  const dismissWinLoss = useCallback(() => {
+    setQueue(prev => prev.slice(1))
+  }, [])
+
+  return { winLossQueue: queue, showWinLoss, dismissWinLoss }
 }
 
-export function WinLossToast({ state }: { state: { visible: boolean; result: WinLossResult; botName: string } }) {
-  const isWin = state.result === 'win'
+export function WinLossToast({
+  queue,
+  onDismiss,
+}: {
+  queue: WinLossItem[]
+  onDismiss: () => void
+}) {
+  if (queue.length === 0) return null
+
+  // Show at most 3 cards in the stack; the rest are invisible behind them
+  const visible = queue.slice(0, 3)
 
   return (
     <>
-      {/* Full-screen dim when active */}
-      <div style={{
-        position: 'fixed', inset: 0,
-        background: 'rgba(0,0,0,0.6)',
-        zIndex: 8000,
-        opacity: state.visible ? 1 : 0,
-        pointerEvents: 'none',
-        transition: 'opacity 0.3s',
-      }} />
+      {/* Full-screen backdrop — click anywhere to dismiss the top card */}
+      <div
+        onClick={onDismiss}
+        style={{
+          position: 'fixed', inset: 0,
+          background: 'rgba(0,0,0,0.65)',
+          zIndex: 8000,
+          cursor: 'pointer',
+        }}
+      />
 
-      {/* Centered card */}
-      <div style={{
-        position: 'fixed', top: '50%', left: '50%',
-        transform: `translate(-50%, -50%) scale(${state.visible ? 1 : 0.7})`,
-        zIndex: 9000,
-        opacity: state.visible ? 1 : 0,
-        pointerEvents: 'none',
-        transition: 'all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)',
-        textAlign: 'center',
-        minWidth: 260,
-      }}>
-        <div style={{
-          background: isWin ? 'rgba(0,30,10,0.97)' : 'rgba(30,0,0,0.97)',
-          border: `2px solid ${isWin ? '#00e676' : '#ff1744'}`,
-          borderRadius: 22,
-          padding: '32px 52px',
-          boxShadow: `0 0 80px ${isWin ? 'rgba(0,230,118,0.35)' : 'rgba(255,23,68,0.35)'}, 0 20px 60px rgba(0,0,0,0.6)`,
-          backdropFilter: 'blur(24px)',
-        }}>
-          <div style={{ fontSize: '3rem', marginBottom: 10, lineHeight: 1 }}>
-            {isWin ? '🏆' : '💔'}
-          </div>
-          <div style={{
-            fontSize: '2rem', fontWeight: 900, letterSpacing: 3,
-            color: isWin ? '#00e676' : '#ff1744',
-            textTransform: 'uppercase', lineHeight: 1,
-          }}>
-            {isWin ? 'YOU WON!' : 'YOU LOST'}
-          </div>
-          <div style={{
-            fontSize: '1rem', fontWeight: 900, color: 'rgba(255,255,255,0.7)',
-            marginTop: 10, letterSpacing: 1, textTransform: 'uppercase',
-          }}>
-            {state.botName}
-          </div>
-          {isWin && (
+      {/* Cards rendered back-to-front so the top card is on top in the DOM */}
+      {[...visible].reverse().map((item, revIdx) => {
+        // depth 0 = front card, depth 1 = one behind, depth 2 = furthest back
+        const depth = visible.length - 1 - revIdx
+        const isFront = depth === 0
+        const isWin = item.result === 'win'
+
+        return (
+          <div
+            key={item.id}
+            onClick={isFront ? onDismiss : undefined}
+            style={{
+              position: 'fixed',
+              top: '50%', left: '50%',
+              // Cards behind shift down slightly and shrink
+              transform: `translate(-50%, calc(-50% + ${depth * 16}px)) scale(${1 - depth * 0.05})`,
+              zIndex: 9010 - depth,
+              textAlign: 'center',
+              minWidth: 260,
+              opacity: 1 - depth * 0.18,
+              pointerEvents: isFront ? 'auto' : 'none',
+              transition: 'transform 0.3s ease, opacity 0.3s ease',
+              cursor: isFront ? 'pointer' : 'default',
+            }}
+          >
             <div style={{
-              marginTop: 14, fontSize: '0.65rem', fontWeight: 900,
-              color: '#00e676', letterSpacing: 4, textTransform: 'uppercase',
-              opacity: 0.8,
+              background: isWin ? 'rgba(0,30,10,0.97)' : 'rgba(30,0,0,0.97)',
+              border: `2px solid ${isWin ? '#00e676' : '#ff1744'}`,
+              borderRadius: 22,
+              padding: '32px 52px',
+              backdropFilter: 'blur(24px)',
+              boxShadow: isFront
+                ? `0 0 80px ${isWin ? 'rgba(0,230,118,0.35)' : 'rgba(255,23,68,0.35)'}, 0 20px 60px rgba(0,0,0,0.6)`
+                : `0 8px 32px rgba(0,0,0,0.4)`,
             }}>
-              Tokens incoming ↑
+              {isFront ? (
+                <>
+                  <div style={{ fontSize: '3rem', marginBottom: 10, lineHeight: 1 }}>
+                    {isWin ? '🏆' : '💔'}
+                  </div>
+                  <div style={{
+                    fontSize: '2rem', fontWeight: 900, letterSpacing: 3,
+                    color: isWin ? '#00e676' : '#ff1744',
+                    textTransform: 'uppercase', lineHeight: 1,
+                  }}>
+                    {isWin ? 'YOU WON!' : 'YOU LOST'}
+                  </div>
+                  <div style={{
+                    fontSize: '1rem', fontWeight: 900, color: 'rgba(255,255,255,0.7)',
+                    marginTop: 10, letterSpacing: 1, textTransform: 'uppercase',
+                  }}>
+                    {item.botName}
+                  </div>
+                  {isWin && (
+                    <div style={{
+                      marginTop: 14, fontSize: '0.65rem', fontWeight: 900,
+                      color: '#00e676', letterSpacing: 4, textTransform: 'uppercase', opacity: 0.8,
+                    }}>
+                      Tokens incoming ↑
+                    </div>
+                  )}
+                  {queue.length > 1 && (
+                    <div style={{
+                      marginTop: 16, fontSize: '0.5rem', fontWeight: 900,
+                      color: 'rgba(255,255,255,0.28)', letterSpacing: 3, textTransform: 'uppercase',
+                    }}>
+                      tap anywhere · {queue.length - 1} more
+                    </div>
+                  )}
+                </>
+              ) : (
+                /* Dimmed placeholder content so the card has the right height */
+                <div style={{ visibility: 'hidden', fontSize: '2rem', lineHeight: 1 }}>
+                  ████<br/>████████<br/>████
+                </div>
+              )}
             </div>
-          )}
-        </div>
-      </div>
+          </div>
+        )
+      })}
     </>
   )
 }

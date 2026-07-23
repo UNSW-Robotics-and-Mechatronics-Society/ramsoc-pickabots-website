@@ -1,5 +1,6 @@
 'use client'
 import AdminUserButton from './AdminUserButton'
+import RamCoin from './RamCoin'
 
 export default function Header({ tokens, loading }: { tokens: number; loading: boolean }) {
   return (
@@ -41,7 +42,9 @@ export default function Header({ tokens, loading }: { tokens: number; loading: b
           boxShadow: '0 0 14px rgba(255,180,0,0.12)',
           backdropFilter: 'blur(8px)',
         }}>
-          <span style={{ fontSize: '1rem', display: 'inline-block', animation: 'orbitSpin 6s linear infinite' }}>🪙</span>
+          <span style={{ display: 'inline-block', animation: 'orbitSpin 6s linear infinite' }}>
+            <RamCoin size={22} />
+          </span>
           <span style={{
             fontSize: '1.1rem', fontWeight: 900, color: '#FFD700', letterSpacing: 2,
             textShadow: '0 0 10px rgba(255,215,0,0.5)', minWidth: 32, textAlign: 'center',
@@ -49,7 +52,7 @@ export default function Header({ tokens, loading }: { tokens: number; loading: b
           }}>
             {loading ? '—' : tokens}
           </span>
-          <span style={{ fontSize: '0.5rem', color: '#666', fontWeight: 900, letterSpacing: 2 }}>CR</span>
+          <span style={{ fontSize: '0.5rem', color: '#666', fontWeight: 900, letterSpacing: 2 }}>RC</span>
         </div>
 
         <AdminUserButton />

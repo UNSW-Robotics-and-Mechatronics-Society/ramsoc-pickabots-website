@@ -30,7 +30,7 @@ export default function VotePage() {
 
   const { state: flash, trigger: triggerFlash } = useComicFlash()
   const { toast, show: showToast } = useToast()
-  const { winLossState, showWinLoss } = useWinLossToast()
+  const { winLossQueue, showWinLoss, dismissWinLoss } = useWinLossToast()
 
   // Refs let refetchMatches read the latest votes/matches without being in its
   // dependency array — keeping it stable so the Supabase subscription never
@@ -298,7 +298,7 @@ export default function VotePage() {
         {/* Next Matches — max 2 per division (standard + open) = 4 total */}
         {!loading && !error && nextVisible.length > 0 && (
           <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <span style={{ fontSize: '0.55rem', fontWeight: 900, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: 4 }}>
+            <span style={{ fontSize: '0.65rem', fontWeight: 900, color: 'rgba(255,255,255,0.55)', textTransform: 'uppercase', letterSpacing: 4 }}>
               Next Matches
             </span>
             {nextVisible.map(match => (
@@ -311,7 +311,7 @@ export default function VotePage() {
       <VoteModal ctx={modalCtx} tokens={tokens ?? 0} onConfirm={handleConfirm} onClose={() => setModalCtx(null)} />
       <ComicFlash state={flash} />
       <Toast toast={toast} />
-      <WinLossToast state={winLossState} />
+      <WinLossToast queue={winLossQueue} onDismiss={dismissWinLoss} />
 
       <style>{`@keyframes spin { to{transform:rotate(360deg)} }`}</style>
     </>

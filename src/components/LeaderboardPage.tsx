@@ -1,4 +1,5 @@
 'use client'
+import RamCoin from './RamCoin'
 
 interface Player {
   rank: number
@@ -52,7 +53,7 @@ export default function LeaderboardPage({ players }: Props) {
           fontSize: '0.5rem', letterSpacing: 4, color: 'rgba(255,255,255,0.3)',
           textTransform: 'uppercase', marginTop: 4, fontWeight: 900,
         }}>
-          Sorted by credits earned
+          Sorted by ramcoins earned
         </div>
       </div>
 
@@ -69,7 +70,7 @@ export default function LeaderboardPage({ players }: Props) {
       }}>
         <span style={{ width: 38 }}>#</span>
         <span style={{ flex: 1 }}>Pilot</span>
-        <span style={{ width: 76, textAlign: 'right' }}>Credits</span>
+        <span style={{ width: 76, textAlign: 'right' }}>Ramcoins</span>
         <span style={{ width: 56, textAlign: 'right' }}>W / L</span>
         <span style={{ width: 46, textAlign: 'right' }}>Rate</span>
       </div>
@@ -133,7 +134,9 @@ export default function LeaderboardPage({ players }: Props) {
                 textShadow: isTop3 ? '0 0 10px rgba(255,215,0,0.45)' : 'none',
                 position: 'relative',
               }}>
-                🪙 {p.credits.toLocaleString()}
+                <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
+                  <RamCoin size={13}/>{p.credits.toLocaleString()}
+                </span>
               </div>
 
               {/* W/L */}

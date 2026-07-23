@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import BotSvg from './BotSvg'
+import RamCoin from './RamCoin'
 import type { Match, Vote, VoteStandings } from '@/lib/types'
 
 export const COMP_META = {
@@ -144,7 +145,9 @@ export default function Ring({ match, vote, standings, votingOpen = true, onVote
             <div style={{ fontSize: '1rem', fontWeight: 900, color: '#fff', margin: '4px 0', letterSpacing: 1 }}>
               {vote.side === 'left' ? match.left_name : match.right_name}
             </div>
-            <div style={{ fontSize: '0.78rem', fontWeight: 900, color: '#FFD700', letterSpacing: 1 }}>🪙 {vote.amount}</div>
+            <div style={{ fontSize: '0.78rem', fontWeight: 900, color: '#FFD700', letterSpacing: 1, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <RamCoin size={15} />{vote.amount}
+            </div>
             {(() => {
               const mult = standings && !standings.noData
                 ? (vote.side === 'left' ? standings.multiplierIfLeftWins : standings.multiplierIfRightWins)

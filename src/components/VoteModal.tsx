@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
+import RamCoin from './RamCoin'
 
 const MAX_VOTE_FRAC = 0.5  // max 50% of balance per vote
 
@@ -125,8 +126,8 @@ export default function VoteModal({ ctx, tokens, onConfirm, onClose }: VoteModal
             background: 'rgba(255,107,0,0.05)', border: '1px solid rgba(255,107,0,0.12)',
             borderRadius: 10, padding: '10px 14px', marginBottom: 16,
           }}>
-            <span style={{ fontSize: '0.55rem', color: '#555', textTransform: 'uppercase', fontWeight: 900, letterSpacing: 4 }}>Credits</span>
-            <span style={{ fontSize: '1rem', fontWeight: 900, color: '#FFD700', letterSpacing: 1 }}>🪙 {tokens}</span>
+            <span style={{ fontSize: '0.55rem', color: '#555', textTransform: 'uppercase', fontWeight: 900, letterSpacing: 4 }}>Ramcoins</span>
+            <span style={{ fontSize: '1rem', fontWeight: 900, color: '#FFD700', letterSpacing: 1, display: 'flex', alignItems: 'center', gap: 5 }}><RamCoin size={18}/>{tokens}</span>
           </div>
 
           {/* Vote widget */}
@@ -146,12 +147,12 @@ export default function VoteModal({ ctx, tokens, onConfirm, onClose }: VoteModal
               <span>1</span><span>MAX {cap}</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 12 }}>
-              <span style={{ fontSize: '1rem', color: '#FFD700', fontWeight: 900, alignSelf: 'flex-end', paddingBottom: 4 }}>🪙</span>
+              <span style={{ alignSelf: 'flex-end', paddingBottom: 4 }}><RamCoin size={20}/></span>
               <span style={{ fontSize: '2.8rem', fontWeight: 900, color: '#fff', letterSpacing: -2, lineHeight: 1,
                 textShadow: '0 0 20px rgba(255,107,0,0.4)' }}>
                 {amount}
               </span>
-              <span style={{ fontSize: '0.6rem', color: '#555', fontWeight: 900, alignSelf: 'flex-end', paddingBottom: 6, letterSpacing: 3 }}>CR</span>
+              <span style={{ fontSize: '0.6rem', color: '#555', fontWeight: 900, alignSelf: 'flex-end', paddingBottom: 6, letterSpacing: 3 }}>RC</span>
             </div>
           </div>
 
@@ -179,11 +180,11 @@ export default function VoteModal({ ctx, tokens, onConfirm, onClose }: VoteModal
             padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12,
           }}>
             <span style={{ fontSize: '0.5rem', color: '#4caf50', fontWeight: 900, textTransform: 'uppercase', letterSpacing: 4 }}>Reward</span>
-            <span style={{ fontSize: '0.95rem', fontWeight: 900, color: '#69ff4c', letterSpacing: 1 }}>+{amount} → {amount * 2} 🪙</span>
+            <span style={{ fontSize: '0.95rem', fontWeight: 900, color: '#69ff4c', letterSpacing: 1, display: 'flex', alignItems: 'center', gap: 5 }}>+{amount} → {amount * 2} <RamCoin size={16}/></span>
           </div>
 
           <div style={{ textAlign: 'center', fontSize: '0.48rem', color: '#333', fontWeight: 900, textTransform: 'uppercase', letterSpacing: 4, marginBottom: 14 }}>
-            Max 50% of balance · <strong style={{ color: '#555' }}>{cap}</strong> credits
+            Max 50% of balance · <strong style={{ color: '#555' }}>{cap}</strong> ramcoins
           </div>
         </div>
 
