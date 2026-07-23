@@ -8,6 +8,7 @@ import {
   SMS_TEMPLATE_PLACEHOLDERS,
   BROADCAST_PLACEHOLDERS,
   renderBroadcastTemplate,
+  DEFAULT_SMS_LOCATION,
 } from "@/lib/sms-template";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
 
@@ -17,10 +18,12 @@ type ConfigResponse = {
   smsUpNextTemplate: string;
   smsUpNextDefault: string;
   smsNotifyLead?: number;
+  smsLocation?: string;
+  smsLocationDefault?: string;
 };
 
 type ConfigPutResponse =
-  | { ok: true; smsUpNextTemplate: string; smsNotifyLead: number }
+  | { ok: true; smsUpNextTemplate: string; smsNotifyLead: number; smsLocation: string }
   | { error: string };
 
 type BroadcastCountsResponse = { total: number; withPhone: number };
@@ -45,6 +48,8 @@ export default function SettingsPanel() {
   const [defaultTemplate, setDefaultTemplate] = useState("");
   const [notifyLead, setNotifyLead] = useState(DEFAULT_SMS_NOTIFY_LEAD);
   const [savedNotifyLead, setSavedNotifyLead] = useState(DEFAULT_SMS_NOTIFY_LEAD);
+  const [smsLocation, setSmsLocation] = useState(DEFAULT_SMS_LOCATION);
+  const [savedLocation, setSavedLocation] = useState(DEFAULT_SMS_LOCATION);
   const [saving, setSaving]     = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedFlash, setSavedFlash] = useState(false);
@@ -82,6 +87,9 @@ export default function SettingsPanel() {
       const lead = data.smsNotifyLead ?? DEFAULT_SMS_NOTIFY_LEAD;
       setNotifyLead(lead);
       setSavedNotifyLead(lead);
+      const location = data.smsLocation ?? DEFAULT_SMS_LOCATION;
+      setSmsLocation(location);
+      setSavedLocation(location);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load settings");
     } finally {
@@ -112,14 +120,14 @@ export default function SettingsPanel() {
 
   const charCount = template.length;
   const parts = charCount === 0 ? 0 : Math.ceil(charCount / 160);
-  const dirty = template !== savedTemplate || notifyLead !== savedNotifyLead;
+  const dirty = template !== savedTemplate || notifyLead !== savedNotifyLead || smsLocation !== savedLocation;
 
   const broadcastCharCount = broadcastBody.length;
   const broadcastParts = broadcastCharCount === 0 ? 0 : Math.ceil(broadcastCharCount / 160);
 
   const preview = useMemo(
-    () => renderSmsTemplate(template, { team: "Iron Fist", division: "standards" }),
-    [template],
+    () => renderSmsTemplate(template, { team: "Iron Fist", division: "standards", ring: 2, location: smsLocation }),
+    [template, smsLocation],
   );
 
   // Preview of a broadcast, rendered for a sample captain.
@@ -131,9 +139,10 @@ export default function SettingsPanel() {
             captain: "Alex Chen",
             team: "Iron Fist",
             division: "standards",
+            location: smsLocation,
           })
         : "",
-    [broadcastBody],
+    [broadcastBody, smsLocation],
   );
 
   function insertPlaceholder(placeholder: string) {
@@ -156,7 +165,7 @@ export default function SettingsPanel() {
       const res = await fetch("/api/admin/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ smsUpNextTemplate: template, smsNotifyLead: notifyLead }),
+        body: JSON.stringify({ smsUpNextTemplate: template, smsNotifyLead: notifyLead, smsLocation }),
       });
       const data = (await res.json()) as ConfigPutResponse;
       if (!res.ok || "error" in data) {
@@ -166,6 +175,8 @@ export default function SettingsPanel() {
       setSavedTemplate(data.smsUpNextTemplate);
       setNotifyLead(data.smsNotifyLead);
       setSavedNotifyLead(data.smsNotifyLead);
+      setSmsLocation(data.smsLocation);
+      setSavedLocation(data.smsLocation);
       setSavedFlash(true);
       if (flashTimer.current) clearTimeout(flashTimer.current);
       flashTimer.current = setTimeout(() => setSavedFlash(false), 2000);
@@ -329,6 +340,23 @@ export default function SettingsPanel() {
                 <p className="mt-1.5 text-[0.65rem] text-foreground/40">
                   2 = they get the heads-up one match before they&rsquo;re on-deck, so
                   they&rsquo;re already at the arena.
+                </p>
+              </div>
+
+              <div className="mt-4 border-t border-white/10 pt-3">
+                <label className="flex flex-col gap-1.5 text-xs text-foreground">
+                  Venue / location
+                  <input
+                    type="text"
+                    value={smsLocation}
+                    onChange={e => setSmsLocation(e.target.value)}
+                    placeholder={DEFAULT_SMS_LOCATION}
+                    className="w-full rounded-lg border border-white/10 bg-white/8 px-2 py-1.5 text-xs text-foreground placeholder:text-foreground/30 outline-none focus:border-white/30"
+                  />
+                </label>
+                <p className="mt-1.5 text-[0.65rem] text-foreground/40">
+                  Used for the {"{location}"} placeholder in the up-next + broadcast
+                  messages (e.g. &ldquo;the Roundhouse — ring signs at each arena&rdquo;).
                 </p>
               </div>
 

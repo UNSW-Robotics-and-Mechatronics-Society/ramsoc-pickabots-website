@@ -345,12 +345,15 @@ export async function saveBracketState(state: BracketState): Promise<void> {
   // running on every save is safe. Best-effort — never fails the bracket save.
   try {
     const lead = await getNotifyLead();
-    const dueIds = new Set<string>();
+    // Collect due matches with their ring (first occurrence wins if somehow dup).
+    const ringByMatch = new Map<string, number>();
     for (const d of DIVISIONS) {
-      for (const id of dueForNotify(effective, schedules[d], lead)) dueIds.add(id);
+      for (const { matchId, ring } of dueForNotify(effective, schedules[d], lead)) {
+        if (!ringByMatch.has(matchId)) ringByMatch.set(matchId, ring);
+      }
     }
-    for (const id of dueIds) {
-      await notifyCaptainsForMatch(id).catch(err =>
+    for (const [id, ring] of ringByMatch) {
+      await notifyCaptainsForMatch(id, { ring }).catch(err =>
         console.error("[bracket] captain notify failed for", id, err),
       );
     }

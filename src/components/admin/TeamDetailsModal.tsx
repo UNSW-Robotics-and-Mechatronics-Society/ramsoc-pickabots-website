@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, Phone, Send, X } from "lucide-react";
 import { type Division } from "@/lib/mock-data";
 import { cn } from "@/lib/cn";
-import { renderSmsTemplate, DEFAULT_SMS_UP_NEXT } from "@/lib/sms-template";
+import { renderSmsTemplate, DEFAULT_SMS_UP_NEXT, DEFAULT_SMS_LOCATION } from "@/lib/sms-template";
 
 type Contact = {
   profileId: string;
@@ -18,6 +18,7 @@ type ContactsResponse = {
   sender: string;
   smsConfigured: boolean;
   upNextTemplate: string;
+  location: string;
 };
 
 type SmsResult = {
@@ -50,6 +51,7 @@ export default function TeamDetailsModal({ teamId, teamName, division, onClose }
   const [sender, setSender]             = useState<string>("");
   const [smsConfigured, setSmsConfigured] = useState(true);
   const [upNextTemplate, setUpNextTemplate] = useState<string>(DEFAULT_SMS_UP_NEXT);
+  const [location, setLocation] = useState<string>(DEFAULT_SMS_LOCATION);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [message, setMessage]   = useState("");
@@ -72,6 +74,7 @@ export default function TeamDetailsModal({ teamId, teamName, division, onClose }
         setSender(data.sender);
         setSmsConfigured(data.smsConfigured);
         setUpNextTemplate(data.upNextTemplate ?? DEFAULT_SMS_UP_NEXT);
+        setLocation(data.location ?? DEFAULT_SMS_LOCATION);
         // default selection: captains with a phone number
         setSelected(
           new Set(
@@ -147,7 +150,7 @@ export default function TeamDetailsModal({ teamId, teamName, division, onClose }
   }
 
   function upNextMessage(name: string, div: Division): string {
-    return renderSmsTemplate(upNextTemplate, { team: name, division: div });
+    return renderSmsTemplate(upNextTemplate, { team: name, division: div, location });
   }
 
   function handleTextCaptainsUpNext() {

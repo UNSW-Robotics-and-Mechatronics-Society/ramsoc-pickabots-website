@@ -90,7 +90,7 @@ export async function setCaptainNotified(matchId: string, value: boolean): Promi
 }
 
 export { divisionLabelFor as divisionLabel } from "@/lib/sms-template";
-import { getSmsUpNextTemplate } from "./config";
+import { getSmsUpNextTemplate, getSmsLocation } from "./config";
 import { renderSmsTemplate } from "@/lib/sms-template";
 
 /**
@@ -118,13 +118,13 @@ export type CaptainNotifyResult = {
  */
 export async function notifyCaptainsForMatch(
   matchId: string,
-  opts: { force?: boolean } = {},
+  opts: { force?: boolean; ring?: number } = {},
 ): Promise<CaptainNotifyResult> {
   const m = await getBracketMatchTeams(matchId);
   if (!m) return { matchId, sent: 0, skipped: true, reason: "not found" };
   if (!opts.force && m.captainNotified) return { matchId, sent: 0, skipped: true, reason: "already notified" };
 
-  const template = await getSmsUpNextTemplate();
+  const [template, location] = await Promise.all([getSmsUpNextTemplate(), getSmsLocation()]);
   const slots = [
     { teamId: m.teamAId, fallbackName: m.slotAName },
     { teamId: m.teamBId, fallbackName: m.slotBName },
@@ -137,7 +137,7 @@ export async function notifyCaptainsForMatch(
     const [contacts, team] = await Promise.all([getTeamContacts(slot.teamId), getTeamById(slot.teamId)]);
     const teamName = team?.name ?? slot.fallbackName;
     for (const captain of contacts.filter(c => c.role === "captain" && c.phone)) {
-      messages.push({ to: captain.phone, body: renderSmsTemplate(template, { team: teamName, division: m.division }) });
+      messages.push({ to: captain.phone, body: renderSmsTemplate(template, { team: teamName, division: m.division, ring: opts.ring, location }) });
       messageTeamIds.push(slot.teamId);
     }
   }

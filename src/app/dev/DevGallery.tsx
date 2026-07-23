@@ -16,7 +16,7 @@ import PlayersPanel from "@/components/admin/PlayersPanel";
 import SettingsPanel from "@/components/admin/SettingsPanel";
 import Ring from "@/components/Ring";
 import type { Match, Vote, VoteStandings } from "@/lib/types";
-import { DEFAULT_SMS_UP_NEXT } from "@/lib/sms-template";
+import { DEFAULT_SMS_UP_NEXT, DEFAULT_SMS_LOCATION } from "@/lib/sms-template";
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Mock fetch shim — installed once at module scope. Intercepts the handful of
@@ -135,9 +135,10 @@ const begMock: { mode: BegMockMode } = { mode: "eligible" };
 /** Mutable holder so the Settings panel mock can echo back saved values
  *  across GET/PUT calls (a const object property, per the React Compiler
  *  restriction on reassigning module-level `let`s from a component). */
-const smsConfigMock: { template: string; notifyLead: number } = {
+const smsConfigMock: { template: string; notifyLead: number; location: string } = {
   template: DEFAULT_SMS_UP_NEXT,
   notifyLead: 2,
+  location: "the arena",
 };
 
 const MOCK_BROADCAST_RESULTS = Array.from({ length: 10 }, (_, i) => ({
@@ -206,6 +207,7 @@ if (typeof window !== "undefined" && !(window as unknown as { __devGalleryFetchP
         sender: "RAMSOC",
         smsConfigured: true,
         upNextTemplate: smsConfigMock.template,
+        location: "the arena",
       });
     }
 
@@ -215,6 +217,8 @@ if (typeof window !== "undefined" && !(window as unknown as { __devGalleryFetchP
         smsUpNextTemplate: smsConfigMock.template,
         smsUpNextDefault: DEFAULT_SMS_UP_NEXT,
         smsNotifyLead: smsConfigMock.notifyLead,
+        smsLocation: "the arena",
+        smsLocationDefault: DEFAULT_SMS_LOCATION,
       });
     }
 
@@ -222,6 +226,7 @@ if (typeof window !== "undefined" && !(window as unknown as { __devGalleryFetchP
     if (method === "PUT" && /\/api\/admin\/config$/.test(url)) {
       let template = smsConfigMock.template;
       let notifyLead = smsConfigMock.notifyLead;
+      let location = smsConfigMock.location;
       try {
         const body = JSON.parse((init?.body as string) ?? "{}");
         if (typeof body.smsUpNextTemplate === "string") {
@@ -232,12 +237,18 @@ if (typeof window !== "undefined" && !(window as unknown as { __devGalleryFetchP
         } else if (body.smsNotifyLead === undefined) {
           notifyLead = smsConfigMock.notifyLead ?? 2;
         }
+        if (typeof body.smsLocation === "string") {
+          location = body.smsLocation.trim() === "" ? DEFAULT_SMS_LOCATION : body.smsLocation;
+        } else if (body.smsLocation === undefined) {
+          location = smsConfigMock.location ?? DEFAULT_SMS_LOCATION;
+        }
       } catch {
         // ignore malformed body
       }
       smsConfigMock.template = template;
       smsConfigMock.notifyLead = notifyLead;
-      return jsonResponse({ ok: true, smsUpNextTemplate: template, smsNotifyLead: notifyLead });
+      smsConfigMock.location = location;
+      return jsonResponse({ ok: true, smsUpNextTemplate: template, smsNotifyLead: notifyLead, smsLocation: location });
     }
 
     // GET /api/admin/broadcast
