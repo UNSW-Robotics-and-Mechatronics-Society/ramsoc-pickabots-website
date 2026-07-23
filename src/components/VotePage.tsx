@@ -7,6 +7,8 @@ import NextMatchCard from './NextMatchCard'
 import VoteModal from './VoteModal'
 import ComicFlash, { useComicFlash } from './ComicFlash'
 import Toast, { useToast, WinLossToast, useWinLossToast } from './Toast'
+import BegDial from './BegDial'
+import { BEG_THRESHOLD } from '@/lib/beg-config'
 import type { Match, Vote, VoteStandings } from '@/lib/types'
 
 interface ModalCtx {
@@ -27,6 +29,7 @@ export default function VotePage() {
   const [modalCtx, setModalCtx] = useState<ModalCtx | null>(null)
   const [standings, setStandings] = useState<Record<string, VoteStandings>>({})
   const [filter, setFilter]     = useState<CompFilter>('standard')
+  const [begOpen, setBegOpen]   = useState(false)
 
   const { state: flash, trigger: triggerFlash } = useComicFlash()
   const { toast, show: showToast } = useToast()
@@ -225,6 +228,26 @@ export default function VotePage() {
 
       <main style={{ padding: '14px 16px 88px', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
+        {/* Beg for tokens — shown only when running low */}
+        {tokens !== null && tokens < BEG_THRESHOLD && (
+          <button
+            onClick={() => setBegOpen(true)}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              padding: '12px 16px', borderRadius: 14, cursor: 'pointer',
+              border: '1px solid rgba(255,180,0,0.35)',
+              background: 'linear-gradient(135deg, rgba(255,107,0,0.16) 0%, rgba(155,48,255,0.08) 100%)',
+              backdropFilter: 'blur(14px)',
+              boxShadow: '0 0 20px rgba(255,180,0,0.12)',
+              fontSize: '0.72rem', fontWeight: 900, letterSpacing: 2,
+              textTransform: 'uppercase', color: '#FFD700',
+              textShadow: '0 0 10px rgba(255,215,0,0.4)',
+            }}
+          >
+            🪙 Down bad? Beg for tokens
+          </button>
+        )}
+
         {/* Standard / Open tab */}
         <div style={{ display: 'flex', gap: 6 }}>
           {(['standard', 'open'] as CompFilter[]).map(f => (
@@ -312,6 +335,7 @@ export default function VotePage() {
       <ComicFlash state={flash} />
       <Toast toast={toast} />
       <WinLossToast state={winLossState} />
+      {begOpen && <BegDial onClose={() => setBegOpen(false)} onAwarded={t => setTokens(t)} />}
 
       <style>{`@keyframes spin { to{transform:rotate(360deg)} }`}</style>
     </>
