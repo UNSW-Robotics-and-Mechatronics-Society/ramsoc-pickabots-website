@@ -24,3 +24,22 @@ export function renderSmsTemplate(
     .replace(/\{team\}/g, vars.team)
     .replace(/\{division\}/g, divisionLabelFor(vars.division));
 }
+
+// ── Broadcast (send-to-all-captains) placeholders ─────────────────────────────
+// A broadcast is rendered PER captain, so it supports the recipient's name too.
+export const BROADCAST_PLACEHOLDERS = ["{first}", "{captain}", "{team}", "{division}"] as const;
+
+export type BroadcastVars = { first: string; captain: string; team: string; division: Division };
+
+export function renderBroadcastTemplate(template: string, vars: BroadcastVars): string {
+  return template
+    .replace(/\{first\}/g, vars.first)
+    .replace(/\{captain\}/g, vars.captain)
+    .replace(/\{team\}/g, vars.team)
+    .replace(/\{division\}/g, divisionLabelFor(vars.division));
+}
+
+/** First token of a full name (for {first}); falls back to the whole string. */
+export function firstNameOf(fullName: string): string {
+  return (fullName.trim().split(/\s+/)[0] || fullName).trim();
+}

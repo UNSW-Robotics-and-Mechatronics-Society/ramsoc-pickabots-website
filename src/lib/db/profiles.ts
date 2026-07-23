@@ -154,15 +154,20 @@ export async function getTeamContacts(teamId: string): Promise<TeamContact[]> {
 /** Every team captain (for the current competition year) with contact details —
  *  for the admin "broadcast to all captains" tool. */
 export async function getAllCaptainContacts(): Promise<
-  { teamId: string; teamName: string; fullName: string; phone: string }[]
+  { teamId: string; teamName: string; division: Division; fullName: string; phone: string }[]
 > {
   // Teams for this year.
   const { data: teamRows, error: tErr } = await supabase
     .from("teams")
-    .select("id, name")
+    .select("id, name, category")
     .eq("competition_year", COMPETITION_YEAR);
   if (tErr) throw new Error(`Failed to load teams: ${tErr.message}`);
-  const teamById = new Map((teamRows ?? []).map(t => [t.id as string, t.name as string]));
+  const teamById = new Map(
+    (teamRows ?? []).map(t => [
+      t.id as string,
+      { name: t.name as string, division: fromDbCategory(t.category as string) },
+    ]),
+  );
   if (teamById.size === 0) return [];
 
   // Captains on those teams.
@@ -185,9 +190,11 @@ export async function getAllCaptainContacts(): Promise<
   return captains
     .map(c => {
       const p = profileById.get(c.profile_id as string);
+      const team = teamById.get(c.team_id as string);
       return {
         teamId: c.team_id as string,
-        teamName: teamById.get(c.team_id as string) ?? "",
+        teamName: team?.name ?? "",
+        division: team?.division ?? "open",
         fullName: (p?.full_name as string) ?? "Unknown",
         phone: (p?.phone as string) ?? "",
       };

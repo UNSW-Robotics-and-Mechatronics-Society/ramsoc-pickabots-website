@@ -6,6 +6,8 @@ import { cn } from "@/lib/cn";
 import {
   renderSmsTemplate,
   SMS_TEMPLATE_PLACEHOLDERS,
+  BROADCAST_PLACEHOLDERS,
+  renderBroadcastTemplate,
 } from "@/lib/sms-template";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
 
@@ -114,9 +116,27 @@ export default function SettingsPanel() {
     [template],
   );
 
+  // Preview of a broadcast, rendered for a sample captain.
+  const broadcastPreview = useMemo(
+    () =>
+      broadcastBody
+        ? renderBroadcastTemplate(broadcastBody, {
+            first: "Alex",
+            captain: "Alex Chen",
+            team: "Iron Fist",
+            division: "standards",
+          })
+        : "",
+    [broadcastBody],
+  );
+
   function insertPlaceholder(placeholder: string) {
     setTemplate(prev => prev + placeholder);
     textareaRef.current?.focus();
+  }
+
+  function insertBroadcastPlaceholder(placeholder: string) {
+    setBroadcastBody(prev => prev + placeholder);
   }
 
   function handleReset() {
@@ -342,6 +362,30 @@ export default function SettingsPanel() {
                   ? " · 1 SMS part"
                   : ""}
               </p>
+
+              {/* Per-captain placeholders */}
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                <span className="text-[0.6rem] uppercase tracking-wider text-foreground/40">Insert</span>
+                {BROADCAST_PLACEHOLDERS.map(ph => (
+                  <button
+                    key={ph}
+                    type="button"
+                    onClick={() => insertBroadcastPlaceholder(ph)}
+                    className="rounded-md border border-[#FF6B00]/40 bg-[#FF6B00]/10 px-1.5 py-0.5 font-mono text-[0.6rem] text-[#FF6B00] transition-colors hover:bg-[#FF6B00]/20"
+                  >
+                    {ph}
+                  </button>
+                ))}
+              </div>
+
+              {broadcastPreview && (
+                <div className="mt-2">
+                  <span className="text-[0.6rem] uppercase tracking-wider text-foreground/40">Preview</span>
+                  <p className="mt-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-xs text-foreground/80">
+                    {broadcastPreview}
+                  </p>
+                </div>
+              )}
 
               {broadcastError && (
                 <p className="mt-2 text-[0.65rem] text-red-300">{broadcastError}</p>

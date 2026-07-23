@@ -4,6 +4,7 @@ import { isAdminUser } from "@/lib/auth";
 import { getAllCaptainContacts } from "@/lib/db/profiles";
 import { sendManySms } from "@/lib/sms";
 import { logSmsResults } from "@/lib/db/notify";
+import { renderBroadcastTemplate, firstNameOf } from "@/lib/sms-template";
 
 // GET → recipient summary (count + how many have a usable phone), so the admin
 // UI can show "Send to N captains" before firing.
@@ -38,11 +39,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ sent: 0, results: [], note: "No captain phone numbers found" });
     }
 
-    const results = await sendManySms(recipients.map(c => ({ to: c.phone, body })));
+    // Rendered per captain so placeholders ({first}/{captain}/{team}/{division})
+    // personalise each message.
+    const messages = recipients.map(c => ({
+      to: c.phone,
+      body: renderBroadcastTemplate(body, {
+        first: firstNameOf(c.fullName),
+        captain: c.fullName,
+        team: c.teamName,
+        division: c.division,
+      }),
+    }));
+    const results = await sendManySms(messages);
     await logSmsResults(
       results.map((r, i) => ({
         to: r.to,
-        body,
+        body: messages[i].body,
         status: r.status,
         error: r.error,
         teamId: recipients[i]?.teamId ?? null,
