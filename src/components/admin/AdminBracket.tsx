@@ -16,7 +16,7 @@ import { cn } from "@/lib/cn";
 import { MATCH_DRAG_TYPE, SlotRow, TimeCell } from "./MatchTeamSlot";
 import { useAdminPanels } from "./AdminPanelContext";
 import { useTeamFilter, TeamFilterBar, isMatchDimmed } from "./TeamFilterBar";
-import BiddingToggle from "./BiddingToggle";
+import VotingToggle from "./VotingToggle";
 import ConfirmDialog from "./ConfirmDialog";
 
 // ── layout constants ───────────────────────────────────────────────────────────
@@ -70,9 +70,9 @@ function MatchCard({
   const isBeingDragged  = draggingId === match.id;
   const isMatchDropTgt  = draggingId !== null && draggingId !== match.id && swappable;
 
-  // Scoring is only allowed when the match is active AND betting is closed.
-  // This ensures bets are locked in before any score is entered.
-  const scoringAllowed = match.status === 'active' && !match.biddingOpen;
+  // Scoring is only allowed when the match is active AND voting is closed.
+  // This ensures votes are locked in before any score is entered.
+  const scoringAllowed = match.status === 'active' && !match.votingOpen;
 
   function setScore(slot: 'a' | 'b', delta: number) {
     const updated: BracketMatch = {
@@ -129,9 +129,9 @@ function MatchCard({
     >
       {match.status === 'active' && (
         <div className="absolute right-1 top-1 z-20">
-          <BiddingToggle
-            open={match.biddingOpen}
-            onToggle={() => onChange({ ...match, biddingOpen: !match.biddingOpen })}
+          <VotingToggle
+            open={match.votingOpen}
+            onToggle={() => onChange({ ...match, votingOpen: !match.votingOpen })}
           />
         </div>
       )}

@@ -11,12 +11,12 @@ export interface Match {
   right_color: string
   right_shape: string
   is_active: boolean
-  bidding_open: boolean
+  voting_open: boolean
   winner_side: 'left' | 'right' | null
   created_at: string
 }
 
-export interface Bet {
+export interface Vote {
   id: string
   match_id: string
   side: 'left' | 'right'
@@ -25,7 +25,7 @@ export interface Bet {
   botName?: string
 }
 
-export interface OddsData {
+export interface VoteStandings {
   poolLeft: number
   poolRight: number
   totalPool: number
@@ -40,5 +40,5 @@ export interface OddsData {
 
 export interface UserData {
   tokens: number
-  bets: Bet[]
+  votes: Vote[]
 }

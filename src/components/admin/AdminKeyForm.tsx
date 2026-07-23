@@ -46,7 +46,7 @@ export default function AdminKeyForm() {
           >
             {pending ? "Checking…" : "Enter"}
           </button>
-          <a href="/bid" className="text-center text-xs text-foreground/40 hover:text-foreground/70">
+          <a href="/voting" className="text-center text-xs text-foreground/40 hover:text-foreground/70">
             Back to site
           </a>
         </form>

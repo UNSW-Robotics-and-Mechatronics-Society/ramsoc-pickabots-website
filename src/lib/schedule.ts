@@ -76,6 +76,13 @@ export function applyScheduleStatus(
     }
 
 
+    // Whenever a match first becomes active, always start with voting closed.
+    // The admin explicitly opens it — this prevents the old default (open) from
+    // leaking in from stored data or from a match that was previously active.
+    if (newStatus === 'active' && m.status !== 'active') {
+      return { ...m, status: 'active', votingOpen: false };
+    }
+
     return m.status === newStatus ? m : { ...m, status: newStatus };
   });
 }

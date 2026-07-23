@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import BotSvg from './BotSvg'
-import type { Match, Bet, OddsData } from '@/lib/types'
+import type { Match, Vote, VoteStandings } from '@/lib/types'
 
 export const COMP_META = {
   standard: { color: '#FF6B00', label: '⚙ STANDARD' },
@@ -16,19 +16,19 @@ const GRAIN = `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http:
 
 interface RingProps {
   match: Match
-  bet: Bet | null
-  odds: OddsData | null
-  /** Whether bidding is currently open. When false, vote buttons are disabled and bets are locked. */
-  bettingOpen?: boolean
+  vote: Vote | null
+  standings: VoteStandings | null
+  /** Whether voting is currently open. When false, vote buttons are disabled and votes are locked. */
+  votingOpen?: boolean
   onVote: (side: 'left' | 'right') => void
   onUndo: () => void
 }
 
-export default function Ring({ match, bet, odds, bettingOpen = true, onVote, onUndo }: RingProps) {
+export default function Ring({ match, vote, standings, votingOpen = true, onVote, onUndo }: RingProps) {
   const meta = COMP_META[match.comp_type] ?? COMP_META.standard
-  const voted = !!bet
-  // Sides are non-interactive once the user has bet OR bidding is closed.
-  const locked = voted || !bettingOpen
+  const voted = !!vote
+  // Sides are non-interactive once the user has voted OR voting is closed.
+  const locked = voted || !votingOpen
   const [lWord] = useState(rw)
   const [rWord] = useState(rw)
 
@@ -79,12 +79,12 @@ export default function Ring({ match, bet, odds, bettingOpen = true, onVote, onU
         <Side bot={{ name: match.left_name, color: match.left_color, shape: match.left_shape }}
               side="left"  isBossbot={match.is_bossbot} ringColor={meta.color}
               impactWord={lWord} disabled={locked}
-              mult={odds && !odds.noData ? odds.multiplierIfLeftWins : null}
+              mult={standings && !standings.noData ? standings.multiplierIfLeftWins : null}
               onClick={() => !locked && onVote('left')} />
         <Side bot={{ name: match.right_name, color: match.right_color, shape: match.right_shape }}
               side="right" isBossbot={match.is_bossbot} ringColor={meta.color}
               impactWord={rWord} disabled={locked}
-              mult={odds && !odds.noData ? odds.multiplierIfRightWins : null}
+              mult={standings && !standings.noData ? standings.multiplierIfRightWins : null}
               onClick={() => !locked && onVote('right')} />
 
         {/* VS / ⚡ badge */}
@@ -140,27 +140,28 @@ export default function Ring({ match, bet, odds, bettingOpen = true, onVote, onU
             boxShadow: '0 0 40px rgba(255,215,0,0.1)',
             backdropFilter: 'blur(12px)',
           }}>
-            <div style={{ fontSize: '0.48rem', fontWeight: 900, color: '#444', textTransform: 'uppercase', letterSpacing: 4 }}>BET LOCKED</div>
+            <div style={{ fontSize: '0.48rem', fontWeight: 900, color: '#444', textTransform: 'uppercase', letterSpacing: 4 }}>VOTED</div>
             <div style={{ fontSize: '1rem', fontWeight: 900, color: '#fff', margin: '4px 0', letterSpacing: 1 }}>
-              {bet.side === 'left' ? match.left_name : match.right_name}
+              {vote.side === 'left' ? match.left_name : match.right_name}
             </div>
-            <div style={{ fontSize: '0.78rem', fontWeight: 900, color: '#FFD700', letterSpacing: 1 }}>🪙 {bet.amount}</div>
+            <div style={{ fontSize: '0.78rem', fontWeight: 900, color: '#FFD700', letterSpacing: 1 }}>🪙 {vote.amount}</div>
             {(() => {
-              const mult = odds && !odds.noData
-                ? (bet.side === 'left' ? odds.multiplierIfLeftWins : odds.multiplierIfRightWins)
+              const mult = standings && !standings.noData
+                ? (vote.side === 'left' ? standings.multiplierIfLeftWins : standings.multiplierIfRightWins)
                 : null
-              const expectedReturn = mult != null ? Math.round(bet.amount * mult) : bet.amount * 2
+              const expectedReturn = mult != null ? Math.round(vote.amount * mult) : vote.amount * 2
               return (
                 <div style={{ fontSize: '0.58rem', color: '#4cff00', marginTop: 2, letterSpacing: 2 }}>
-                  RETURN · {expectedReturn}
+                  REWARD · {expectedReturn}
                 </div>
               )
             })()}
-        {bettingOpen ? (
+        {votingOpen ? (
               <button onClick={onUndo} style={{
-                display: 'block', marginTop: 8, fontSize: '0.52rem', color: '#444',
-                background: 'none', border: 'none', textDecoration: 'underline', fontWeight: 900, letterSpacing: 2,
-              }}>UNDO</button>
+                display: 'block', margin: '10px auto 0', fontSize: '0.65rem', color: '#fff',
+                background: 'rgba(26,108,255,0.7)', border: '1px solid rgba(26,108,255,0.5)',
+                borderRadius: 8, padding: '6px 18px', fontWeight: 900, letterSpacing: 2, cursor: 'pointer',
+              }}>Change Vote</button>
             ) : (
               <div style={{ marginTop: 8, fontSize: '0.5rem', fontWeight: 900, color: '#888', letterSpacing: 2 }}>🔒 LOCKED IN</div>
             )}
@@ -168,8 +169,8 @@ export default function Ring({ match, bet, odds, bettingOpen = true, onVote, onU
         </div>
       )}
 
-      {/* Bidding-closed overlay — shown when bidding is off and the user has NOT bet */}
-      {!voted && !bettingOpen && (
+      {/* Voting-closed overlay — shown when voting is off and the user has NOT voted */}
+      {!voted && !votingOpen && (
         <div style={{
           position: 'absolute', inset: 0, zIndex: 20,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -183,7 +184,7 @@ export default function Ring({ match, bet, odds, bettingOpen = true, onVote, onU
           }}>
             <div style={{ fontSize: '1rem' }}>🔒</div>
             <div style={{ fontSize: '0.6rem', fontWeight: 900, color: '#fff', marginTop: 4, textTransform: 'uppercase', letterSpacing: 3 }}>
-              Bidding Closed
+              Voting Closed
             </div>
           </div>
         </div>
@@ -198,13 +199,13 @@ export default function Ring({ match, bet, odds, bettingOpen = true, onVote, onU
         {/* Blue fill */}
         <div style={{
           position: 'absolute', left: 0, top: 0, bottom: 0,
-          width: `${odds && !odds.noData ? odds.pctLeft : 50}%`,
+          width: `${standings && !standings.noData ? standings.pctLeft : 50}%`,
           background: 'rgba(26,108,255,0.18)', transition: 'width 0.5s ease',
         }}/>
         {/* Red fill */}
         <div style={{
           position: 'absolute', right: 0, top: 0, bottom: 0,
-          width: `${odds && !odds.noData ? odds.pctRight : 50}%`,
+          width: `${standings && !standings.noData ? standings.pctRight : 50}%`,
           background: 'rgba(255,45,45,0.18)', transition: 'width 0.5s ease',
         }}/>
         {/* Left label */}
@@ -213,8 +214,8 @@ export default function Ring({ match, bet, odds, bettingOpen = true, onVote, onU
           justifyContent: 'center', padding: '0 10px', position: 'relative',
           borderRight: '1px solid rgba(255,255,255,0.07)',
         }}>
-          <span style={{ fontSize: '0.65rem', fontWeight: 900, color: odds && !odds.noData ? '#fff' : '#2a2a2a' }}>
-            {odds && !odds.noData ? `${odds.pctLeft}%` : '—'}
+          <span style={{ fontSize: '0.65rem', fontWeight: 900, color: standings && !standings.noData ? '#fff' : '#2a2a2a' }}>
+            {standings && !standings.noData ? `${standings.pctLeft}%` : '—'}
           </span>
         </div>
         {/* Right label */}
@@ -222,8 +223,8 @@ export default function Ring({ match, bet, odds, bettingOpen = true, onVote, onU
           flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
           justifyContent: 'center', padding: '0 10px', position: 'relative',
         }}>
-          <span style={{ fontSize: '0.65rem', fontWeight: 900, color: odds && !odds.noData ? '#fff' : '#2a2a2a' }}>
-            {odds && !odds.noData ? `${odds.pctRight}%` : '—'}
+          <span style={{ fontSize: '0.65rem', fontWeight: 900, color: standings && !standings.noData ? '#fff' : '#2a2a2a' }}>
+            {standings && !standings.noData ? `${standings.pctRight}%` : '—'}
           </span>
         </div>
       </div>

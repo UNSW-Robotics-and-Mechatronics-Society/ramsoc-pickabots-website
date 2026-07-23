@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 
-const MAX_BET_FRAC = 0.5  // max 50% of balance per bet
+const MAX_VOTE_FRAC = 0.5  // max 50% of balance per vote
 
 const GRAIN = `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)' opacity='1'/%3E%3C/svg%3E")`
 
@@ -13,14 +13,14 @@ interface ModalCtx {
   compType: string
 }
 
-interface BetModalProps {
+interface VoteModalProps {
   ctx: ModalCtx | null
   tokens: number
   onConfirm: (amount: number) => void
   onClose: () => void
 }
 
-export default function BetModal({ ctx, tokens, onConfirm, onClose }: BetModalProps) {
+export default function VoteModal({ ctx, tokens, onConfirm, onClose }: VoteModalProps) {
   const [amount, setAmount] = useState(10)
   const isOpen = ctx !== null
 
@@ -41,9 +41,9 @@ export default function BetModal({ ctx, tokens, onConfirm, onClose }: BetModalPr
 
   if (!ctx) return null
 
-  const cap = Math.max(1, Math.floor(tokens * MAX_BET_FRAC))
+  const cap = Math.max(1, Math.floor(tokens * MAX_VOTE_FRAC))
   const subtitle = ctx.compType === 'bossbot'
-    ? (ctx.side === 'right' ? '💀 Betting BOSSBOT wins' : '⚡ Betting challenger wins')
+    ? (ctx.side === 'right' ? '💀 Voting BOSSBOT wins' : '⚡ Voting challenger wins')
     : `Targeting ${ctx.botName} for victory`
 
   // Portaled straight to <body> — the root layout's <main> that this
@@ -129,13 +129,13 @@ export default function BetModal({ ctx, tokens, onConfirm, onClose }: BetModalPr
             <span style={{ fontSize: '1rem', fontWeight: 900, color: '#FFD700', letterSpacing: 1 }}>🪙 {tokens}</span>
           </div>
 
-          {/* Bet widget */}
+          {/* Vote widget */}
           <div style={{
             background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)',
             borderRadius: 12, padding: '14px 16px 16px', marginBottom: 14,
           }}>
             <div style={{ fontSize: '0.48rem', fontWeight: 900, color: '#444', textTransform: 'uppercase', letterSpacing: 4, marginBottom: 10 }}>
-              Wager
+              Amount
             </div>
             <input
               type="range" min={1} max={cap} value={amount}
@@ -155,7 +155,7 @@ export default function BetModal({ ctx, tokens, onConfirm, onClose }: BetModalPr
             </div>
           </div>
 
-          {/* Quick bets */}
+          {/* Quick amounts */}
           <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
             {[0.25, 0.5, 0.75, 1].map(pct => (
               <button key={pct} onClick={() => setAmount(Math.max(1, Math.min(cap, Math.round(cap * pct))))}
@@ -173,12 +173,12 @@ export default function BetModal({ ctx, tokens, onConfirm, onClose }: BetModalPr
             ))}
           </div>
 
-          {/* Win preview */}
+          {/* Reward preview */}
           <div style={{
             background: 'rgba(0,40,10,0.4)', border: '1px solid rgba(76,255,0,0.15)', borderRadius: 10,
             padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12,
           }}>
-            <span style={{ fontSize: '0.5rem', color: '#4caf50', fontWeight: 900, textTransform: 'uppercase', letterSpacing: 4 }}>Return</span>
+            <span style={{ fontSize: '0.5rem', color: '#4caf50', fontWeight: 900, textTransform: 'uppercase', letterSpacing: 4 }}>Reward</span>
             <span style={{ fontSize: '0.95rem', fontWeight: 900, color: '#69ff4c', letterSpacing: 1 }}>+{amount} → {amount * 2} 🪙</span>
           </div>
 
@@ -198,7 +198,7 @@ export default function BetModal({ ctx, tokens, onConfirm, onClose }: BetModalPr
             boxShadow: '0 4px 24px rgba(255,107,0,0.35)',
             textShadow: '0 1px 4px rgba(0,0,0,0.5)',
           }}>
-            ◆ LOCK IN BET ◆
+            ◆ CONFIRM VOTE ◆
           </button>
         </div>
       </div>

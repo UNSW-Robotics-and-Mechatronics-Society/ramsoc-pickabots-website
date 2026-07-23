@@ -77,7 +77,7 @@ export default function AdminUserButton({
     // revoked role, then leave the now-inaccessible admin area.
     await user?.reload();
     setDemotePending(false);
-    router.push("/bid");
+    router.push("/voting");
   }
 
   return (

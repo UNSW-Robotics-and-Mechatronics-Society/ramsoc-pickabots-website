@@ -7,7 +7,7 @@ import { UserButton, useAuth } from "@clerk/nextjs";
 import { cn } from "@/lib/cn";
 
 const ITEMS: { href: string; label: string; Icon: LucideIcon }[] = [
-  { href: "/bid",         label: "Bid",         Icon: Coins       },
+  { href: "/voting",      label: "Vote",        Icon: Coins       },
   { href: "/leaderboard", label: "Leaderboard",  Icon: Trophy      },
   { href: "/competition", label: "Bracket",      Icon: Swords      },
   { href: "/matches",     label: "Matches",      Icon: CalendarClock },
