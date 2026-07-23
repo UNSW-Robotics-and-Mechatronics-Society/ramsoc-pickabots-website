@@ -17,6 +17,8 @@ interface ModalCtx {
   compType: string
 }
 
+type CompFilter = 'standard' | 'open'
+
 export default function VotePage() {
   const [matches, setMatches]   = useState<Match[]>([])
   const [tokens, setTokens]     = useState<number | null>(null)
@@ -26,6 +28,7 @@ export default function VotePage() {
   const [modalCtx, setModalCtx] = useState<ModalCtx | null>(null)
   const [standings, setStandings] = useState<Record<string, VoteStandings>>({})
   const [selectedTeam, setSelectedTeam] = useState<{ name: string; division?: 'standards' | 'open' } | null>(null)
+  const [filter, setFilter]     = useState<CompFilter>('standard')
 
   // comp_type is 'standard'/'open'/'bossbot' — map to the app's internal
   // 'standards'/'open' Division naming used as a best-effort disambiguation
@@ -215,24 +218,40 @@ export default function VotePage() {
   }
 
   // ── Match bucketing ───────────────────────────────────────────────────────────
-  // Always show exactly 2 rings per division (standard + open), filling with
+  // Always show exactly 2 rings for the selected division, filling with
   // placeholders if fewer than 2 active matches exist. Bossbots are extras.
-  const activeMatches    = matches.filter(m => m.is_active && m.winner_side === null)
-  const activeStandards  = activeMatches.filter(m => m.comp_type === 'standard').slice(0, 2)
-  const activeOpens      = activeMatches.filter(m => m.comp_type === 'open').slice(0, 2)
-  const activeBossbots   = activeMatches.filter(m => m.comp_type === 'bossbot')
+  const activeMatches  = matches.filter(m => m.is_active && m.winner_side === null)
+  const activeFiltered = activeMatches.filter(m => m.comp_type === filter).slice(0, 2)
+  const activeBossbots = activeMatches.filter(m => m.comp_type === 'bossbot')
 
-  // Next Matches: at most 2 per division = max 4 total.
-  const allNext      = matches.filter(m => !m.is_active && m.winner_side === null)
-  const nextStandards = allNext.filter(m => m.comp_type === 'standard').slice(0, 2)
-  const nextOpens     = allNext.filter(m => m.comp_type === 'open').slice(0, 2)
-  const nextVisible   = [...nextStandards, ...nextOpens]
+  // Next Matches: at most 2 for the selected division.
+  const allNext     = matches.filter(m => !m.is_active && m.winner_side === null)
+  const nextVisible = allNext.filter(m => m.comp_type === filter).slice(0, 2)
 
   return (
     <>
       <Header tokens={tokens ?? 0} loading={loading} />
 
       <main style={{ padding: '14px 16px 88px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+        {/* Standard / Open tab */}
+        <div style={{ display: 'flex', gap: 6 }}>
+          {(['standard', 'open'] as CompFilter[]).map(f => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              style={{
+                padding: '6px 16px', borderRadius: 999, fontSize: '0.6rem', fontWeight: 900,
+                letterSpacing: 2, textTransform: 'uppercase', cursor: 'pointer',
+                border: `1px solid ${filter === f ? 'rgba(255,107,0,0.6)' : 'rgba(255,255,255,0.1)'}`,
+                background: filter === f ? 'rgba(255,107,0,0.15)' : 'rgba(255,255,255,0.04)',
+                color: filter === f ? '#FF6B00' : 'rgba(255,255,255,0.4)',
+              }}
+            >
+              {f === 'standard' ? 'Standard' : 'Open'}
+            </button>
+          ))}
+        </div>
 
         {loading && (
           <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:12, padding:'48px 0' }}>
@@ -256,9 +275,9 @@ export default function VotePage() {
           </div>
         )}
 
-        {/* Standard rings — always 2, with placeholders if fewer than 2 active */}
+        {/* 2 rings for the active tab, placeholders fill any empty slots */}
         {!loading && !error && [0, 1].map(i => {
-          const match = activeStandards[i] ?? null
+          const match = activeFiltered[i] ?? null
           return match
             ? <Ring
                 key={match.id}
@@ -270,24 +289,7 @@ export default function VotePage() {
                 onUndo={() => handleUndo(match.id)}
                 onTeamClick={name => handleTeamClick(name, match.comp_type)}
               />
-            : <PlaceholderRing key={`std-ph-${i}`} compType="standard" />
-        })}
-
-        {/* Open rings — always 2, with placeholders if fewer than 2 active */}
-        {!loading && !error && [0, 1].map(i => {
-          const match = activeOpens[i] ?? null
-          return match
-            ? <Ring
-                key={match.id}
-                match={match}
-                vote={votes[match.id] ?? null}
-                standings={standings[match.id] ?? null}
-                votingOpen={match.voting_open}
-                onVote={side => handleVote(match.id, side, side === 'left' ? match.left_name : match.right_name, match.comp_type)}
-                onUndo={() => handleUndo(match.id)}
-                onTeamClick={name => handleTeamClick(name, match.comp_type)}
-              />
-            : <PlaceholderRing key={`open-ph-${i}`} compType="open" />
+            : <PlaceholderRing key={`ph-${i}`} compType={filter} />
         })}
 
         {/* Bossbot rings — extras, shown when present */}
