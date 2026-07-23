@@ -5,6 +5,7 @@ import Header from './Header'
 import Ring, { COMP_META } from './Ring'
 import NextMatchCard from './NextMatchCard'
 import VoteModal from './VoteModal'
+import TeamLedgerModal from './TeamLedgerModal'
 import ComicFlash, { useComicFlash } from './ComicFlash'
 import Toast, { useToast, WinLossToast, useWinLossToast } from './Toast'
 import type { Match, Vote, VoteStandings } from '@/lib/types'
@@ -16,7 +17,7 @@ interface ModalCtx {
   compType: string
 }
 
-type CompFilter = 'standard' | 'open'
+type CompFilter = 'standard' | 'open' | 'exhibition'
 
 export default function VotePage() {
   const [matches, setMatches]   = useState<Match[]>([])
@@ -26,7 +27,15 @@ export default function VotePage() {
   const [error, setError]       = useState<string | null>(null)
   const [modalCtx, setModalCtx] = useState<ModalCtx | null>(null)
   const [standings, setStandings] = useState<Record<string, VoteStandings>>({})
+  const [selectedTeam, setSelectedTeam] = useState<{ name: string; division?: 'standards' | 'open' } | null>(null)
   const [filter, setFilter]     = useState<CompFilter>('standard')
+
+  // comp_type is 'standard'/'open'/'bossbot' — map to the app's internal
+  // 'standards'/'open' Division naming used as a best-effort disambiguation
+  // hint by the team ledger lookup (bossbot has no equivalent, left undefined).
+  function handleTeamClick(name: string, compType: string) {
+    setSelectedTeam({ name, division: compType === 'standard' ? 'standards' : compType === 'open' ? 'open' : undefined })
+  }
 
   const { state: flash, trigger: triggerFlash } = useComicFlash()
   const { toast, show: showToast } = useToast()
@@ -209,15 +218,21 @@ export default function VotePage() {
   }
 
   // ── Match bucketing ───────────────────────────────────────────────────────────
-  // Always show exactly 2 rings for the selected division, filling with
-  // placeholders if fewer than 2 active matches exist. Bossbots are extras.
+  // Standard/Open: always show exactly 2 rings, filling with placeholders if
+  // fewer than 2 active matches exist — and never an exhibition match, which
+  // gets its own tab instead of mixing into a division's view. Exhibition:
+  // no fixed slot count, just show every active exhibition match there is.
   const activeMatches  = matches.filter(m => m.is_active && m.winner_side === null)
-  const activeFiltered = activeMatches.filter(m => m.comp_type === filter).slice(0, 2)
-  const activeBossbots = activeMatches.filter(m => m.comp_type === 'bossbot')
+  const activeFiltered = filter === 'exhibition'
+    ? activeMatches.filter(m => m.is_exhibition)
+    : activeMatches.filter(m => m.comp_type === filter && !m.is_exhibition).slice(0, 2)
+  const activeBossbots = activeMatches.filter(m => m.comp_type === 'bossbot' && !m.is_exhibition)
 
-  // Next Matches: at most 2 for the selected division.
+  // Next Matches: at most 2 for the selected division; all of them for Exhibition.
   const allNext     = matches.filter(m => !m.is_active && m.winner_side === null)
-  const nextVisible = allNext.filter(m => m.comp_type === filter).slice(0, 2)
+  const nextVisible = filter === 'exhibition'
+    ? allNext.filter(m => m.is_exhibition)
+    : allNext.filter(m => m.comp_type === filter && !m.is_exhibition).slice(0, 2)
 
   return (
     <>
@@ -225,9 +240,9 @@ export default function VotePage() {
 
       <main style={{ padding: '14px 16px 88px', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
-        {/* Standard / Open tab */}
+        {/* Standard / Open / Exhibition tab */}
         <div style={{ display: 'flex', gap: 6 }}>
-          {(['standard', 'open'] as CompFilter[]).map(f => (
+          {(['standard', 'open', 'exhibition'] as CompFilter[]).map(f => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -239,7 +254,7 @@ export default function VotePage() {
                 color: filter === f ? '#FF6B00' : 'rgba(255,255,255,0.4)',
               }}
             >
-              {f === 'standard' ? 'Standard' : 'Open'}
+              {f === 'standard' ? 'Standard' : f === 'open' ? 'Open' : 'Exhibition'}
             </button>
           ))}
         </div>
@@ -266,8 +281,31 @@ export default function VotePage() {
           </div>
         )}
 
-        {/* 2 rings for the active tab, placeholders fill any empty slots */}
-        {!loading && !error && [0, 1].map(i => {
+        {/* Exhibition: every active exhibition match, no fixed slot count and
+            no placeholders (there's no "always 2" concept for ad-hoc matches). */}
+        {!loading && !error && filter === 'exhibition' && (
+          activeFiltered.length > 0
+            ? activeFiltered.map(match => (
+                <Ring
+                  key={match.id}
+                  match={match}
+                  vote={votes[match.id] ?? null}
+                  standings={standings[match.id] ?? null}
+                  votingOpen={match.voting_open}
+                  onVote={side => handleVote(match.id, side, side === 'left' ? match.left_name : match.right_name, match.comp_type)}
+                  onUndo={() => handleUndo(match.id)}
+                  onTeamClick={name => handleTeamClick(name, match.comp_type)}
+                />
+              ))
+            : (
+              <div style={{ textAlign: 'center', padding: '48px 0', color: '#444', fontWeight: 900, fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: 3 }}>
+                No exhibition matches right now.
+              </div>
+            )
+        )}
+
+        {/* Standard/Open: 2 rings for the active tab, placeholders fill any empty slots */}
+        {!loading && !error && filter !== 'exhibition' && [0, 1].map(i => {
           const match = activeFiltered[i] ?? null
           return match
             ? <Ring
@@ -278,6 +316,7 @@ export default function VotePage() {
                 votingOpen={match.voting_open}
                 onVote={side => handleVote(match.id, side, side === 'left' ? match.left_name : match.right_name, match.comp_type)}
                 onUndo={() => handleUndo(match.id)}
+                onTeamClick={name => handleTeamClick(name, match.comp_type)}
               />
             : <PlaceholderRing key={`ph-${i}`} compType={filter} />
         })}
@@ -292,6 +331,7 @@ export default function VotePage() {
             votingOpen={match.voting_open}
             onVote={side => handleVote(match.id, side, side === 'left' ? match.left_name : match.right_name, match.comp_type)}
             onUndo={() => handleUndo(match.id)}
+            onTeamClick={name => handleTeamClick(name, match.comp_type)}
           />
         ))}
 
@@ -309,6 +349,7 @@ export default function VotePage() {
       </main>
 
       <VoteModal ctx={modalCtx} tokens={tokens ?? 0} onConfirm={handleConfirm} onClose={() => setModalCtx(null)} />
+      <TeamLedgerModal target={selectedTeam} onClose={() => setSelectedTeam(null)} />
       <ComicFlash state={flash} />
       <Toast toast={toast} />
       <WinLossToast queue={winLossQueue} onDismiss={dismissWinLoss} />

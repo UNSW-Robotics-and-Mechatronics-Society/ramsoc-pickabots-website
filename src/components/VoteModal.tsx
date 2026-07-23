@@ -23,11 +23,25 @@ interface VoteModalProps {
 
 export default function VoteModal({ ctx, tokens, onConfirm, onClose }: VoteModalProps) {
   const [amount, setAmount] = useState(10)
+  // Raw text of the amount field — kept separate from `amount` so the user
+  // can freely type (clear the field, type digits that momentarily exceed
+  // the cap) without the input fighting them mid-keystroke. `amount` (used
+  // by the slider, quick-amount buttons, reward preview, and confirm) always
+  // tracks the clamped, valid interpretation of whatever's been typed so far.
+  const [amountText, setAmountText] = useState('10')
   const isOpen = ctx !== null
 
-  useEffect(() => {
-    if (ctx) setAmount(Math.min(10, tokens))
-  }, [ctx, tokens])
+  // Resets the default amount whenever a new vote modal opens (or the
+  // balance it's capped against changes) — adjusted during render, via a
+  // state (not ref) comparison, per React's documented "reset state when a
+  // prop changes" pattern (react.dev/learn/you-might-not-need-an-effect).
+  const [resetKey, setResetKey] = useState<{ ctx: ModalCtx | null; tokens: number } | null>(null)
+  if (ctx && (resetKey?.ctx !== ctx || resetKey?.tokens !== tokens)) {
+    setResetKey({ ctx, tokens })
+    const initial = Math.min(10, tokens)
+    setAmount(initial)
+    setAmountText(String(initial))
+  }
 
   // Without this, the page behind the (visually blocking) modal is still
   // the only scrollable element in the DOM, so a wheel/touch scroll while
@@ -46,6 +60,20 @@ export default function VoteModal({ ctx, tokens, onConfirm, onClose }: VoteModal
   const subtitle = ctx.compType === 'bossbot'
     ? (ctx.side === 'right' ? '💀 Voting BOSSBOT wins' : '⚡ Voting challenger wins')
     : `Targeting ${ctx.botName} for victory`
+
+  // Shared by the slider and quick-amount buttons — always clamps to
+  // [1, cap] and keeps the text field's displayed digits in sync.
+  function updateAmount(n: number) {
+    const clamped = Math.max(1, Math.min(cap, Math.round(n)))
+    setAmount(clamped)
+    setAmountText(String(clamped))
+  }
+
+  function handleAmountTextChange(raw: string) {
+    const digitsOnly = raw.replace(/[^0-9]/g, '')
+    setAmountText(digitsOnly)
+    if (digitsOnly !== '') setAmount(Math.max(1, Math.min(cap, Number(digitsOnly))))
+  }
 
   // Portaled straight to <body> — the root layout's <main> that this
   // component would otherwise render inside has its own z-10 stacking
@@ -140,26 +168,36 @@ export default function VoteModal({ ctx, tokens, onConfirm, onClose }: VoteModal
             </div>
             <input
               type="range" min={1} max={cap} value={amount}
-              onChange={e => setAmount(Number(e.target.value))}
+              onChange={e => updateAmount(Number(e.target.value))}
               style={{ width: '100%', accentColor: '#FF6B00', height: 8 }}
             />
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.5rem', color: '#333', fontWeight: 900, textTransform: 'uppercase', letterSpacing: 3, marginTop: 6 }}>
               <span>1</span><span>MAX {cap}</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 12 }}>
-              <span style={{ alignSelf: 'flex-end', paddingBottom: 4 }}><RamCoin size={20}/></span>
-              <span style={{ fontSize: '2.8rem', fontWeight: 900, color: '#fff', letterSpacing: -2, lineHeight: 1,
-                textShadow: '0 0 20px rgba(255,107,0,0.4)' }}>
-                {amount}
-              </span>
-              <span style={{ fontSize: '0.6rem', color: '#555', fontWeight: 900, alignSelf: 'flex-end', paddingBottom: 6, letterSpacing: 3 }}>RC</span>
+              <span style={{ fontSize: '1rem', color: '#FFD700', fontWeight: 900, alignSelf: 'flex-end', paddingBottom: 4 }}>🪙</span>
+              <input
+                type="text" inputMode="numeric" pattern="[0-9]*"
+                value={amountText}
+                onChange={e => handleAmountTextChange(e.target.value)}
+                onFocus={e => e.target.select()}
+                onBlur={() => setAmountText(String(amount))}
+                style={{
+                  width: `${Math.max(2, amountText.length)}ch`,
+                  fontSize: '2.8rem', fontWeight: 900, color: '#fff', letterSpacing: -2, lineHeight: 1,
+                  textShadow: '0 0 20px rgba(255,107,0,0.4)',
+                  background: 'transparent', border: 'none', outline: 'none',
+                  textAlign: 'center', padding: 0, fontFamily: 'inherit',
+                }}
+              />
+              <span style={{ fontSize: '0.6rem', color: '#555', fontWeight: 900, alignSelf: 'flex-end', paddingBottom: 6, letterSpacing: 3 }}>CR</span>
             </div>
           </div>
 
           {/* Quick amounts */}
           <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
             {[0.25, 0.5, 0.75, 1].map(pct => (
-              <button key={pct} onClick={() => setAmount(Math.max(1, Math.min(cap, Math.round(cap * pct))))}
+              <button key={pct} onClick={() => updateAmount(cap * pct)}
                 style={{
                   flex: 1, padding: '8px 0',
                   background: 'rgba(255,107,0,0.05)',
@@ -169,7 +207,7 @@ export default function VoteModal({ ctx, tokens, onConfirm, onClose }: VoteModal
                   textTransform: 'uppercase', letterSpacing: 3,
                   fontFamily: 'inherit',
                 }}>
-                {pct === 1 ? 'MAX' : `${pct * 100}%`}
+                {pct === 1 ? 'MAX (50%)' : `${pct * 100}%`}
               </button>
             ))}
           </div>
@@ -183,8 +221,8 @@ export default function VoteModal({ ctx, tokens, onConfirm, onClose }: VoteModal
             <span style={{ fontSize: '0.95rem', fontWeight: 900, color: '#69ff4c', letterSpacing: 1, display: 'flex', alignItems: 'center', gap: 5 }}>+{amount} → {amount * 2} <RamCoin size={16}/></span>
           </div>
 
-          <div style={{ textAlign: 'center', fontSize: '0.48rem', color: '#333', fontWeight: 900, textTransform: 'uppercase', letterSpacing: 4, marginBottom: 14 }}>
-            Max 50% of balance · <strong style={{ color: '#555' }}>{cap}</strong> ramcoins
+          <div style={{ textAlign: 'center', fontSize: '0.48rem', color: '#fff', fontWeight: 900, textTransform: 'uppercase', letterSpacing: 4, marginBottom: 14 }}>
+            Max Vote: 50% of balance <strong style={{ color: '#fff' }}>{cap}</strong> Credits
           </div>
         </div>
 

@@ -12,6 +12,10 @@ export interface Match {
   right_shape: string
   is_active: boolean
   voting_open: boolean
+  // Set by reconcileVotingMatches() from the bracket match's own
+  // side === 'exhibition' — an ad-hoc match, kept out of the Standard/Open
+  // tabs and shown under its own Exhibition tab instead.
+  is_exhibition: boolean
   winner_side: 'left' | 'right' | null
   created_at: string
 }

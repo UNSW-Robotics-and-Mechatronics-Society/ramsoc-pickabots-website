@@ -8,7 +8,7 @@ import {
   winner, applyStatusChange, isTeamNameTaken,
 } from "@/lib/mock-data";
 import {
-  type ConcurrentRings, type MatchSchedule,
+  type MatchSchedule,
   START_MINUTE,
   editMatchTime, generateSchedule, rollSchedule,
 } from "@/lib/schedule";
@@ -327,16 +327,20 @@ type Props = {
   schedule: MatchSchedule;
   onMatchesChange: (next: BracketMatch[]) => void;
   onScheduleChange: (s: MatchSchedule) => void;
+  /** Full competition reset — both divisions, exhibition matches, tokens,
+   * and voting history. Implemented in AdminPageClient (needs access to
+   * both divisions' schedules, which this component doesn't have). */
+  onResetAll: () => void;
 };
 
-export default function AdminBracket({ teams, matches, division, teamCount, schedule, onMatchesChange, onScheduleChange }: Props) {
+export default function AdminBracket({ teams, matches, division, teamCount, schedule, onMatchesChange, onScheduleChange, onResetAll }: Props) {
   const [containerWidth, setContainerWidth] = useState(0);
   const [manualScale, setManualScale]       = useState<number | null>(null);
   const [manualStretch, setManualStretch]   = useState<number | null>(null);
   const [manualVScale, setManualVScale]     = useState<number | null>(null);
   const [draggingId, setDragging]           = useState<string | null>(null);
   const [bracketView, setBracketView]       = useState<'all' | 'winners' | 'losers' | 'knockouts' | 'finals'>('all');
-  const [confirmClear, setConfirmClear]     = useState(false);
+  const [confirmResetAll, setConfirmResetAll] = useState(false);
   const [confirmAutoFill, setConfirmAutoFill] = useState(false);
   const { bracketFullscreen: fullscreen, setBracketFullscreen: setFullscreen } = useAdminPanels();
   const containerRef                        = useRef<HTMLDivElement>(null);
@@ -434,41 +438,16 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
     }));
   }
 
-  function requestClearTeams() {
-    setConfirmClear(true);
+  function requestResetAll() {
+    setConfirmResetAll(true);
   }
 
-  // Wipes every team/score/result out of this division's bracket and resets
-  // its match statuses and schedule back to defaults — otherwise a match left
-  // 'completed'/'active'/'next' or a customized time would be stale and
-  // meaningless once the teams that earned that state are gone.
-  function applyClearTeams() {
-    // Remove exhibition matches for this division entirely (they're ad-hoc and
-    // should be re-added manually after clearing) so they don't leave orphaned
-    // entries that keep exhibition ring columns alive in the schedule.
-    const cleared = matches
-      .filter(m => m.side !== 'exhibition' || m.division !== division)
-      .map(m =>
-        m.division !== division ? m
-          : { ...m, slotA: { teamName: '', score: 0 }, slotB: { teamName: '', score: 0 }, status: 'todo' as MatchStatus }
-      );
-    onMatchesChange(cleared);
-    // Nothing is playable once teams are gone, so the rolling schedule is empty.
-    // generateSchedule has no exhibitionRings, so rollSchedule drops them too.
-    // Clamp concurrentRings to [1,4] in case old DB data has an out-of-range value.
-    const safeRings = Math.min(4, Math.max(1, schedule.concurrentRings)) as ConcurrentRings;
-    onScheduleChange(rollSchedule(
-      generateSchedule(
-        [],
-        safeRings,
-        schedule.rings[0]?.[0]?.startMinute ?? START_MINUTE,
-        schedule.matchMinutes,
-        schedule.gapMinutes,
-      ),
-      cleared,
-      division,
-    ));
-    setConfirmClear(false);
+  // The actual reset (both divisions' brackets/schedules, exhibition
+  // matches, tokens, voting history) happens in AdminPageClient — this just
+  // gates it behind the confirm dialog.
+  function applyResetAll() {
+    onResetAll();
+    setConfirmResetAll(false);
   }
 
   function autoFillTeams() {
@@ -509,7 +488,7 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
 
     const slotASeeds = seedOrder(numMatches);
 
-    let seeded = matches.map(m => {
+    const seeded = matches.map(m => {
       if (m.division !== division || m.side !== 'winners' || m.round !== 1) return m;
       const i     = r1.findIndex(r => r.id === m.id);
       const aSeed = slotASeeds[i];
@@ -636,10 +615,10 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
             {fullscreen ? 'Exit Full Screen' : 'Full Screen'}
           </button>
           <button
-            onClick={requestClearTeams}
+            onClick={requestResetAll}
             className="rounded-lg border border-white/25 bg-white/5 px-3 py-1 text-xs text-foreground/70 transition-colors hover:bg-red-400/10 hover:border-red-400/30 hover:text-red-300"
           >
-            Clear Teams
+            Reset All
           </button>
           <button
             onClick={() => setConfirmAutoFill(true)}
@@ -859,14 +838,14 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
         </div>
       </div>
 
-      {/* Confirm bracket-wide team wipe */}
-      {confirmClear && (
+      {/* Confirm full competition reset */}
+      {confirmResetAll && (
         <ConfirmDialog
-          title="Clear all teams?"
-          message="Every team, score, and match result in this bracket will be cleared, and the match schedule will reset to its default order and times. This can't be undone."
-          confirmLabel="Clear Teams"
-          onConfirm={applyClearTeams}
-          onCancel={() => setConfirmClear(false)}
+          title="Reset everything?"
+          message="This clears every team, score, and result from BOTH divisions' brackets (Standards and Open) and resets their schedules to default order and times. All exhibition matches are deleted. Every user's balance resets to 100 tokens and their entire voting history is permanently deleted. Special teams you've added are not affected. This can't be undone."
+          confirmLabel="Reset All"
+          onConfirm={applyResetAll}
+          onCancel={() => setConfirmResetAll(false)}
         />
       )}
 

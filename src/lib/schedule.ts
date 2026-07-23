@@ -71,6 +71,10 @@ export function applyScheduleStatus(
       activeSet.has(m.id) ? 'active' :
       nextSet.has(m.id)   ? 'next'   :
       'todo';
+  if (newStatus === 'active' && m.status !== 'active') {
+      return { ...m, status: 'active', biddingOpen: false };
+    }
+
 
     // Whenever a match first becomes active, always start with voting closed.
     // The admin explicitly opens it — this prevents the old default (open) from
