@@ -20,11 +20,20 @@ export type MatchSchedule = {
   concurrentRings: ConcurrentRings;
   matchMinutes: number;
   gapMinutes: number;
-  // Dedicated rings for ad-hoc exhibition matches — kept entirely separate
-  // from the bracket rings so they never affect the tournament schedule. The
-  // admin adds these rings/matches by hand; the roller never puts bracket
-  // matches into them.
-  exhibitionRings?: RingMatch[][];
+};
+
+/**
+ * Dedicated rings for ad-hoc exhibition matches — a single set, shared
+ * across both divisions (not one copy per division): an exhibition match's
+ * bracket `division` field is a technical leftover (the DB still requires
+ * one) with no bearing on where it shows up. The admin adds these rings/
+ * matches by hand; the bracket roller (rollSchedule) never puts bracket
+ * matches into them and never touches this schedule at all.
+ */
+export type ExhibitionSchedule = {
+  rings: RingMatch[][];
+  matchMinutes: number;
+  gapMinutes: number;
 };
 
 /**
@@ -47,8 +56,7 @@ export function applyScheduleStatus(
   const activeSet = new Set<string>();
   const nextSet   = new Set<string>();
 
-  // Bracket rings AND exhibition rings each get their own active/next.
-  for (const ring of [...schedule.rings, ...(schedule.exhibitionRings ?? [])]) {
+  for (const ring of schedule.rings) {
     // Only READY matches (both teams known) can be active/next — an upcoming
     // match whose teams aren't decided yet is shown for its schedule slot but
     // stays "to-do", never a "waiting" active/biddable match.
@@ -64,17 +72,18 @@ export function applyScheduleStatus(
   }
 
   return matches.map(m => {
-    if (m.division !== division) return m;
+    // Exhibition matches are never touched here — they're not in
+    // schedule.rings at all (see ExhibitionSchedule), but their `division`
+    // field is still a real (if vestigial) Division value, so without this
+    // check they'd match `m.division === division` and get force-reset to
+    // 'todo' below simply because they don't appear in this ring set.
+    if (m.division !== division || m.side === 'exhibition') return m;
     if (m.status === 'completed' || m.status === 'skipped') return m;
 
     const newStatus: MatchStatus =
       activeSet.has(m.id) ? 'active' :
       nextSet.has(m.id)   ? 'next'   :
       'todo';
-  if (newStatus === 'active' && m.status !== 'active') {
-      return { ...m, status: 'active', biddingOpen: false };
-    }
-
 
     // Whenever a match first becomes active, always start with voting closed.
     // The admin explicitly opens it — this prevents the old default (open) from
@@ -207,8 +216,11 @@ export function changeTimings(
   return { rings, concurrentRings: schedule.concurrentRings, matchMinutes, gapMinutes };
 }
 
-/** Swap two matches wherever they are — their time slots swap, match IDs trade places. */
-export function swapMatchIds(schedule: MatchSchedule, idA: string, idB: string): MatchSchedule {
+/**
+ * Swap two matches wherever they are — their time slots swap, match IDs
+ * trade places. Generic over any ring-based schedule (bracket or exhibition).
+ */
+export function swapMatchIds<T extends { rings: RingMatch[][] }>(schedule: T, idA: string, idB: string): T {
   function find(id: string) {
     for (let ri = 0; ri < schedule.rings.length; ri++) {
       const idx = schedule.rings[ri].findIndex(e => e.matchId === id);
@@ -229,8 +241,15 @@ export function swapMatchIds(schedule: MatchSchedule, idA: string, idB: string):
   return { ...schedule, rings };
 }
 
-/** Edit one match's time and cascade forward through the rest of its own ring only. */
-export function editMatchTime(schedule: MatchSchedule, matchId: string, newMinute: number): MatchSchedule {
+/**
+ * Edit one match's time and cascade forward through the rest of its own ring
+ * only. Generic over any ring-based schedule (bracket or exhibition).
+ */
+export function editMatchTime<T extends { rings: RingMatch[][]; matchMinutes: number; gapMinutes: number }>(
+  schedule: T,
+  matchId: string,
+  newMinute: number,
+): T {
   const dur = slotDuration(schedule);
   const rings = schedule.rings.map(ring => {
     const idx = ring.findIndex(e => e.matchId === matchId);
@@ -315,23 +334,11 @@ export function rollSchedule(
   //    that grow as results come in) and parallel across rings — and makes the
   //    result deterministic + idempotent regardless of prior times. `base`
   //    preserves a manually-set start time (the earliest slot in the schedule).
-  const existingStarts = [...schedule.rings.flat(), ...(schedule.exhibitionRings ?? []).flat()].map(e => e.startMinute);
+  const existingStarts = schedule.rings.flat().map(e => e.startMinute);
   const base = existingStarts.length ? Math.min(...existingStarts) : START_MINUTE;
   const retimed = rings.map(ring => ring.map((e, k) => ({ ...e, startMinute: base + k * dur })));
 
-  // Preserve the exhibition rings (admin-managed): drop matches that were
-  // deleted or skipped, keep the rest (including blank ones being set up), and
-  // re-time them the same way. Empty exhibition rings are kept so you can add to them.
-  const exhibitionRings = (schedule.exhibitionRings ?? []).map(ring =>
-    ring
-      .filter(e => {
-        const m = byId.get(e.matchId);
-        return m && m.division === division && m.side === 'exhibition' && m.status !== 'skipped';
-      })
-      .map((e, k) => ({ ...e, startMinute: base + k * dur })),
-  );
-
-  return { ...schedule, rings: retimed, exhibitionRings };
+  return { ...schedule, rings: retimed };
 }
 
 /**
@@ -362,24 +369,80 @@ export function prependMatchToRing(
 }
 
 // ── exhibition rings ─────────────────────────────────────────────────────────
-// Dedicated rings for ad-hoc matches, entirely separate from the bracket rings.
+// Dedicated rings for ad-hoc matches — a single shared schedule (see
+// ExhibitionSchedule), entirely separate from the bracket rings and not
+// divided by division.
 
 /** Add a new, empty exhibition ring (a dedicated column for ad-hoc matches). */
-export function addExhibitionRing(schedule: MatchSchedule): MatchSchedule {
-  return { ...schedule, exhibitionRings: [...(schedule.exhibitionRings ?? []), []] };
+export function addExhibitionRing(schedule: ExhibitionSchedule): ExhibitionSchedule {
+  return { ...schedule, rings: [...schedule.rings, []] };
 }
 
 /** Remove an exhibition ring by index (its matches should be deleted by the caller). */
-export function removeExhibitionRing(schedule: MatchSchedule, index: number): MatchSchedule {
-  return { ...schedule, exhibitionRings: (schedule.exhibitionRings ?? []).filter((_, i) => i !== index) };
+export function removeExhibitionRing(schedule: ExhibitionSchedule, index: number): ExhibitionSchedule {
+  return { ...schedule, rings: schedule.rings.filter((_, i) => i !== index) };
 }
 
-/** Append a match id to an exhibition ring's queue (time is normalised by rollSchedule). */
-export function addMatchToExhibitionRing(schedule: MatchSchedule, index: number, matchId: string): MatchSchedule {
-  const exhibitionRings = (schedule.exhibitionRings ?? []).map((ring, i) =>
+/** Append a match id to an exhibition ring's queue (time is normalised by rollExhibitionSchedule). */
+export function addMatchToExhibitionRing(schedule: ExhibitionSchedule, index: number, matchId: string): ExhibitionSchedule {
+  const rings = schedule.rings.map((ring, i) =>
     i === index ? [...ring, { matchId, startMinute: START_MINUTE }] : ring,
   );
-  return { ...schedule, exhibitionRings };
+  return { ...schedule, rings };
+}
+
+/**
+ * Change the exhibition schedule's match length and/or gap. Same rules as
+ * changeTimings (completed matches keep their exact time), just without a
+ * concurrentRings field to carry through — exhibition ring count is managed
+ * directly via addExhibitionRing/removeExhibitionRing, not a fixed count.
+ */
+export function changeExhibitionTimings(
+  schedule: ExhibitionSchedule,
+  matches: BracketMatch[],
+  matchMinutes: number,
+  gapMinutes: number,
+): ExhibitionSchedule {
+  const dur = matchMinutes + gapMinutes;
+  const rings = schedule.rings.map(ring => {
+    let cursor: number | null = null;
+    return ring.map(entry => {
+      if (isCompleted(matches, entry.matchId)) {
+        cursor = entry.startMinute + dur;
+        return entry; // frozen
+      }
+      const startMinute = cursor ?? entry.startMinute;
+      cursor = startMinute + dur;
+      return { ...entry, startMinute };
+    });
+  });
+  return { rings, matchMinutes, gapMinutes };
+}
+
+/**
+ * Rolling pass for the shared exhibition schedule: drops matches that were
+ * deleted or skipped, keeps the rest (including blank ones being set up), and
+ * re-times them by position by the same base+k*dur rule as rollSchedule.
+ * Empty rings are kept so you can still add to them. Never division-scoped —
+ * side === 'exhibition' is the only qualifying check.
+ */
+export function rollExhibitionSchedule(schedule: ExhibitionSchedule, matches: BracketMatch[]): ExhibitionSchedule {
+  const dur = slotDuration(schedule);
+  const byId = new Map(matches.map(m => [m.id, m]));
+
+  const existingStarts = schedule.rings.flat().map(e => e.startMinute);
+  const base = existingStarts.length ? Math.min(...existingStarts) : START_MINUTE;
+
+  const rings = schedule.rings.map(ring =>
+    ring
+      .filter(e => {
+        const m = byId.get(e.matchId);
+        return m && m.side === 'exhibition' && m.status !== 'skipped';
+      })
+      .map((e, k) => ({ ...e, startMinute: base + k * dur })),
+  );
+
+  return { ...schedule, rings };
 }
 
 /**

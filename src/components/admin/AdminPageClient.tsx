@@ -6,8 +6,8 @@ import {
   generateDoubleElimBracket, transferBracket,
 } from "@/lib/mock-data";
 import {
-  type ConcurrentRings, type MatchSchedule,
-  generateSchedule, applyScheduleStatus, rollSchedule, START_MINUTE,
+  type ConcurrentRings, type MatchSchedule, type ExhibitionSchedule,
+  generateSchedule, applyScheduleStatus, rollSchedule, rollExhibitionSchedule, START_MINUTE,
 } from "@/lib/schedule";
 import { cn } from "@/lib/cn";
 import { useAdminPanels, type PanelId } from "./AdminPanelContext";
@@ -39,6 +39,7 @@ type InitialBracket = {
   matches: BracketMatch[];
   teamCount: TeamCount;
   schedules: Record<Division, MatchSchedule>;
+  exhibitionSchedule: ExhibitionSchedule;
 };
 
 // One-time/exhibition team, kept in its own table — never division-scoped,
@@ -66,6 +67,7 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
   const [teamCount,    setTeamCount] = useState<TeamCount>(initialBracket.teamCount);
   const [pendingCount, setPending]   = useState<TeamCount | null>(null);
   const [schedules,    setSchedules] = useState<Record<Division, MatchSchedule>>(initialBracket.schedules);
+  const [exhibitionSchedule, setExhibitionSchedule] = useState<ExhibitionSchedule>(initialBracket.exhibitionSchedule);
 
   const { visiblePanels } = useAdminPanels();
 
@@ -80,11 +82,11 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
       fetch('/api/admin/bracket', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ matches, teamCount, schedules }),
+        body: JSON.stringify({ matches, teamCount, schedules, exhibitionSchedule }),
       }).catch(err => console.error('[admin] bracket save failed:', err));
     }, 500);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
-  }, [matches, teamCount, schedules]);
+  }, [matches, teamCount, schedules, exhibitionSchedule]);
 
   const teamSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
@@ -147,13 +149,13 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
   }
 
   const eliminatedTeams = useMemo(() => computeEliminated(matches), [matches]);
-  const otherDivision: Division = division === 'standards' ? 'open' : 'standards';
 
   // Schedule-derived active/next/todo status — computed for BOTH divisions
   // (mirrors saveBracketState's server-side reconciliation), not just the
-  // currently-selected one, so the matches panel's Exhibition tab can show
-  // an accurate merged view regardless of which division is toggled.
-  // Completed and skipped are preserved; the schedule order determines everything else.
+  // currently-selected one. Completed and skipped are preserved; the
+  // schedule order determines everything else. Exhibition matches are exempt
+  // (see applyScheduleStatus) — their status is entirely admin-controlled
+  // via the dropdown, so `matches` already reflects it with no derivation.
   const effectiveMatches = useMemo(
     () => (['standards', 'open'] as Division[]).reduce(
       (acc, d) => applyScheduleStatus(acc, schedules[d], d), matches,
@@ -239,6 +241,10 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
 
     setMatches(cleared);
     setSchedules({ standards: rebuildSchedule('standards', schedules.standards), open: rebuildSchedule('open', schedules.open) });
+    // cleared has no exhibition matches left (filtered out above), so this
+    // empties every exhibition ring's contents while keeping the ring
+    // columns themselves — same as the per-division behavior this replaced.
+    setExhibitionSchedule(prev => rollExhibitionSchedule(prev, cleared));
 
     try {
       const res = await fetch('/api/admin/reset-all', { method: 'POST' });
@@ -304,15 +310,13 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
           division={division}
           teamCount={teamCount}
           schedule={schedules[division]}
-          otherSchedule={schedules[otherDivision]}
+          exhibitionSchedule={exhibitionSchedule}
           teams={teams}
           specialTeams={specialTeams}
           onScheduleChange={s =>
             setSchedules(prev => ({ ...prev, [division]: s }))
           }
-          onOtherScheduleChange={s =>
-            setSchedules(prev => ({ ...prev, [otherDivision]: s }))
-          }
+          onExhibitionScheduleChange={setExhibitionSchedule}
           onMatchesChange={commitMatches}
         />
       ),

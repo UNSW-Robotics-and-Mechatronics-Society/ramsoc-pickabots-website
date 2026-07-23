@@ -2,7 +2,7 @@
 
 import { Fragment, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { type BracketMatch, type Division, type TeamCount, findTeamTargetMatch, computeSlotDefaults } from '@/lib/mock-data'
-import { type MatchSchedule, formatTime, applyScheduleStatus } from '@/lib/schedule'
+import { type MatchSchedule, type ExhibitionSchedule, formatTime, applyScheduleStatus } from '@/lib/schedule'
 import { useTeamFilter, isMatchDimmed, isMatchSelected } from '@/lib/teamFilter'
 import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh'
 import { MATCH_H, ROUND_W, MatchCard } from './BracketMatchCard'
@@ -33,9 +33,16 @@ function pillStyle(active: boolean): CSSProperties {
 
 type ViewMode = Division | 'exhibition'
 
-type Props = { matches: BracketMatch[]; teamCount: TeamCount; schedules: Record<Division, MatchSchedule> }
+type Props = {
+  matches: BracketMatch[]
+  teamCount: TeamCount
+  schedules: Record<Division, MatchSchedule>
+  // Shared across both divisions — not one copy per division. See
+  // ExhibitionSchedule.
+  exhibitionSchedule: ExhibitionSchedule
+}
 
-export default function MatchList({ matches, teamCount, schedules }: Props) {
+export default function MatchList({ matches, teamCount, schedules, exhibitionSchedule }: Props) {
   useRealtimeRefresh(['bracket_matches', 'bracket_config', 'bracket_schedule'])
   const [viewMode, setViewMode] = useState<ViewMode>('standards')
   const [selectedTeam, setSelectedTeam] = useState<string | null>(null)
@@ -44,33 +51,30 @@ export default function MatchList({ matches, teamCount, schedules }: Props) {
 
   const isExhibition = viewMode === 'exhibition'
 
-  // Ring-capped statuses (see applyScheduleStatus): at most one active + one
-  // next per ring, matching the bracket and admin views. The bracket-round
-  // view is scoped to one division; Exhibition combines both, since an
-  // ad-hoc match can be added under either division's exhibition ring and
-  // there's no reason to make the user pick a division just to see them.
+  // Bracket-round view: ring-capped statuses (see applyScheduleStatus) — at
+  // most one active + one next per ring, matching the bracket and admin
+  // views, scoped to one division. Exhibition view: the single shared list,
+  // not divided by division at all, with status entirely admin-controlled
+  // (no ring-position derivation — see applyScheduleStatus's exhibition
+  // exemption) so it shows exactly what the admin set.
   const divMatches = useMemo(() => {
-    const divisions: Division[] = isExhibition ? ['standards', 'open'] : [viewMode as Division]
-    return divisions.flatMap(d => applyScheduleStatus(matches, schedules[d], d).filter(m => m.division === d))
+    if (isExhibition) return matches.filter(m => m.side === 'exhibition')
+    const division = viewMode as Division
+    return applyScheduleStatus(matches, schedules[division], division).filter(m => m.division === division)
   }, [matches, schedules, viewMode, isExhibition])
   const matchById = useMemo(() => new Map(divMatches.map(m => [m.id, m])), [divMatches])
-  const slotDefaults = useMemo(() => {
-    const divisions: Division[] = isExhibition ? ['standards', 'open'] : [viewMode as Division]
-    const merged = new Map<string, { a?: string; b?: string }>()
-    for (const d of divisions) {
-      for (const [k, v] of computeSlotDefaults(matches, d, teamCount)) merged.set(k, v)
-    }
-    return merged
-  }, [matches, teamCount, viewMode, isExhibition])
+  // Feeder placeholder text for empty slots — bracket-round only; exhibition
+  // matches have no feeders.
+  const slotDefaults = useMemo(
+    () => isExhibition ? new Map<string, { a?: string; b?: string }>() : computeSlotDefaults(matches, viewMode as Division, teamCount),
+    [matches, teamCount, viewMode, isExhibition],
+  )
 
   // Bracket view: this division's rings only, never exhibition ones (those
   // get their own tab instead of mixing into a division's view). Exhibition
-  // view: every exhibition ring from BOTH divisions, labeled by source
-  // division so it's clear which bracket an ad-hoc match was added under.
+  // view: the single shared exhibition ring set.
   const ringCols = isExhibition
-    ? (['standards', 'open'] as Division[]).flatMap(d => (schedules[d].exhibitionRings ?? []).map((ring, i) => ({
-        ring, label: `${d === 'standards' ? 'Standard' : 'Open'} Exhibition ${i + 1}`,
-      })))
+    ? exhibitionSchedule.rings.map((ring, i) => ({ ring, label: `Exhibition ${i + 1}` }))
     : schedules[viewMode as Division].rings.map((ring, i) => ({ ring, label: `Ring ${i + 1}` }))
   const nRings = ringCols.length
   const maxLen = ringCols.reduce((mx, c) => Math.max(mx, c.ring.length), 0)
