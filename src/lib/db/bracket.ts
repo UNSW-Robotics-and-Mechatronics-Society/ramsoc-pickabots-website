@@ -4,7 +4,11 @@ import {
   type BracketMatch, type BracketSide, type Division, type MatchStatus, type TeamCount,
   generateDoubleElimBracket, winner,
 } from "@/lib/mock-data";
-import { type MatchSchedule, generateSchedule, applyScheduleStatus, rollSchedule, dueForNotify } from "@/lib/schedule";
+import {
+  type MatchSchedule, type ExhibitionSchedule,
+  DEFAULT_MATCH_MINUTES, DEFAULT_GAP_MINUTES,
+  generateSchedule, applyScheduleStatus, rollSchedule, rollExhibitionSchedule, dueForNotify,
+} from "@/lib/schedule";
 import { toDbCategory, fromDbCategory } from "./division";
 import { rewardWinners } from "./rewards";
 import { notifyCaptainsForMatch } from "./notify";
@@ -67,7 +71,35 @@ export type BracketState = {
   matches: BracketMatch[];
   teamCount: TeamCount;
   schedules: Record<Division, MatchSchedule>;
+  // Shared across both divisions — not one copy per division. See
+  // ExhibitionSchedule.
+  exhibitionSchedule: ExhibitionSchedule;
 };
+
+// The exhibition schedule has no dedicated table — it's persisted by
+// embedding an identical copy into BOTH divisions' bracket_schedule rows
+// (under a `schedule.exhibition` key) rather than adding new schema.
+type StoredSchedule = {
+  exhibition?: ExhibitionSchedule;
+  exhibitionRings?: ExhibitionSchedule["rings"];
+};
+
+function extractExhibitionSchedule(scheduleRows: { schedule: unknown }[]): ExhibitionSchedule {
+  const raw = scheduleRows.map(r => r.schedule as StoredSchedule);
+
+  // New shape: an IDENTICAL mirrored copy lives on every row — take the
+  // first one found, don't accumulate (they're duplicates of the same data,
+  // not distinct pieces; concatenating would double every ring).
+  const mirrored = raw.find(r => r.exhibition)?.exhibition;
+  if (mirrored) return mirrored;
+
+  // Legacy shape (before this was unified): each row had its OWN distinct
+  // per-division exhibitionRings — concatenate every row's list exactly
+  // once so nothing is dropped during the one-time migration to the shared
+  // model (the very first save after this rewrites it into the new shape).
+  const legacyRingLists = raw.map(r => r.exhibitionRings).filter((r): r is ExhibitionSchedule["rings"] => !!r);
+  return { rings: legacyRingLists.flat(), matchMinutes: DEFAULT_MATCH_MINUTES, gapMinutes: DEFAULT_GAP_MINUTES };
+}
 
 export async function getBracketState(): Promise<BracketState> {
   const [{ data: matchRows, error: mErr }, { data: configRows, error: cErr }, { data: scheduleRows, error: sErr }] =
@@ -104,7 +136,9 @@ export async function getBracketState(): Promise<BracketState> {
     schedules[division] = rollSchedule(existing, matches, division);
   }
 
-  return { matches, teamCount, schedules };
+  const exhibitionSchedule = rollExhibitionSchedule(extractExhibitionSchedule(scheduleRows ?? []), matches);
+
+  return { matches, teamCount, schedules, exhibitionSchedule };
 }
 
 /**
@@ -156,20 +190,27 @@ async function syncCompletedMatches(beforeStatusById: Map<string, MatchStatus>, 
  * deleted row are refunded first, since the FK is ON DELETE CASCADE and
  * would otherwise silently drop the vote along with the user's already-
  * deducted tokens.
+ *
+ * Deliberately does NOT filter out rows with a null bracket_match_id: a row
+ * can only get one through this function's own insert below (always set),
+ * so a null one is never legitimate — usually a manual test insert via the
+ * Supabase dashboard — and should be swept up as stale exactly like any
+ * other orphan, not silently left active forever.
  */
 async function reconcileVotingMatches(bracketMatchById: Map<string, BracketMatch>): Promise<void> {
   const { data: rows, error } = await supabase
     .from("matches")
-    .select("id, bracket_match_id, is_active, voting_open, left_name, right_name")
-    .is("winner_side", null)
-    .not("bracket_match_id", "is", null);
+    .select("id, bracket_match_id, is_active, voting_open, is_exhibition, left_name, right_name")
+    .is("winner_side", null);
   if (error || !rows) return;
 
-  const rowByBracketId = new Map(rows.map(r => [r.bracket_match_id as string, r]));
+  const rowByBracketId = new Map(
+    rows.filter(r => r.bracket_match_id !== null).map(r => [r.bracket_match_id as string, r]),
+  );
   const toDelete: string[] = [];
 
   for (const row of rows) {
-    const bm = bracketMatchById.get(row.bracket_match_id as string);
+    const bm = row.bracket_match_id ? bracketMatchById.get(row.bracket_match_id as string) : undefined;
     if (bm?.status !== "active" && bm?.status !== "next") toDelete.push(row.id as string);
   }
 
@@ -181,6 +222,7 @@ async function reconcileVotingMatches(bracketMatchById: Map<string, BracketMatch
       // Only active matches can have voting opened; non-active are always closed.
       // Active matches default closed — admin explicitly opens voting.
       voting_open: bm.status === "active" ? (bm.votingOpen ?? false) : false,
+      is_exhibition: bm.side === "exhibition",
       left_name: bm.slotA.teamName || "TBD",
       right_name: bm.slotB.teamName || "TBD",
     };
@@ -190,6 +232,7 @@ async function reconcileVotingMatches(bracketMatchById: Map<string, BracketMatch
     } else if (
       existing.is_active !== desired.is_active ||
       existing.voting_open !== desired.voting_open ||
+      existing.is_exhibition !== desired.is_exhibition ||
       existing.left_name !== desired.left_name ||
       existing.right_name !== desired.right_name
     ) {
@@ -217,7 +260,7 @@ async function reconcileVotingMatches(bracketMatchById: Map<string, BracketMatch
 }
 
 export async function saveBracketState(state: BracketState): Promise<void> {
-  const { matches, teamCount, schedules } = state;
+  const { matches, teamCount, schedules, exhibitionSchedule } = state;
 
   const [{ data: existingRows, error: exErr }, { data: teamRows, error: teamErr }] = await Promise.all([
     supabase.from("bracket_matches").select("id, status"),
@@ -247,10 +290,26 @@ export async function saveBracketState(state: BracketState): Promise<void> {
     .upsert(DIVISIONS.map(d => ({ division: toDbCategory(d), team_count: teamCount })), { onConflict: "division" });
   if (configErr) throw new Error(`Failed to save bracket_config: ${configErr.message}`);
 
+  // The shared exhibition schedule has no table of its own — an identical
+  // copy is embedded in BOTH divisions' rows (see extractExhibitionSchedule),
+  // so either row can be read back as the source of truth. Built explicitly
+  // (not spread from the in-memory schedule object) so a stale legacy
+  // `exhibitionRings` key — carried through from a pre-migration row via
+  // rollSchedule's `{ ...schedule, ... }` spread — never gets written back.
   const { error: schedErr } = await supabase
     .from("bracket_schedule")
     .upsert(
-      DIVISIONS.map(d => ({ division: toDbCategory(d), schedule: schedules[d], updated_at: new Date().toISOString() })),
+      DIVISIONS.map(d => ({
+        division: toDbCategory(d),
+        schedule: {
+          rings: schedules[d].rings,
+          concurrentRings: schedules[d].concurrentRings,
+          matchMinutes: schedules[d].matchMinutes,
+          gapMinutes: schedules[d].gapMinutes,
+          exhibition: exhibitionSchedule,
+        },
+        updated_at: new Date().toISOString(),
+      })),
       { onConflict: "division" },
     );
   if (schedErr) throw new Error(`Failed to save bracket_schedule: ${schedErr.message}`);
@@ -259,7 +318,11 @@ export async function saveBracketState(state: BracketState): Promise<void> {
   // per ring) rather than the raw stored status — so changing the ring count
   // immediately surfaces the right number of active matches on the public
   // voting page. applyScheduleStatus preserves completed/skipped, so the
-  // completed-transition sync below still behaves correctly.
+  // completed-transition sync below still behaves correctly. Exhibition
+  // matches are exempt (see applyScheduleStatus) — their status is entirely
+  // admin-controlled via the dropdown, same as their team names/scores, so
+  // `matches`' own status already reflects the admin's choice with no
+  // derivation needed.
   let effective = matches;
   for (const d of DIVISIONS) {
     effective = applyScheduleStatus(effective, schedules[d], d);

@@ -2,12 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  type BracketMatch, type Division, type Team, type TeamCount,
+  type BracketMatch, type Division, type MatchStatus, type Team, type TeamCount,
   generateDoubleElimBracket, transferBracket,
 } from "@/lib/mock-data";
 import {
-  type MatchSchedule,
-  generateSchedule, applyScheduleStatus, rollSchedule, START_MINUTE,
+  type ConcurrentRings, type MatchSchedule, type ExhibitionSchedule,
+  generateSchedule, applyScheduleStatus, rollSchedule, rollExhibitionSchedule, START_MINUTE,
 } from "@/lib/schedule";
 import { cn } from "@/lib/cn";
 import { useAdminPanels, type PanelId } from "./AdminPanelContext";
@@ -41,20 +41,35 @@ type InitialBracket = {
   matches: BracketMatch[];
   teamCount: TeamCount;
   schedules: Record<Division, MatchSchedule>;
+  exhibitionSchedule: ExhibitionSchedule;
 };
+
+// One-time/exhibition team, kept in its own table — never division-scoped,
+// never fed into the bracket. Duplicated locally rather than imported from
+// the server-only db module (see src/lib/db/specialTeams.ts).
+type SpecialTeamCategory = 'std' | 'open' | 'boss' | 'other';
+type SpecialTeam = {
+  id: string; name: string; email: string; phone: string; notes: string;
+  category: SpecialTeamCategory; present: boolean;
+};
+type SpecialTeamInput = { name: string; email: string; phone: string; notes: string; category: SpecialTeamCategory };
+type SpecialTeamPatch = Partial<Omit<SpecialTeam, 'id'>>;
 
 type Props = {
   division: Division;
   initialTeams: Team[];
+  initialSpecialTeams: SpecialTeam[];
   initialBracket: InitialBracket;
 };
 
-export default function AdminPageClient({ division, initialTeams, initialBracket }: Props) {
+export default function AdminPageClient({ division, initialTeams, initialSpecialTeams, initialBracket }: Props) {
   const [teams,        setTeams]     = useState<Team[]>(initialTeams);
+  const [specialTeams, setSpecialTeams] = useState<SpecialTeam[]>(initialSpecialTeams);
   const [matches,      setMatches]   = useState<BracketMatch[]>(initialBracket.matches);
   const [teamCount,    setTeamCount] = useState<TeamCount>(initialBracket.teamCount);
   const [pendingCount, setPending]   = useState<TeamCount | null>(null);
   const [schedules,    setSchedules] = useState<Record<Division, MatchSchedule>>(initialBracket.schedules);
+  const [exhibitionSchedule, setExhibitionSchedule] = useState<ExhibitionSchedule>(initialBracket.exhibitionSchedule);
 
   const { visiblePanels } = useAdminPanels();
 
@@ -69,11 +84,11 @@ export default function AdminPageClient({ division, initialTeams, initialBracket
       fetch('/api/admin/bracket', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ matches, teamCount, schedules }),
+        body: JSON.stringify({ matches, teamCount, schedules, exhibitionSchedule }),
       }).catch(err => console.error('[admin] bracket save failed:', err));
     }, 500);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
-  }, [matches, teamCount, schedules]);
+  }, [matches, teamCount, schedules, exhibitionSchedule]);
 
   const teamSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
@@ -91,17 +106,67 @@ export default function AdminPageClient({ division, initialTeams, initialBracket
     }, 300);
   }
 
+  // ── special (one-time/exhibition) teams ──────────────────────────────────────
+  async function handleAddSpecialTeam(input: SpecialTeamInput) {
+    try {
+      const res = await fetch('/api/admin/special-teams', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'Add failed');
+      const created: SpecialTeam = await res.json();
+      setSpecialTeams(prev => [created, ...prev]);
+    } catch (err) {
+      console.error('[admin] add special team failed:', err);
+    }
+  }
+
+  const specialTeamSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  function handleUpdateSpecialTeam(id: string, patch: SpecialTeamPatch) {
+    setSpecialTeams(prev => prev.map(t => t.id === id ? { ...t, ...patch } : t));
+
+    const key = `${id}-${Object.keys(patch).sort().join(',')}`;
+    clearTimeout(specialTeamSaveTimers.current[key]);
+    specialTeamSaveTimers.current[key] = setTimeout(() => {
+      fetch(`/api/admin/special-teams/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      }).catch(err => console.error('[admin] special team update failed:', err));
+    }, 300);
+  }
+
+  async function handleDeleteSpecialTeam(id: string) {
+    const prev = specialTeams;
+    setSpecialTeams(cur => cur.filter(t => t.id !== id));
+    try {
+      const res = await fetch(`/api/admin/special-teams/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Delete failed');
+    } catch (err) {
+      console.error('[admin] delete special team failed:', err);
+      setSpecialTeams(prev); // revert on failure
+    }
+  }
+
   const eliminatedTeams = useMemo(() => computeEliminated(matches), [matches]);
 
-  // Lead-time captain SMS alerts now fire server-side in saveBracketState (see
+  // Lead-time captain SMS alerts fire server-side in saveBracketState (see
   // lib/db/bracket.ts) on every bracket save, so they work regardless of who's
   // viewing /admin and honour the configurable notify-lead.
 
-  // Schedule-derived active/next/todo status for the current division.
-  // Completed and skipped are preserved; the schedule order determines everything else.
+  // Schedule-derived active/next/todo status — computed for BOTH divisions
+  // (mirrors saveBracketState's server-side reconciliation), not just the
+  // currently-selected one. Completed and skipped are preserved; the
+  // schedule order determines everything else. Exhibition matches are exempt
+  // (see applyScheduleStatus) — their status is entirely admin-controlled
+  // via the dropdown, so `matches` already reflects it with no derivation.
   const effectiveMatches = useMemo(
-    () => applyScheduleStatus(matches, schedules[division], division),
-    [matches, schedules, division],
+    () => (['standards', 'open'] as Division[]).reduce(
+      (acc, d) => applyScheduleStatus(acc, schedules[d], d), matches,
+    ),
+    [matches, schedules],
   );
 
   // ── bracket size change ──────────────────────────────────────────────────────
@@ -155,6 +220,46 @@ export default function AdminPageClient({ division, initialTeams, initialBracket
     setSchedules(prev => ({ ...prev, [division]: rollSchedule(prev[division], next, division) }));
   }
 
+  // ── full competition reset ("Reset All") ──────────────────────────────────────
+  // Clears every match's teams/scores/status across BOTH divisions and drops
+  // exhibition matches entirely — same transform the old per-division "Clear
+  // Teams" used, just applied everywhere. Persisted via the normal debounced
+  // bracket-save effect above (matches submitted without exhibition rows are
+  // deleted server-side — see saveBracketState's stale-row cleanup), which
+  // also refunds/deletes any votes tied to matches it invalidates. Separately,
+  // wipes ALL voting history and resets every balance to 100 — the bracket
+  // save alone doesn't reach votes on already-resolved matches. Leaves
+  // teams/special_teams rows themselves untouched (special teams especially —
+  // only their bracket placement, which they never had, would be affected).
+  async function handleResetAll() {
+    const cleared = matches
+      .filter(m => m.side !== 'exhibition')
+      .map(m => ({ ...m, slotA: { teamName: '', score: 0 }, slotB: { teamName: '', score: 0 }, status: 'todo' as MatchStatus }));
+
+    const rebuildSchedule = (d: Division, s: MatchSchedule): MatchSchedule => {
+      const safeRings = Math.min(4, Math.max(1, s.concurrentRings)) as ConcurrentRings;
+      return rollSchedule(
+        generateSchedule([], safeRings, s.rings[0]?.[0]?.startMinute ?? START_MINUTE, s.matchMinutes, s.gapMinutes),
+        cleared,
+        d,
+      );
+    };
+
+    setMatches(cleared);
+    setSchedules({ standards: rebuildSchedule('standards', schedules.standards), open: rebuildSchedule('open', schedules.open) });
+    // cleared has no exhibition matches left (filtered out above), so this
+    // empties every exhibition ring's contents while keeping the ring
+    // columns themselves — same as the per-division behavior this replaced.
+    setExhibitionSchedule(prev => rollExhibitionSchedule(prev, cleared));
+
+    try {
+      const res = await fetch('/api/admin/reset-all', { method: 'POST' });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'Reset failed');
+    } catch (err) {
+      console.error('[admin] reset-all failed:', err);
+    }
+  }
+
   // ── build panel list for MultiPanelSplit ─────────────────────────────────────
   const panels = ALL_PANEL_IDS
     .filter(p => visiblePanels.includes(p))
@@ -167,6 +272,10 @@ export default function AdminPageClient({ division, initialTeams, initialBracket
           division={division}
           eliminatedTeams={eliminatedTeams}
           onTeamUpdate={handleTeamUpdate}
+          specialTeams={specialTeams}
+          onAddSpecialTeam={handleAddSpecialTeam}
+          onUpdateSpecialTeam={handleUpdateSpecialTeam}
+          onDeleteSpecialTeam={handleDeleteSpecialTeam}
         />
       ) : p === 'bracket' ? (
         <div className="flex h-full flex-col">
@@ -197,6 +306,7 @@ export default function AdminPageClient({ division, initialTeams, initialBracket
               schedule={schedules[division]}
               onMatchesChange={commitMatches}
               onScheduleChange={s => setSchedules(prev => ({ ...prev, [division]: s }))}
+              onResetAll={handleResetAll}
             />
           </div>
         </div>
@@ -206,10 +316,13 @@ export default function AdminPageClient({ division, initialTeams, initialBracket
           division={division}
           teamCount={teamCount}
           schedule={schedules[division]}
+          exhibitionSchedule={exhibitionSchedule}
           teams={teams}
+          specialTeams={specialTeams}
           onScheduleChange={s =>
             setSchedules(prev => ({ ...prev, [division]: s }))
           }
+          onExhibitionScheduleChange={setExhibitionSchedule}
           onMatchesChange={commitMatches}
         />
       ) : p === 'players' ? (

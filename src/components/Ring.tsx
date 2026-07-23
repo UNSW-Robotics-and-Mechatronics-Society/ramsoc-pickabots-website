@@ -1,12 +1,14 @@
 'use client'
 import { useState } from 'react'
 import BotSvg from './BotSvg'
+import RamCoin from './RamCoin'
 import type { Match, Vote, VoteStandings } from '@/lib/types'
 
 export const COMP_META = {
-  standard: { color: '#FF6B00', label: '⚙ STANDARD' },
-  open:     { color: '#4cff00', label: '◈ OPEN'      },
-  bossbot:  { color: '#9B30FF', label: '💀 BOSSBOT'   },
+  standard:   { color: '#FF6B00', label: '⚙ STANDARD'   },
+  open:       { color: '#4cff00', label: '◈ OPEN'       },
+  bossbot:    { color: '#9B30FF', label: '💀 BOSSBOT'    },
+  exhibition: { color: '#FFD700', label: '★ EXHIBITION' },
 } as const
 
 const IMPACT_WORDS = ['POW!', 'ZAP!', 'BOOM!', 'WHAM!', 'BAM!', 'NOVA!', 'SMASH!']
@@ -22,10 +24,15 @@ interface RingProps {
   votingOpen?: boolean
   onVote: (side: 'left' | 'right') => void
   onUndo: () => void
+  /** Opens the team ledger modal for whichever bot's info icon (or, once
+   * voted, name) was clicked. */
+  onTeamClick?: (name: string) => void
 }
 
-export default function Ring({ match, vote, standings, votingOpen = true, onVote, onUndo }: RingProps) {
-  const meta = COMP_META[match.comp_type] ?? COMP_META.standard
+export default function Ring({ match, vote, standings, votingOpen = true, onVote, onUndo, onTeamClick }: RingProps) {
+  // An exhibition match's identity is deliberately independent of which
+  // division's bracket it was created under — same look regardless.
+  const meta = match.is_exhibition ? COMP_META.exhibition : (COMP_META[match.comp_type] ?? COMP_META.standard)
   const voted = !!vote
   // Sides are non-interactive once the user has voted OR voting is closed.
   const locked = voted || !votingOpen
@@ -80,12 +87,14 @@ export default function Ring({ match, vote, standings, votingOpen = true, onVote
               side="left"  isBossbot={match.is_bossbot} ringColor={meta.color}
               impactWord={lWord} disabled={locked}
               mult={standings && !standings.noData ? standings.multiplierIfLeftWins : null}
-              onClick={() => !locked && onVote('left')} />
+              onClick={() => !locked && onVote('left')}
+              onInfoClick={() => onTeamClick?.(match.left_name)} />
         <Side bot={{ name: match.right_name, color: match.right_color, shape: match.right_shape }}
               side="right" isBossbot={match.is_bossbot} ringColor={meta.color}
               impactWord={rWord} disabled={locked}
               mult={standings && !standings.noData ? standings.multiplierIfRightWins : null}
-              onClick={() => !locked && onVote('right')} />
+              onClick={() => !locked && onVote('right')}
+              onInfoClick={() => onTeamClick?.(match.right_name)} />
 
         {/* VS / ⚡ badge */}
         <div style={{
@@ -141,10 +150,15 @@ export default function Ring({ match, vote, standings, votingOpen = true, onVote
             backdropFilter: 'blur(12px)',
           }}>
             <div style={{ fontSize: '0.48rem', fontWeight: 900, color: '#444', textTransform: 'uppercase', letterSpacing: 4 }}>VOTED</div>
-            <div style={{ fontSize: '1rem', fontWeight: 900, color: '#fff', margin: '4px 0', letterSpacing: 1 }}>
+            <div
+              onClick={() => onTeamClick?.(vote.side === 'left' ? match.left_name : match.right_name)}
+              style={{ fontSize: '1rem', fontWeight: 900, color: '#fff', margin: '4px 0', letterSpacing: 1, cursor: 'pointer' }}
+            >
               {vote.side === 'left' ? match.left_name : match.right_name}
             </div>
-            <div style={{ fontSize: '0.78rem', fontWeight: 900, color: '#FFD700', letterSpacing: 1 }}>🪙 {vote.amount}</div>
+            <div style={{ fontSize: '0.78rem', fontWeight: 900, color: '#FFD700', letterSpacing: 1, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <RamCoin size={15} />{vote.amount}
+            </div>
             {(() => {
               const mult = standings && !standings.noData
                 ? (vote.side === 'left' ? standings.multiplierIfLeftWins : standings.multiplierIfRightWins)
@@ -208,14 +222,16 @@ export default function Ring({ match, vote, standings, votingOpen = true, onVote
           width: `${standings && !standings.noData ? standings.pctRight : 50}%`,
           background: 'rgba(255,45,45,0.18)', transition: 'width 0.5s ease',
         }}/>
-        {/* Left label */}
+        {/* Left label — always a real percentage (defaults to 50 before
+            anyone's voted), styled the same whether or not standings data
+            exists yet, matching how it looks once real odds come in. */}
         <div style={{
           flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
           justifyContent: 'center', padding: '0 10px', position: 'relative',
           borderRight: '1px solid rgba(255,255,255,0.07)',
         }}>
-          <span style={{ fontSize: '0.65rem', fontWeight: 900, color: standings && !standings.noData ? '#fff' : '#2a2a2a' }}>
-            {standings && !standings.noData ? `${standings.pctLeft}%` : '—'}
+          <span style={{ fontSize: '0.65rem', fontWeight: 900, color: '#fff' }}>
+            {standings && !standings.noData ? standings.pctLeft : 50}%
           </span>
         </div>
         {/* Right label */}
@@ -223,8 +239,8 @@ export default function Ring({ match, vote, standings, votingOpen = true, onVote
           flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
           justifyContent: 'center', padding: '0 10px', position: 'relative',
         }}>
-          <span style={{ fontSize: '0.65rem', fontWeight: 900, color: standings && !standings.noData ? '#fff' : '#2a2a2a' }}>
-            {standings && !standings.noData ? `${standings.pctRight}%` : '—'}
+          <span style={{ fontSize: '0.65rem', fontWeight: 900, color: '#fff' }}>
+            {standings && !standings.noData ? standings.pctRight : 50}%
           </span>
         </div>
       </div>
@@ -244,26 +260,33 @@ interface SideProps {
   disabled: boolean
   mult: number | null
   onClick: () => void
+  /** Opens the team ledger — a separate button from the vote button itself
+   * (which becomes unclickable, descendants included, once `disabled`), so
+   * the ledger stays reachable even after voting or once voting closes. */
+  onInfoClick: () => void
 }
 
-function Side({ bot, side, isBossbot, ringColor, impactWord, disabled, mult, onClick }: SideProps) {
+function Side({ bot, side, isBossbot, ringColor, impactWord, disabled, mult, onClick, onInfoClick }: SideProps) {
   const [hovered, setHovered] = useState(false)
   const isRight = side === 'right'
 
   return (
+    <div style={{
+      flex: 1, position: 'relative',
+      borderRight: isRight ? 'none' : '1px solid rgba(255,255,255,0.05)',
+    }}>
     <button
       onClick={onClick}
       disabled={disabled}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        flex: 1, display: 'flex', flexDirection: 'column',
+        width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
         gap: 6, padding: '18px 10px 38px',
         position: 'relative', overflow: 'hidden',
         background: isBossbot && isRight ? 'rgba(30,0,45,0.3)' : 'transparent',
         border: 'none',
-        borderRight: isRight ? 'none' : '1px solid rgba(255,255,255,0.05)',
         cursor: disabled ? 'default' : 'pointer',
         color: 'inherit',
       }}
@@ -360,5 +383,26 @@ function Side({ bot, side, isBossbot, ringColor, impactWord, disabled, mult, onC
         }
       `}</style>
     </button>
+
+    {/* Opens the team ledger — opposite corner from the impact word, always
+        clickable regardless of the vote button's disabled state. */}
+    <button
+      type="button"
+      onClick={e => { e.stopPropagation(); onInfoClick() }}
+      aria-label={`View ${bot.name} stats`}
+      style={{
+        position: 'absolute', top: 7,
+        [isRight ? 'left' : 'right']: 7,
+        zIndex: 6,
+        width: 16, height: 16, borderRadius: '50%',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.2)',
+        color: 'rgba(255,255,255,0.6)', fontSize: '0.55rem', fontWeight: 900,
+        cursor: 'pointer',
+      }}
+    >
+      ⓘ
+    </button>
+    </div>
   )
 }

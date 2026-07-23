@@ -1,22 +1,25 @@
 'use client'
 
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { Fragment, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { type BracketMatch, type Division, type TeamCount, findTeamTargetMatch, computeSlotDefaults } from '@/lib/mock-data'
-import { type MatchSchedule, formatTime, applyScheduleStatus } from '@/lib/schedule'
+import { type MatchSchedule, type ExhibitionSchedule, formatTime, applyScheduleStatus } from '@/lib/schedule'
 import { useTeamFilter, isMatchDimmed, isMatchSelected } from '@/lib/teamFilter'
+import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh'
 import { MATCH_H, ROUND_W, MatchCard } from './BracketMatchCard'
+import BracketZoomPan, { type BracketZoomPanHandle } from './BracketZoomPan'
 import TeamFilterBar from './TeamFilterBar'
+import TeamLedgerModal from './TeamLedgerModal'
 
-// Table geometry. TIME_W is the fixed left "time" column; ring columns share
-// the remaining width equally. Cards are scaled up from their intrinsic
-// bracket size to fill their column (and stay readable) — clamped so they
-// never get smaller than intrinsic nor absurdly large on very wide screens.
-const TIME_W       = 64
-const COL_GAP      = 10
-const ROW_GAP      = 8
-const MIN_SCALE    = 1.5
-const MAX_SCALE    = 3
-const H_PADDING    = 16 // matches the scroll container's horizontal padding
+// Table geometry. TIME_W is the fixed left "time" column; ring columns are a
+// fixed card size — the table is panned/zoomed as a whole (see
+// BracketZoomPan, shared with the bracket page) rather than scaled to fit
+// the screen, so column widths no longer depend on container size.
+const TIME_W  = 64
+const COL_GAP = 10
+const ROW_GAP = 8
+// Fixed card scale, applied uniformly regardless of viewport — the zoom
+// canvas (not this constant) is what makes cards bigger/smaller on screen.
+const CARD_SCALE = 1.5
 
 function pillStyle(active: boolean): CSSProperties {
   return {
@@ -28,39 +31,51 @@ function pillStyle(active: boolean): CSSProperties {
   }
 }
 
-type Props = { matches: BracketMatch[]; teamCount: TeamCount; schedules: Record<Division, MatchSchedule> }
+type ViewMode = Division | 'exhibition'
 
-export default function MatchList({ matches, teamCount, schedules }: Props) {
-  const [division, setDivision] = useState<Division>('standards')
+type Props = {
+  matches: BracketMatch[]
+  teamCount: TeamCount
+  schedules: Record<Division, MatchSchedule>
+  // Shared across both divisions — not one copy per division. See
+  // ExhibitionSchedule.
+  exhibitionSchedule: ExhibitionSchedule
+}
+
+export default function MatchList({ matches, teamCount, schedules, exhibitionSchedule }: Props) {
+  useRealtimeRefresh(['bracket_matches', 'bracket_config', 'bracket_schedule'])
+  const [viewMode, setViewMode] = useState<ViewMode>('standards')
+  const [selectedTeam, setSelectedTeam] = useState<string | null>(null)
   const matchRefs = useRef<Record<string, HTMLDivElement | null>>({})
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const zoomPanRef = useRef<BracketZoomPanHandle>(null)
 
-  // Track the scroll container's width so ring columns can be scaled to fill
-  // it — the whole point of the new table is that it fits the screen width
-  // (no horizontal scrolling), so cards grow/shrink to match.
-  const [containerW, setContainerW] = useState(0)
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    const ro = new ResizeObserver(() => setContainerW(el.clientWidth))
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
+  const isExhibition = viewMode === 'exhibition'
 
-  const schedule = schedules[division]
-  // Ring-capped statuses (see applyScheduleStatus): at most one active + one
-  // next per ring, matching the bracket and admin views.
-  const divMatches = useMemo(
-    () => applyScheduleStatus(matches, schedule, division).filter(m => m.division === division),
-    [matches, schedule, division],
-  )
+  // Bracket-round view: ring-capped statuses (see applyScheduleStatus) — at
+  // most one active + one next per ring, matching the bracket and admin
+  // views, scoped to one division. Exhibition view: the single shared list,
+  // not divided by division at all, with status entirely admin-controlled
+  // (no ring-position derivation — see applyScheduleStatus's exhibition
+  // exemption) so it shows exactly what the admin set.
+  const divMatches = useMemo(() => {
+    if (isExhibition) return matches.filter(m => m.side === 'exhibition')
+    const division = viewMode as Division
+    return applyScheduleStatus(matches, schedules[division], division).filter(m => m.division === division)
+  }, [matches, schedules, viewMode, isExhibition])
   const matchById = useMemo(() => new Map(divMatches.map(m => [m.id, m])), [divMatches])
-  const slotDefaults = useMemo(() => computeSlotDefaults(matches, division, teamCount), [matches, division, teamCount])
-  // Bracket rings then dedicated exhibition rings, shown as extra columns.
-  const ringCols = [
-    ...schedule.rings.map((ring, i) => ({ ring, label: `Ring ${i + 1}` })),
-    ...(schedule.exhibitionRings ?? []).map((ring, i) => ({ ring, label: `Exhibition ${i + 1}` })),
-  ]
+  // Feeder placeholder text for empty slots — bracket-round only; exhibition
+  // matches have no feeders.
+  const slotDefaults = useMemo(
+    () => isExhibition ? new Map<string, { a?: string; b?: string }>() : computeSlotDefaults(matches, viewMode as Division, teamCount),
+    [matches, teamCount, viewMode, isExhibition],
+  )
+
+  // Bracket view: this division's rings only, never exhibition ones (those
+  // get their own tab instead of mixing into a division's view). Exhibition
+  // view: the single shared exhibition ring set.
+  const ringCols = isExhibition
+    ? exhibitionSchedule.rings.map((ring, i) => ({ ring, label: `Exhibition ${i + 1}` }))
+    : schedules[viewMode as Division].rings.map((ring, i) => ({ ring, label: `Ring ${i + 1}` }))
   const nRings = ringCols.length
   const maxLen = ringCols.reduce((mx, c) => Math.max(mx, c.ring.length), 0)
   const isEmpty = maxLen === 0
@@ -69,20 +84,15 @@ export default function MatchList({ matches, teamCount, schedules }: Props) {
     teamFilters, teamInput, setTeamInput, showSuggestions, setShowSuggestions,
     teamSuggestions, filterSet, addTeamFilter, removeTeamFilter,
   } = useTeamFilter(divMatches, resolved => {
-    // Scroll the followed team's live/next/last match into view instead of
-    // panning a canvas.
+    // Pan/zoom the canvas onto the followed team's live/next/last match,
+    // exactly like the bracket page's team filter.
     const target = findTeamTargetMatch(divMatches, resolved)
     const el = target && matchRefs.current[target.id]
-    el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    if (el) zoomPanRef.current?.focusOnMatch(el)
   })
 
-  // Card scale: fill each ring column with the card, clamped. Falls back to
-  // MIN_SCALE until the container has been measured.
-  const cellW = nRings > 0 && containerW > 0
-    ? (containerW - 2 * H_PADDING - TIME_W - nRings * COL_GAP) / nRings
-    : 0
-  const scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, cellW > 0 ? cellW / ROUND_W : MIN_SCALE))
-  const rowH = MATCH_H * scale
+  const rowH = MATCH_H * CARD_SCALE
+  const cardW = ROUND_W * CARD_SCALE
 
   // Time shown per row: rings run the same slot cadence, so a row's time is
   // taken from whichever ring has an entry at that index.
@@ -92,19 +102,76 @@ export default function MatchList({ matches, teamCount, schedules }: Props) {
   }
 
   const headerCell: CSSProperties = {
-    position: 'sticky', top: 0, zIndex: 3,
-    background: 'rgba(4,2,12,0.95)',
-    borderBottom: '1px solid rgba(255,255,255,0.12)',
     textTransform: 'uppercase', fontSize: '0.5rem', fontWeight: 900, letterSpacing: 2,
     color: 'rgba(255,255,255,0.5)', textAlign: 'center',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
-    padding: '8px 0',
+    padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.12)',
   }
+
+  const tableContent = (
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: `${TIME_W}px repeat(${nRings}, ${cardW}px)`,
+      columnGap: COL_GAP, rowGap: ROW_GAP,
+      alignItems: 'center', padding: '4px 16px 24px',
+    }}>
+      {/* Header row — pans/zooms with the rest of the content, same as the
+          bracket page's "Winners Bracket" / "Ring 1" labels (nothing here
+          is pinned to the viewport; the camera is what moves instead). */}
+      <div style={headerCell}>Time</div>
+      {ringCols.map((c, ri) => (
+        <div key={`h-${ri}`} style={headerCell}>{c.label}</div>
+      ))}
+
+      {/* One row per slot index */}
+      {Array.from({ length: maxLen }, (_, i) => {
+        const minute = timeForRow(i)
+        return (
+          <Fragment key={`row-${i}`}>
+            <div style={{
+              height: rowH, display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+              paddingRight: 6,
+              fontSize: '0.62rem', fontWeight: 800, letterSpacing: 0.5,
+              color: 'rgba(255,215,0,0.75)',
+            }}>
+              {minute === null ? '' : formatTime(minute)}
+            </div>
+
+            {/* One card cell per ring */}
+            {ringCols.map((c, ri) => {
+              const entry = c.ring[i]
+              const match = entry ? matchById.get(entry.matchId) : undefined
+              return (
+                <div key={`c-${ri}-${i}`} style={{ height: rowH, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {match ? (
+                    <div
+                      ref={el => { matchRefs.current[match.id] = el }}
+                      style={{ width: cardW, height: rowH }}
+                    >
+                      <div style={{ transform: `scale(${CARD_SCALE})`, transformOrigin: 'top left', width: ROUND_W, height: MATCH_H }}>
+                        <MatchCard
+                          match={match}
+                          dimmed={isMatchDimmed(match, filterSet)}
+                          selected={isMatchSelected(match, filterSet)}
+                          defaults={slotDefaults.get(match.id)}
+                          onTeamClick={setSelectedTeam}
+                        />
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              )
+            })}
+          </Fragment>
+        )
+      })}
+    </div>
+  )
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100dvh' }}>
-      {/* Header — title, division toggle, team filter. zIndex/backdrop keep
-          the team-filter dropdown above the scrolling table below. */}
+      {/* Header — title, division toggle, reset, team filter. zIndex/backdrop
+          keep the team-filter dropdown above the zoom canvas below. */}
       <div style={{
         flexShrink: 0, position: 'relative', zIndex: 5, padding: '28px 16px 8px',
         background: 'rgba(4,2,12,0.7)',
@@ -118,12 +185,18 @@ export default function MatchList({ matches, teamCount, schedules }: Props) {
           MATCH LIST
         </div>
 
-        <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
-          {(['standards', 'open'] as Division[]).map(d => (
-            <button key={d} onClick={() => setDivision(d)} style={pillStyle(division === d)}>
-              {d === 'standards' ? 'Standard' : 'Open'}
-            </button>
-          ))}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {(['standards', 'open', 'exhibition'] as ViewMode[]).map(v => (
+              <button key={v} onClick={() => setViewMode(v)} style={pillStyle(viewMode === v)}>
+                {v === 'standards' ? 'Standard' : v === 'open' ? 'Open' : 'Exhibition'}
+              </button>
+            ))}
+          </div>
+
+          <button onClick={() => zoomPanRef.current?.resetView()} style={{ ...pillStyle(false), marginLeft: 'auto' }}>
+            ⟲ Reset
+          </button>
         </div>
 
         <div style={{ marginTop: 8 }}>
@@ -140,81 +213,24 @@ export default function MatchList({ matches, teamCount, schedules }: Props) {
         </div>
       </div>
 
-      {/* Table — native vertical scroll only (no left/right), sticky Ring
-          headers + sticky Time column. Rows are uniform height (one per slot),
-          not spaced proportionally to clock time. */}
-      <div
-        ref={scrollRef}
-        style={{
-          flex: 1, minHeight: 0,
-          overflowY: 'auto', overflowX: 'hidden',
-          touchAction: 'pan-y',
-          padding: `0 ${H_PADDING}px 88px`,
-        }}
-      >
+      {/* Table canvas — pinch/pan/zoom scoped to just this area, same
+          mechanism as the bracket page. */}
+      <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
         {isEmpty ? (
           <div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center' }}>
             <p style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.3)' }}>No matches scheduled</p>
           </div>
         ) : (
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: `${TIME_W}px repeat(${nRings}, 1fr)`,
-            columnGap: COL_GAP, rowGap: ROW_GAP,
-            alignItems: 'center',
-          }}>
-            {/* Header row */}
-            <div style={{ ...headerCell, left: 0, zIndex: 4 }}>Time</div>
-            {ringCols.map((c, ri) => (
-              <div key={`h-${ri}`} style={headerCell}>{c.label}</div>
-            ))}
-
-            {/* One row per slot index */}
-            {Array.from({ length: maxLen }, (_, i) => {
-              const minute = timeForRow(i)
-              return (
-                <Fragment key={`row-${i}`}>
-                  {/* Time cell — sticky to the left edge, scrolls vertically with its row */}
-                  <div style={{
-                    position: 'sticky', left: 0, zIndex: 1,
-                    height: rowH, display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
-                    paddingRight: 6,
-                    fontSize: '0.62rem', fontWeight: 800, letterSpacing: 0.5,
-                    color: 'rgba(255,215,0,0.75)',
-                  }}>
-                    {minute === null ? '' : formatTime(minute)}
-                  </div>
-
-                  {/* One card cell per ring */}
-                  {ringCols.map((c, ri) => {
-                    const entry = c.ring[i]
-                    const match = entry ? matchById.get(entry.matchId) : undefined
-                    return (
-                      <div key={`c-${ri}-${i}`} style={{ height: rowH, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        {match ? (
-                          <div
-                            ref={el => { matchRefs.current[match.id] = el }}
-                            style={{ width: ROUND_W * scale, height: MATCH_H * scale }}
-                          >
-                            <div style={{ transform: `scale(${scale})`, transformOrigin: 'top left', width: ROUND_W, height: MATCH_H }}>
-                              <MatchCard
-                                match={match}
-                                dimmed={isMatchDimmed(match, filterSet)}
-                                selected={isMatchSelected(match, filterSet)}
-                                defaults={slotDefaults.get(match.id)}
-                              />
-                            </div>
-                          </div>
-                        ) : null}
-                      </div>
-                    )
-                  })}
-                </Fragment>
-              )
-            })}
-          </div>
+          <BracketZoomPan ref={zoomPanRef} key={viewMode} fitAxis="width">
+            {tableContent}
+          </BracketZoomPan>
         )}
       </div>
+
+      <TeamLedgerModal
+        target={selectedTeam ? { name: selectedTeam, division: isExhibition ? undefined : (viewMode as Division) } : null}
+        onClose={() => setSelectedTeam(null)}
+      />
     </div>
   )
 }

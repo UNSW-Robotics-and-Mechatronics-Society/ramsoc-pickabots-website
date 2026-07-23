@@ -1,27 +1,25 @@
 -- ─────────────────────────────────────────────────────
 --  PICKABOTS — race-safe voting (single transactional functions)
 --  Paste into Supabase Dashboard → SQL Editor → Run once.
+--  Prereq: run 0005_votes_table.sql first (creates public.votes).
 --
 --  Replaces the app's multi-step read-then-write vote flow (which could lose a
 --  token deduction or allow a double-vote when the same user submits twice at
 --  once) with ONE transaction per action. Row locks (SELECT ... FOR UPDATE and
 --  the conditional UPDATE) serialize concurrent submissions from the same user;
---  everything (token balance, vote row, match pools) commits together or rolls
---  back together.
+--  the token balance and the vote row commit together or roll back together.
 --
---  Prereq: the live `votes` table has columns (user_id text, match_id uuid,
---  side text, amount int). This migration also adds the uniqueness + index that
---  the bets→votes rename may have dropped — verify they applied cleanly.
+--  Odds are derived from the votes table directly (see the public-realtime
+--  setup in 0006), so these functions do NOT maintain any denormalized pools.
 -- ─────────────────────────────────────────────────────
 
--- One vote per user per match (hard guarantee, not an app-level check), and a
--- fast lookup index for the hot standings/reward/leaderboard reads.
-create unique index if not exists votes_user_match_uniq on public.votes (user_id, match_id);
-create index        if not exists votes_match_idx       on public.votes (match_id);
+-- Fast lookup index for the hot standings/reward/leaderboard reads by match.
+-- (Uniqueness of (user_id, match_id) is already enforced by the votes table.)
+create index if not exists votes_match_idx on public.votes (match_id);
 
 -- ── place_vote ────────────────────────────────────────────────────────────────
--- Returns the voter's NEW token balance, or raises a coded exception the API
--- maps to an HTTP status. The whole body is one transaction.
+-- Returns { tokens, vote_id }, or raises a coded exception the API maps to an
+-- HTTP status. The whole body is one transaction.
 create or replace function public.place_vote(
   p_user_id  text,
   p_match_id uuid,
@@ -52,19 +50,12 @@ begin
   if v_tokens < p_amount   then raise exception 'INSUFFICIENT_TOKENS'; end if;
   if p_amount > floor(v_tokens * 0.5) then raise exception 'EXCEEDS_MAX'; end if;
 
-  -- Deduct, record the vote (unique index guards double-vote), update pools.
+  -- Deduct and record the vote (the unique constraint guards double-vote).
   update public.users set tokens = tokens - p_amount where id = p_user_id;
 
   insert into public.votes (user_id, match_id, side, amount)
     values (p_user_id, p_match_id, p_side, p_amount)
     returning id into v_vote_id;
-
-  update public.matches set
-    pool_left   = pool_left   + case when p_side = 'left'  then p_amount else 0 end,
-    pool_right  = pool_right  + case when p_side = 'right' then p_amount else 0 end,
-    votes_left  = votes_left  + case when p_side = 'left'  then 1 else 0 end,
-    votes_right = votes_right + case when p_side = 'right' then 1 else 0 end
-  where id = p_match_id;
 
   return jsonb_build_object('tokens', v_tokens - p_amount, 'vote_id', v_vote_id);
 exception
@@ -73,9 +64,8 @@ end;
 $$;
 
 -- ── undo_vote ─────────────────────────────────────────────────────────────────
--- Deletes the caller's vote (only while the match is live + voting open),
--- refunds the tokens, and reverses the pools — all atomically. Returns the new
--- balance.
+-- Deletes the caller's vote (only while the match is live + voting open) and
+-- refunds the tokens, atomically. Returns the new balance.
 create or replace function public.undo_vote(
   p_user_id text,
   p_vote_id uuid
@@ -84,15 +74,14 @@ language plpgsql
 as $$
 declare
   v_match_id uuid;
-  v_side     text;
-  v_amount   integer;
   v_active   boolean;
   v_open     boolean;
   v_winner   text;
+  v_amount   integer;
   v_tokens   integer;
 begin
   -- Lock + fetch the vote (must belong to the caller).
-  select match_id, side, amount into v_match_id, v_side, v_amount
+  select match_id, amount into v_match_id, v_amount
     from public.votes where id = p_vote_id and user_id = p_user_id for update;
   if not found then raise exception 'VOTE_NOT_FOUND'; end if;
 
@@ -105,13 +94,6 @@ begin
 
   update public.users set tokens = tokens + v_amount where id = p_user_id
     returning tokens into v_tokens;
-
-  update public.matches set
-    pool_left   = greatest(0, pool_left   - case when v_side = 'left'  then v_amount else 0 end),
-    pool_right  = greatest(0, pool_right  - case when v_side = 'right' then v_amount else 0 end),
-    votes_left  = greatest(0, votes_left  - case when v_side = 'left'  then 1 else 0 end),
-    votes_right = greatest(0, votes_right - case when v_side = 'right' then 1 else 0 end)
-  where id = v_match_id;
 
   return v_tokens;
 end;

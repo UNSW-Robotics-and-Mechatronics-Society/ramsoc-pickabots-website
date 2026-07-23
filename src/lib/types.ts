@@ -12,14 +12,12 @@ export interface Match {
   right_shape: string
   is_active: boolean
   voting_open: boolean
+  // Set by reconcileVotingMatches() from the bracket match's own
+  // side === 'exhibition' — an ad-hoc match, kept out of the Standard/Open
+  // tabs and shown under its own Exhibition tab instead.
+  is_exhibition: boolean
   winner_side: 'left' | 'right' | null
   created_at: string
-  // Denormalized live vote pools (see migration 0007) — drive the odds without
-  // a per-match standings poll. Optional so older rows / payloads degrade safely.
-  pool_left?: number
-  pool_right?: number
-  votes_left?: number
-  votes_right?: number
 }
 
 export interface Vote {

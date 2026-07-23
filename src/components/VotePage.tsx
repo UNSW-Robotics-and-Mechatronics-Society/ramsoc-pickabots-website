@@ -1,17 +1,16 @@
 'use client'
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { getBrowserSupabase } from '@/lib/supabase-browser'
 import Header from './Header'
 import Ring, { COMP_META } from './Ring'
 import NextMatchCard from './NextMatchCard'
 import VoteModal from './VoteModal'
+import TeamLedgerModal from './TeamLedgerModal'
 import ComicFlash, { useComicFlash } from './ComicFlash'
 import Toast, { useToast, WinLossToast, useWinLossToast } from './Toast'
 import BegDial from './BegDial'
 import { BEG_THRESHOLD } from '@/lib/beg-config'
 import type { Match, Vote, VoteStandings } from '@/lib/types'
-import { standingsFromMatch } from '@/lib/vote-pool'
-import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js'
 
 interface ModalCtx {
   matchId: string
@@ -20,7 +19,7 @@ interface ModalCtx {
   compType: string
 }
 
-type CompFilter = 'standard' | 'open'
+type CompFilter = 'standard' | 'open' | 'exhibition'
 
 type BegBannerState = {
   begsUsed: number
@@ -37,28 +36,22 @@ export default function VotePage() {
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState<string | null>(null)
   const [modalCtx, setModalCtx] = useState<ModalCtx | null>(null)
-  // Odds are derived from the pool totals carried on each match row (pushed via
-  // Realtime / initial fetch) — no per-match standings poll needed.
-  const standings = useMemo<Record<string, VoteStandings>>(
-    () => Object.fromEntries(matches.map(m => [m.id, standingsFromMatch(m)])),
-    [matches],
-  )
+  const [standings, setStandings] = useState<Record<string, VoteStandings>>({})
+  const [selectedTeam, setSelectedTeam] = useState<{ name: string; division?: 'standards' | 'open' } | null>(null)
   const [filter, setFilter]     = useState<CompFilter>('standard')
   const [begOpen, setBegOpen]   = useState(false)
   const [begState, setBegState] = useState<BegBannerState | null>(null)
 
-  // Beg eligibility (remaining begs + cooldown) for the banner. Refreshed on
-  // load, after a beg, and whenever matches change (cooldown counts matches).
-  const refreshBeg = useCallback(async () => {
-    try {
-      const res = await fetch('/api/beg')
-      if (res.ok) setBegState(await res.json())
-    } catch { /* non-fatal: banner falls back to its default label */ }
-  }, [])
+  // comp_type is 'standard'/'open'/'bossbot' — map to the app's internal
+  // 'standards'/'open' Division naming used as a best-effort disambiguation
+  // hint by the team ledger lookup (bossbot has no equivalent, left undefined).
+  function handleTeamClick(name: string, compType: string) {
+    setSelectedTeam({ name, division: compType === 'standard' ? 'standards' : compType === 'open' ? 'open' : undefined })
+  }
 
   const { state: flash, trigger: triggerFlash } = useComicFlash()
   const { toast, show: showToast } = useToast()
-  const { winLossState, showWinLoss } = useWinLossToast()
+  const { winLossQueue, showWinLoss, dismissWinLoss } = useWinLossToast()
 
   // Refs let refetchMatches read the latest votes/matches without being in its
   // dependency array — keeping it stable so the Supabase subscription never
@@ -67,14 +60,19 @@ export default function VotePage() {
   const votesRef        = useRef<Record<string, Vote>>({})
   const showWinLossRef  = useRef(showWinLoss)
   useEffect(() => { prevMatchesRef.current = matches },  [matches])
-  // Cooldown is measured in completed matches, so re-check eligibility whenever
-  // the match set changes (a match finishing may clear a cooldown).
-  // refreshBeg is async (setState happens after the fetch resolves, not
-  // synchronously in the effect body).
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { refreshBeg() }, [matches, refreshBeg])
   useEffect(() => { votesRef.current = votes },          [votes])
   useEffect(() => { showWinLossRef.current = showWinLoss }, [showWinLoss])
+
+  // Beg eligibility (remaining begs + cooldown) for the "Down bad?" banner.
+  const refreshBeg = useCallback(async () => {
+    try {
+      const res = await fetch('/api/beg')
+      if (res.ok) setBegState(await res.json())
+    } catch { /* non-fatal: banner falls back to its default label */ }
+  }, [])
+  // Cooldown is measured in completed matches, so re-check when matches change.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { refreshBeg() }, [matches, refreshBeg])
 
   // ── Load on mount ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -96,7 +94,6 @@ export default function VotePage() {
         prevMatchesRef.current = matchData
         if (userData._supabaseError) console.error('[VotePage] Supabase error:', userData._supabaseError)
         setTokens(userData.tokens)
-        refreshBeg()
 
         const votesByMatch: Record<string, Vote> = {}
         for (const v of votesData as Vote[]) votesByMatch[v.match_id] = v
@@ -109,10 +106,26 @@ export default function VotePage() {
       }
     }
     load()
-  }, [refreshBeg])
+  }, [])
 
-  // (Standings are no longer polled — see the `standings` useMemo above, fed by
-  //  the pool_left/right columns that arrive on each match row via Realtime.)
+  // ── Poll live standings for active matches ───────────────────────────────────
+  useEffect(() => {
+    const activeIds = matches.filter(m => m.is_active).map(m => m.id)
+    if (activeIds.length === 0) return
+    async function fetchStandings() {
+      const results = await Promise.all(
+        activeIds.map(id => fetch(`/api/matches/${id}/standings`).then(r => r.json()).catch(() => null))
+      )
+      setStandings(prev => {
+        const next = { ...prev }
+        activeIds.forEach((id, i) => { if (results[i]) next[id] = results[i] })
+        return next
+      })
+    }
+    fetchStandings()
+    const interval = setInterval(fetchStandings, 3000)
+    return () => clearInterval(interval)
+  }, [matches])
 
   // ── Live match updates ────────────────────────────────────────────────────────
   const refetchMatches = useCallback(async () => {
@@ -153,62 +166,18 @@ export default function VotePage() {
     }
   }, [])
 
-  const refreshTokens = useCallback(async () => {
-    try {
-      const r = await fetch('/api/user')
-      if (r.ok) setTokens((await r.json()).tokens)
-    } catch { /* transient */ }
-  }, [])
-
-  // Realtime: merge only the changed match row from the payload — no full
-  // /api/matches refetch, so a pool update on every vote does NOT trigger a
-  // 200-client refetch storm. Odds recompute from the row's pool columns.
-  const handleRealtimeMatch = useCallback(
-    (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => {
-      if (payload.eventType === 'DELETE') {
-        const oldId = (payload.old as { id?: string } | null)?.id
-        if (oldId) setMatches(prev => prev.filter(m => m.id !== oldId))
-        return
-      }
-      const row = payload.new as unknown as Match
-      if (!row?.id) return
-      // Win/loss toast on the transition to resolved (compare against local prev,
-      // since Realtime's `old` only carries the primary key by default).
-      const prev = prevMatchesRef.current.find(p => p.id === row.id)
-      if (row.winner_side && !prev?.winner_side) {
-        const vote = votesRef.current[row.id]
-        if (vote) {
-          const won = vote.side === row.winner_side
-          const name = vote.side === 'left' ? row.left_name : row.right_name
-          showWinLossRef.current(won ? 'win' : 'loss', name)
-          setTimeout(refreshTokens, 2500)
-        }
-      }
-      setMatches(cur => {
-        const idx = cur.findIndex(m => m.id === row.id)
-        if (idx === -1) return [...cur, row]
-        const next = [...cur]
-        next[idx] = row
-        return next
-      })
-    },
-    [refreshTokens],
-  )
-
   useEffect(() => {
     const sb = getBrowserSupabase()
     if (sb) {
       const channel = sb
         .channel('public:matches')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, handleRealtimeMatch)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, () => { refetchMatches() })
         .subscribe()
       return () => { sb.removeChannel(channel) }
     }
-    // Fallback when Realtime isn't configured (no anon key): poll /api/matches
-    // (which now carries the pools, so odds still update ~every 5s).
     const id = setInterval(refetchMatches, 5000)
     return () => clearInterval(id)
-  }, [handleRealtimeMatch, refetchMatches])
+  }, [refetchMatches])
 
   // ── Open vote modal ───────────────────────────────────────────────────────────
   function handleVote(matchId: string, side: 'left' | 'right', botName: string, compType: string) {
@@ -272,15 +241,21 @@ export default function VotePage() {
   }
 
   // ── Match bucketing ───────────────────────────────────────────────────────────
-  // Always show exactly 2 rings for the selected division, filling with
-  // placeholders if fewer than 2 active matches exist. Bossbots are extras.
+  // Standard/Open: always show exactly 2 rings, filling with placeholders if
+  // fewer than 2 active matches exist — and never an exhibition match, which
+  // gets its own tab instead of mixing into a division's view. Exhibition:
+  // no fixed slot count, just show every active exhibition match there is.
   const activeMatches  = matches.filter(m => m.is_active && m.winner_side === null)
-  const activeFiltered = activeMatches.filter(m => m.comp_type === filter).slice(0, 2)
-  const activeBossbots = activeMatches.filter(m => m.comp_type === 'bossbot')
+  const activeFiltered = filter === 'exhibition'
+    ? activeMatches.filter(m => m.is_exhibition)
+    : activeMatches.filter(m => m.comp_type === filter && !m.is_exhibition).slice(0, 2)
+  const activeBossbots = activeMatches.filter(m => m.comp_type === 'bossbot' && !m.is_exhibition)
 
-  // Next Matches: at most 2 for the selected division.
+  // Next Matches: at most 2 for the selected division; all of them for Exhibition.
   const allNext     = matches.filter(m => !m.is_active && m.winner_side === null)
-  const nextVisible = allNext.filter(m => m.comp_type === filter).slice(0, 2)
+  const nextVisible = filter === 'exhibition'
+    ? allNext.filter(m => m.is_exhibition)
+    : allNext.filter(m => m.comp_type === filter && !m.is_exhibition).slice(0, 2)
 
   return (
     <>
@@ -328,9 +303,9 @@ export default function VotePage() {
           )
         })()}
 
-        {/* Standard / Open tab */}
+        {/* Standard / Open / Exhibition tab */}
         <div style={{ display: 'flex', gap: 6 }}>
-          {(['standard', 'open'] as CompFilter[]).map(f => (
+          {(['standard', 'open', 'exhibition'] as CompFilter[]).map(f => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -342,7 +317,7 @@ export default function VotePage() {
                 color: filter === f ? '#FF6B00' : 'rgba(255,255,255,0.4)',
               }}
             >
-              {f === 'standard' ? 'Standard' : 'Open'}
+              {f === 'standard' ? 'Standard' : f === 'open' ? 'Open' : 'Exhibition'}
             </button>
           ))}
         </div>
@@ -369,8 +344,31 @@ export default function VotePage() {
           </div>
         )}
 
-        {/* 2 rings for the active tab, placeholders fill any empty slots */}
-        {!loading && !error && [0, 1].map(i => {
+        {/* Exhibition: every active exhibition match, no fixed slot count and
+            no placeholders (there's no "always 2" concept for ad-hoc matches). */}
+        {!loading && !error && filter === 'exhibition' && (
+          activeFiltered.length > 0
+            ? activeFiltered.map(match => (
+                <Ring
+                  key={match.id}
+                  match={match}
+                  vote={votes[match.id] ?? null}
+                  standings={standings[match.id] ?? null}
+                  votingOpen={match.voting_open}
+                  onVote={side => handleVote(match.id, side, side === 'left' ? match.left_name : match.right_name, match.comp_type)}
+                  onUndo={() => handleUndo(match.id)}
+                  onTeamClick={name => handleTeamClick(name, match.comp_type)}
+                />
+              ))
+            : (
+              <div style={{ textAlign: 'center', padding: '48px 0', color: '#444', fontWeight: 900, fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: 3 }}>
+                No exhibition matches right now.
+              </div>
+            )
+        )}
+
+        {/* Standard/Open: 2 rings for the active tab, placeholders fill any empty slots */}
+        {!loading && !error && filter !== 'exhibition' && [0, 1].map(i => {
           const match = activeFiltered[i] ?? null
           return match
             ? <Ring
@@ -381,6 +379,7 @@ export default function VotePage() {
                 votingOpen={match.voting_open}
                 onVote={side => handleVote(match.id, side, side === 'left' ? match.left_name : match.right_name, match.comp_type)}
                 onUndo={() => handleUndo(match.id)}
+                onTeamClick={name => handleTeamClick(name, match.comp_type)}
               />
             : <PlaceholderRing key={`ph-${i}`} compType={filter} />
         })}
@@ -395,13 +394,14 @@ export default function VotePage() {
             votingOpen={match.voting_open}
             onVote={side => handleVote(match.id, side, side === 'left' ? match.left_name : match.right_name, match.comp_type)}
             onUndo={() => handleUndo(match.id)}
+            onTeamClick={name => handleTeamClick(name, match.comp_type)}
           />
         ))}
 
         {/* Next Matches — max 2 per division (standard + open) = 4 total */}
         {!loading && !error && nextVisible.length > 0 && (
           <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <span style={{ fontSize: '0.55rem', fontWeight: 900, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: 4 }}>
+            <span style={{ fontSize: '0.65rem', fontWeight: 900, color: 'rgba(255,255,255,0.55)', textTransform: 'uppercase', letterSpacing: 4 }}>
               Next Matches
             </span>
             {nextVisible.map(match => (
@@ -412,9 +412,10 @@ export default function VotePage() {
       </main>
 
       <VoteModal ctx={modalCtx} tokens={tokens ?? 0} onConfirm={handleConfirm} onClose={() => setModalCtx(null)} />
+      <TeamLedgerModal target={selectedTeam} onClose={() => setSelectedTeam(null)} />
       <ComicFlash state={flash} />
       <Toast toast={toast} />
-      <WinLossToast state={winLossState} />
+      <WinLossToast queue={winLossQueue} onDismiss={dismissWinLoss} />
       {begOpen && <BegDial onClose={() => setBegOpen(false)} onAwarded={t => { setTokens(t); refreshBeg() }} />}
 
       <style>{`@keyframes spin { to{transform:rotate(360deg)} }`}</style>

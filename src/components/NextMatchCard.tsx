@@ -9,15 +9,18 @@ import type { Match } from '@/lib/types'
  * so it reads as "coming up" rather than "biddable right now".
  */
 export default function NextMatchCard({ match }: { match: Match }) {
-  const meta = COMP_META[match.comp_type] ?? COMP_META.standard
+  // Same override as Ring.tsx — an exhibition match's identity shouldn't
+  // depend on which division's bracket it was created under.
+  const meta = match.is_exhibition ? COMP_META.exhibition : (COMP_META[match.comp_type] ?? COMP_META.standard)
 
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 10,
       borderRadius: 10, padding: '8px 12px',
       border: `1px solid color-mix(in srgb, ${meta.color} 20%, transparent)`,
-      background: 'rgba(3,1,8,0.14)',
-      opacity: 0.6,
+      background: 'rgba(10,6,28,0.55)',
+      backdropFilter: 'blur(12px)',
+      WebkitBackdropFilter: 'blur(12px)',
     }}>
       <Bot name={match.left_name} color={match.left_color} shape={match.left_shape} />
 

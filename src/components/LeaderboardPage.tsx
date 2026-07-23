@@ -1,6 +1,12 @@
 'use client'
+import RamCoin from './RamCoin'
+
+import { useState } from 'react'
+import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh'
+import UserLedgerModal from './UserLedgerModal'
 
 interface Player {
+  id: string
   rank: number
   name: string
   credits: number
@@ -17,7 +23,11 @@ const GRAIN = `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http:
 type Props = { players: LeaderboardEntry[] }
 
 export default function LeaderboardPage({ players }: Props) {
+  useRealtimeRefresh(['matches', 'votes'])
+  const [selected, setSelected] = useState<{ id: string; name: string; rank: number } | null>(null)
+
   const PLAYERS: Player[] = players.map((p, i) => ({
+    id: p.id,
     rank: i + 1,
     name: p.name,
     credits: p.tokens,
@@ -52,7 +62,7 @@ export default function LeaderboardPage({ players }: Props) {
           fontSize: '0.5rem', letterSpacing: 4, color: 'rgba(255,255,255,0.3)',
           textTransform: 'uppercase', marginTop: 4, fontWeight: 900,
         }}>
-          Sorted by credits earned
+          Sorted by ramcoins earned
         </div>
       </div>
 
@@ -69,7 +79,7 @@ export default function LeaderboardPage({ players }: Props) {
       }}>
         <span style={{ width: 38 }}>#</span>
         <span style={{ flex: 1 }}>Pilot</span>
-        <span style={{ width: 76, textAlign: 'right' }}>Credits</span>
+        <span style={{ width: 76, textAlign: 'right' }}>Ramcoins</span>
         <span style={{ width: 56, textAlign: 'right' }}>W / L</span>
         <span style={{ width: 46, textAlign: 'right' }}>Rate</span>
       </div>
@@ -80,9 +90,13 @@ export default function LeaderboardPage({ players }: Props) {
           const winRate = p.wins + p.losses > 0 ? Math.round((p.wins / (p.wins + p.losses)) * 100) : 0
           const isTop3  = p.rank <= 3
           return (
-            <div key={p.rank} style={{
+            <button
+              key={p.rank}
+              onClick={() => setSelected({ id: p.id, name: p.name, rank: p.rank })}
+              style={{
               position: 'relative', overflow: 'hidden',
               display: 'flex', alignItems: 'center',
+              width: '100%', textAlign: 'left', cursor: 'pointer', font: 'inherit',
               padding: '13px 12px',
               background: isTop3 ? 'rgba(255,107,0,0.1)' : 'rgba(6,3,16,0.82)',
               backdropFilter: 'blur(16px)',
@@ -133,7 +147,9 @@ export default function LeaderboardPage({ players }: Props) {
                 textShadow: isTop3 ? '0 0 10px rgba(255,215,0,0.45)' : 'none',
                 position: 'relative',
               }}>
-                🪙 {p.credits.toLocaleString()}
+                <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
+                  <RamCoin size={13}/>{p.credits.toLocaleString()}
+                </span>
               </div>
 
               {/* W/L */}
@@ -160,7 +176,7 @@ export default function LeaderboardPage({ players }: Props) {
               }}>
                 {winRate}%
               </div>
-            </div>
+            </button>
           )
         })}
       </div>
@@ -173,6 +189,8 @@ export default function LeaderboardPage({ players }: Props) {
       }}>
         ◆ Updates after each resolved match ◆
       </div>
+
+      <UserLedgerModal target={selected} onClose={() => setSelected(null)} />
     </div>
   )
 }

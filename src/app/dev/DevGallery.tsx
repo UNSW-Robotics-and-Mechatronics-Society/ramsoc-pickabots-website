@@ -16,7 +16,6 @@ import PlayersPanel from "@/components/admin/PlayersPanel";
 import SettingsPanel from "@/components/admin/SettingsPanel";
 import Ring from "@/components/Ring";
 import type { Match, Vote, VoteStandings } from "@/lib/types";
-import { standingsFromMatch } from "@/lib/vote-pool";
 import { DEFAULT_SMS_UP_NEXT } from "@/lib/sms-template";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -329,12 +328,9 @@ function makeMatch(overrides: Partial<Match>): Match {
     right_shape: "spinner",
     is_active: true,
     voting_open: true,
+    is_exhibition: false,
     winner_side: null,
     created_at: "",
-    pool_left: 0,
-    pool_right: 0,
-    votes_left: 0,
-    votes_right: 0,
     ...overrides,
   };
 }
@@ -343,10 +339,6 @@ const MOCK_MATCH_1 = makeMatch({
   id: "match-1",
   left_name: "Iron Fist",
   right_name: "Spinner Rex",
-  pool_left: 120,
-  pool_right: 80,
-  votes_left: 14,
-  votes_right: 9,
 });
 
 const MOCK_MATCH_2 = makeMatch({
@@ -358,11 +350,24 @@ const MOCK_MATCH_2 = makeMatch({
   right_name: "Leviathan",
   right_color: "#9B30FF",
   right_shape: "flipper",
-  pool_left: 40,
-  pool_right: 160,
-  votes_left: 5,
-  votes_right: 21,
 });
+
+// Static mock standings for the Ring demo (odds are computed elsewhere in the
+// real app; here we just need two different-looking VoteStandings).
+function mockStandings(poolLeft: number, poolRight: number, votesLeft: number, votesRight: number): VoteStandings {
+  const totalPool = poolLeft + poolRight;
+  const noData = totalPool === 0;
+  return {
+    poolLeft, poolRight, totalPool, votesLeft, votesRight,
+    pctLeft: noData ? 50 : Math.round((poolLeft / totalPool) * 100),
+    pctRight: noData ? 50 : Math.round((poolRight / totalPool) * 100),
+    multiplierIfLeftWins: poolLeft > 0 ? Math.round((totalPool / poolLeft) * 100) / 100 : null,
+    multiplierIfRightWins: poolRight > 0 ? Math.round((totalPool / poolRight) * 100) / 100 : null,
+    noData,
+  };
+}
+const MOCK_STANDINGS_1 = mockStandings(120, 80, 14, 9);
+const MOCK_STANDINGS_2 = mockStandings(40, 160, 5, 21);
 
 const SECTIONS = [
   { id: "onboarding", label: "Onboarding" },
@@ -710,8 +715,7 @@ function RingSection() {
     [MOCK_MATCH_2.id]: null,
   });
 
-  function makeHandlers(match: Match) {
-    const standings: VoteStandings = standingsFromMatch(match);
+  function makeHandlers(match: Match, standings: VoteStandings) {
     return {
       standings,
       onVote: (side: "left" | "right") => {
@@ -729,8 +733,8 @@ function RingSection() {
     };
   }
 
-  const h1 = makeHandlers(MOCK_MATCH_1);
-  const h2 = makeHandlers(MOCK_MATCH_2);
+  const h1 = makeHandlers(MOCK_MATCH_1, MOCK_STANDINGS_1);
+  const h2 = makeHandlers(MOCK_MATCH_2, MOCK_STANDINGS_2);
 
   return (
     <section id="ring">

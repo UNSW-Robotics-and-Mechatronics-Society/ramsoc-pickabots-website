@@ -89,33 +89,3 @@ export function resolveRound(entries: VoteEntry[], winner: BotChoice, houseCut =
 function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
-
-// ── Live standings straight from a match's denormalized pools ──────────────────
-// Mirrors the /api/matches/[id]/standings computation exactly, but reads the
-// pool_left/right + votes_left/right columns carried on the match row (pushed
-// via Realtime) instead of re-reading every vote. houseCut is 0 (pari-mutuel:
-// the whole pool is paid out to the winning side, split proportionally).
-export function standingsFromMatch(m: {
-  pool_left?: number
-  pool_right?: number
-  votes_left?: number
-  votes_right?: number
-}) {
-  const poolLeft = m.pool_left ?? 0
-  const poolRight = m.pool_right ?? 0
-  const totalPool = poolLeft + poolRight
-  const noData = totalPool === 0
-  const rewardPool = totalPool // houseCut = 0
-  return {
-    poolLeft,
-    poolRight,
-    totalPool,
-    votesLeft: m.votes_left ?? 0,
-    votesRight: m.votes_right ?? 0,
-    pctLeft: noData ? 50 : Math.round((poolLeft / totalPool) * 100),
-    pctRight: noData ? 50 : Math.round((poolRight / totalPool) * 100),
-    multiplierIfLeftWins: poolLeft > 0 ? round2(rewardPool / poolLeft) : null,
-    multiplierIfRightWins: poolRight > 0 ? round2(rewardPool / poolRight) : null,
-    noData,
-  }
-}

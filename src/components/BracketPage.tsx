@@ -8,9 +8,11 @@ import {
 import { type MatchSchedule, formatTime, applyScheduleStatus } from '@/lib/schedule'
 import { useTeamFilter, isMatchDimmed, isMatchSelected } from '@/lib/teamFilter'
 import { useAdminPanels } from '@/components/admin/AdminPanelContext'
+import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh'
 import BracketZoomPan, { type BracketZoomPanHandle, type FocusTarget } from './BracketZoomPan'
 import { ROUND_W, CONN_W, SLOT_H, MatchCard } from './BracketMatchCard'
 import TeamFilterBar from './TeamFilterBar'
+import TeamLedgerModal from './TeamLedgerModal'
 
 const PODIUM_W = 130
 // Deliberately large — an obvious visual break between the Winners and
@@ -70,10 +72,11 @@ function ConnectorSVG({ fromMatches, height }: { fromMatches: BracketMatch[]; he
 type RegisterMatchRef = (id: string, el: HTMLDivElement | null) => void
 
 function RoundColumn({
-  matches, height, registerRef, filterSet, times, slotDefaults,
+  matches, height, registerRef, filterSet, times, slotDefaults, onTeamClick,
 }: {
   matches: BracketMatch[]; height: number; registerRef?: RegisterMatchRef
   filterSet?: Set<string>; times: Map<string, number>; slotDefaults?: Map<string, { a?: string; b?: string }>
+  onTeamClick?: (name: string) => void
 }) {
   return (
     <div style={{ width: ROUND_W, height, display: 'flex', flexDirection: 'column', justifyContent: 'space-around', flexShrink: 0 }}>
@@ -90,6 +93,7 @@ function RoundColumn({
             dimmed={!!filterSet?.size && !filterSet.has(m.slotA.teamName) && !filterSet.has(m.slotB.teamName)}
             selected={!!filterSet?.size && (filterSet.has(m.slotA.teamName) || filterSet.has(m.slotB.teamName))}
             defaults={slotDefaults?.get(m.id)}
+            onTeamClick={onTeamClick}
           />
         </div>
       ))}
@@ -98,16 +102,17 @@ function RoundColumn({
 }
 
 function BracketStrip({
-  rounds, matchesByRound, height, registerRef, filterSet, times, slotDefaults,
+  rounds, matchesByRound, height, registerRef, filterSet, times, slotDefaults, onTeamClick,
 }: {
   rounds: number[]; matchesByRound: BracketMatch[][]; height: number; registerRef?: RegisterMatchRef
   filterSet?: Set<string>; times: Map<string, number>; slotDefaults?: Map<string, { a?: string; b?: string }>
+  onTeamClick?: (name: string) => void
 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'stretch', height }}>
       {rounds.map((round, i) => (
         <div key={i} style={{ display: 'flex', alignItems: 'stretch' }}>
-          <RoundColumn matches={matchesByRound[i]} height={height} registerRef={registerRef} filterSet={filterSet} times={times} slotDefaults={slotDefaults} />
+          <RoundColumn matches={matchesByRound[i]} height={height} registerRef={registerRef} filterSet={filterSet} times={times} slotDefaults={slotDefaults} onTeamClick={onTeamClick} />
           {i < rounds.length - 1 && matchesByRound[i].length >= 2 && (
             <ConnectorSVG fromMatches={matchesByRound[i]} height={height} />
           )}
@@ -146,8 +151,11 @@ function computeDefaultRound(byRound: BracketMatch[][], roundsCount: number): Ro
 }
 
 export default function BracketPage({ matches, teamCount, schedules }: Props) {
+  useRealtimeRefresh(['bracket_matches', 'bracket_config', 'bracket_schedule'])
   const [division, setDivision] = useState<Division>('standards')
   const [view, setView]         = useState<BracketView>('all')
+  const [selectedTeam, setSelectedTeam] = useState<string | null>(null)
+  function handleTeamClick(name: string) { setSelectedTeam(name) }
   // Full-screen lives in the shared app context (not local state) so it can
   // also drive the bottom nav / admin side-panel out of the way. Reset it on
   // unmount so leaving the page can never leave the flag stuck on.
@@ -293,7 +301,7 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
           <div style={{ width: ROUND_W, height, display: 'flex', flexDirection: 'column', justifyContent: 'space-around', flexShrink: 0 }}>
             {finalsSemis.map(m => (
               <div key={m.id} ref={el => registerMatchRef(m.id, el)}>
-                <MatchCard match={m} time={timeFor(m.id)} dimmed={isDimmed(m)} selected={isSelected(m)} defaults={slotDefaults.get(m.id)} />
+                <MatchCard match={m} time={timeFor(m.id)} dimmed={isDimmed(m)} selected={isSelected(m)} defaults={slotDefaults.get(m.id)} onTeamClick={handleTeamClick} />
               </div>
             ))}
           </div>
@@ -311,7 +319,7 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
                   Grand Final
                 </span>
                 <div ref={el => registerMatchRef(finalsFinal.id, el)}>
-                  <MatchCard match={finalsFinal} time={timeFor(finalsFinal.id)} dimmed={isDimmed(finalsFinal)} selected={isSelected(finalsFinal)} defaults={slotDefaults.get(finalsFinal.id)} />
+                  <MatchCard match={finalsFinal} time={timeFor(finalsFinal.id)} dimmed={isDimmed(finalsFinal)} selected={isSelected(finalsFinal)} defaults={slotDefaults.get(finalsFinal.id)} onTeamClick={handleTeamClick} />
                 </div>
               </div>
             )}
@@ -379,6 +387,7 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
             filterSet={filterSet}
             times={timeByMatchId}
             slotDefaults={slotDefaults}
+            onTeamClick={handleTeamClick}
           />
         </div>
       </div>
@@ -570,6 +579,11 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
           </button>
         )}
       </div>
+
+      <TeamLedgerModal
+        target={selectedTeam ? { name: selectedTeam, division } : null}
+        onClose={() => setSelectedTeam(null)}
+      />
     </div>
   )
 }
