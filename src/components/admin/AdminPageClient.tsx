@@ -16,6 +16,8 @@ import TeamList        from "./TeamList";
 import AdminBracket    from "./AdminBracket";
 import MatchesPanel, { MIN_MATCH_LIST_W } from "./MatchesPanel";
 import ConfirmDialog   from "./ConfirmDialog";
+import PlayersPanel    from "./PlayersPanel";
+import SettingsPanel   from "./SettingsPanel";
 
 // ── eliminated teams (only LB losers; WB losers still alive in LB) ────────────
 function computeEliminated(matches: BracketMatch[]): Set<string> {
@@ -30,7 +32,7 @@ function computeEliminated(matches: BracketMatch[]): Set<string> {
   return out;
 }
 
-const ALL_PANEL_IDS: PanelId[] = ['teams', 'bracket', 'matches'];
+const ALL_PANEL_IDS: PanelId[] = ['teams', 'bracket', 'matches', 'players', 'settings'];
 const TEAM_COUNTS: TeamCount[] = [4, 8, 16, 32, 64];
 // Stable reference: 25% / 50% / 25% when all three panels are visible
 const DEFAULT_3_PANEL_DIVIDERS = [25, 75];
@@ -149,6 +151,10 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
   }
 
   const eliminatedTeams = useMemo(() => computeEliminated(matches), [matches]);
+
+  // Lead-time captain SMS alerts fire server-side in saveBracketState (see
+  // lib/db/bracket.ts) on every bracket save, so they work regardless of who's
+  // viewing /admin and honour the configurable notify-lead.
 
   // Schedule-derived active/next/todo status — computed for BOTH divisions
   // (mirrors saveBracketState's server-side reconciliation), not just the
@@ -304,7 +310,7 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
             />
           </div>
         </div>
-      ) : (
+      ) : p === 'matches' ? (
         <MatchesPanel
           matches={effectiveMatches}
           division={division}
@@ -319,6 +325,10 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
           onExhibitionScheduleChange={setExhibitionSchedule}
           onMatchesChange={commitMatches}
         />
+      ) : p === 'players' ? (
+        <PlayersPanel />
+      ) : (
+        <SettingsPanel />
       ),
     }));
 

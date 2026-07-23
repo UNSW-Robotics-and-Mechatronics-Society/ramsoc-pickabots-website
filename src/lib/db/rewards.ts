@@ -34,11 +34,6 @@ export async function rewardWinners(matchId: string, winnerSide: "left" | "right
     botChoice: (r.side === "left" ? "A" : "B") as "A" | "B",
     amount:    r.amount  as number,
   }));
-  const totalPool = votes.reduce((sum, v) => sum + (v.amount as number), 0);
-  const winningVotes = votes.filter(v => v.side === winnerSide);
-  const losingVotes = votes.filter(v => v.side !== winnerSide);
-  const winningPool = winningVotes.reduce((sum, v) => sum + (v.amount as number), 0);
-
   const result = resolveRound(entries, winnerSide === "left" ? "A" : "B");
 
   console.log(
@@ -46,22 +41,18 @@ export async function rewardWinners(matchId: string, winnerSide: "left" | "right
     `pool=${result.totalPool}, outcome=${result.winner === "REFUND" ? "REFUND (nobody backed winner)" : `winner=${winnerSide}`}`
   );
 
-  // Apply reward for every entry that receives something (winners + refunded).
-  // Losers in a normal round have reward=0 and are skipped.
+  // resolveRound assigns every entry its payout (0 for a losing vote, the
+  // parimutuel share for a winner, the stake back on a full refund). Record
+  // that payout on each vote row so the coin ledger reads gain/loss straight
+  // off `votes`, and credit tokens for anyone who gained.
+  const voteIdByUser = new Map(rows.map(r => [r.user_id as string, r.id as string]));
+
   for (const r of result.rewards) {
+    const voteId = voteIdByUser.get(r.userId);
+    if (voteId) {
+      await supabase.from("votes").update({ payout: r.reward }).eq("id", voteId);
+    }
     if (r.reward <= 0) continue;
-  // Nobody backed the winner — every vote loses, payout recorded as 0 across the board.
-  if (winningPool === 0) {
-    console.log("[rewardWinners] nobody backed the winner — no payout");
-    await supabase.from("votes").update({ payout: 0 }).eq("match_id", matchId);
-    return;
-  }
-
-  if (losingVotes.length > 0) {
-    await supabase.from("votes").update({ payout: 0 }).in("id", losingVotes.map(v => v.id));
-  }
-
-  const rewardPerToken = totalPool / winningPool;
 
     const { data: userRows, error: userErr } = await supabase
       .from("users").select("tokens").eq("id", r.userId).limit(1);
@@ -82,6 +73,5 @@ export async function rewardWinners(matchId: string, winnerSide: "left" | "right
         `+${r.reward} tokens (${current} → ${current + r.reward})`
       );
     }
-    await supabase.from("votes").update({ payout: reward }).eq("id", vote.id);
   }
 }

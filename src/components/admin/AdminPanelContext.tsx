@@ -2,9 +2,9 @@
 
 import { createContext, useContext, useState, type ReactNode } from "react";
 
-export type PanelId = 'teams' | 'bracket' | 'matches';
+export type PanelId = 'teams' | 'bracket' | 'matches' | 'players' | 'settings';
 
-const ORDER: PanelId[] = ['teams', 'bracket', 'matches'];
+const ORDER: PanelId[] = ['teams', 'bracket', 'matches', 'players', 'settings'];
 
 type Ctx = {
   visiblePanels: PanelId[];

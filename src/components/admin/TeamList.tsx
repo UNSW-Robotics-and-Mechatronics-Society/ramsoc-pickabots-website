@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Phone } from "lucide-react";
 import { type Division, type Team } from "@/lib/mock-data";
 import { cn } from "@/lib/cn";
+import TeamDetailsModal from "./TeamDetailsModal";
 
 const BASE_CARD_W = 260; // grid column min-width at scale = 1
 
@@ -51,6 +52,7 @@ export default function TeamList({
   const [rawScale, setRawScale]     = useState(1);
   const [containerWidth, setContainerWidth] = useState(0);
   const containerRef                = useRef<HTMLDivElement>(null);
+  const [contactTeam, setContactTeam] = useState<Team | null>(null);
 
   // Cap how big a column the Scale slider can request so a single card can
   // never demand more width than the panel actually has — otherwise the
@@ -434,11 +436,11 @@ export default function TeamList({
                       {detailTier === 'full' && (
                         <button
                           type="button"
-                          onClick={() => {}}
+                          onClick={() => setContactTeam(team)}
                           className="ml-auto flex items-center gap-1 rounded-lg border border-white/10 bg-white/8 px-2 py-0.5 text-[0.65rem] text-foreground/50 transition-colors hover:text-foreground/80"
                         >
                           <Phone size={10} strokeWidth={2} />
-                          Call
+                          Contact
                         </button>
                       )}
                     </div>
@@ -511,6 +513,15 @@ export default function TeamList({
             />
           </div>
         </div>
+      )}
+
+      {contactTeam && (
+        <TeamDetailsModal
+          teamId={contactTeam.id}
+          teamName={contactTeam.name}
+          division={contactTeam.division}
+          onClose={() => setContactTeam(null)}
+        />
       )}
     </div>
   );

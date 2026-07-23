@@ -16,12 +16,29 @@ export async function GET() {
   return NextResponse.json(data)
 }
 
-// POST /api/votes — place a vote
+// Maps a coded exception raised by the place_vote/undo_vote SQL functions to an
+// HTTP status + human message. Anything unrecognised is a 500.
+function mapVoteError(message: string): { status: number; error: string } {
+  if (message.includes('ALREADY_VOTED'))       return { status: 409, error: 'Already voted on this match' }
+  if (message.includes('INSUFFICIENT_TOKENS')) return { status: 400, error: 'Not enough tokens' }
+  if (message.includes('EXCEEDS_MAX'))         return { status: 400, error: `Max vote is ${MAX_VOTE_FRAC * 100}% of your balance` }
+  if (message.includes('VOTING_CLOSED'))       return { status: 400, error: 'Voting is closed for this match' }
+  if (message.includes('MATCH_INACTIVE'))      return { status: 400, error: 'Match is not accepting votes' }
+  if (message.includes('MATCH_NOT_FOUND'))     return { status: 404, error: 'Match not found' }
+  if (message.includes('NO_USER'))             return { status: 400, error: 'Not enough tokens' }
+  if (message.includes('MATCH_RESOLVED'))      return { status: 400, error: 'Cannot undo — match already resolved' }
+  if (message.includes('VOTE_NOT_FOUND'))      return { status: 404, error: 'Vote not found' }
+  return { status: 500, error: message }
+}
+
+// POST /api/votes — place a vote. All validation, token deduction, the vote
+// row, and the pool update happen inside one transaction (place_vote), so
+// concurrent submissions from the same user can't double-spend or double-vote.
 export async function POST(req: NextRequest) {
   const { userId } = await auth()
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const body = await req.json()
+  const body = await req.json().catch(() => ({}))
   const { match_id, side, amount } = body
 
   if (!match_id || !side || !amount)
@@ -31,48 +48,27 @@ export async function POST(req: NextRequest) {
   if (amount < 1 || !Number.isInteger(amount))
     return NextResponse.json({ error: 'Amount must be a positive whole number' }, { status: 400 })
 
-  // Match must exist and be live
-  const { data: match } = await supabase
-    .from('matches').select('id, is_active, voting_open').eq('id', match_id).single()
+  const { data, error } = await supabase.rpc('place_vote', {
+    p_user_id: userId,
+    p_match_id: match_id,
+    p_side: side,
+    p_amount: amount,
+  })
 
-  if (!match) return NextResponse.json({ error: 'Match not found' }, { status: 404 })
-  if (!match.is_active) return NextResponse.json({ error: 'Match is not accepting votes' }, { status: 400 })
-  if (match.voting_open === false) return NextResponse.json({ error: 'Voting is closed for this match' }, { status: 400 })
-
-  // One vote per user per match
-  const { data: existing } = await supabase
-    .from('votes').select('id').eq('user_id', userId).eq('match_id', match_id).maybeSingle()
-
-  if (existing) return NextResponse.json({ error: 'Already voted on this match' }, { status: 409 })
-
-  // Check token balance (limit(1) tolerates duplicate rows; real fix: add PK to users table)
-  const { data: userRows } = await supabase.from('users').select('tokens').eq('id', userId).limit(1)
-  const user = userRows?.[0] ?? null
-  if (!user || user.tokens < amount)
-    return NextResponse.json({ error: 'Not enough tokens' }, { status: 400 })
-  const maxAllowed = Math.floor(user.tokens * MAX_VOTE_FRAC)
-  if (amount > maxAllowed)
-    return NextResponse.json({ error: `Max vote is 50% of your balance (${maxAllowed} tokens)` }, { status: 400 })
-
-  // Deduct tokens
-  const { error: deductErr } = await supabase
-    .from('users').update({ tokens: user.tokens - amount }).eq('id', userId)
-  if (deductErr) return NextResponse.json({ error: deductErr.message }, { status: 500 })
-
-  // Insert vote
-  const { data: vote, error: voteErr } = await supabase
-    .from('votes').insert({ user_id: userId, match_id, side, amount }).select().single()
-
-  if (voteErr) {
-    // Refund on failure
-    await supabase.from('users').update({ tokens: user.tokens }).eq('id', userId)
-    return NextResponse.json({ error: voteErr.message }, { status: 500 })
+  if (error) {
+    const mapped = mapVoteError(error.message)
+    return NextResponse.json({ error: mapped.error }, { status: mapped.status })
   }
 
-  return NextResponse.json({ vote, tokens: user.tokens - amount }, { status: 201 })
+  const result = data as { tokens: number; vote_id: string }
+  return NextResponse.json(
+    { vote: { id: result.vote_id, match_id, side, amount }, tokens: result.tokens },
+    { status: 201 },
+  )
 }
 
-// DELETE /api/votes?vote_id=xxx — undo a vote
+// DELETE /api/votes?vote_id=xxx — undo a vote. Delete + refund + pool reversal
+// happen in one transaction (undo_vote).
 export async function DELETE(req: NextRequest) {
   const { userId } = await auth()
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -80,28 +76,15 @@ export async function DELETE(req: NextRequest) {
   const voteId = req.nextUrl.searchParams.get('vote_id')
   if (!voteId) return NextResponse.json({ error: 'vote_id is required' }, { status: 400 })
 
-  // Fetch vote (must belong to this user)
-  const { data: vote } = await supabase
-    .from('votes').select('id, amount, match_id').eq('id', voteId).eq('user_id', userId).single()
+  const { data, error } = await supabase.rpc('undo_vote', {
+    p_user_id: userId,
+    p_vote_id: voteId,
+  })
 
-  if (!vote) return NextResponse.json({ error: 'Vote not found' }, { status: 404 })
+  if (error) {
+    const mapped = mapVoteError(error.message)
+    return NextResponse.json({ error: mapped.error }, { status: mapped.status })
+  }
 
-  // Confirm match still active AND voting still open — once voting is
-  // locked, votes are final and can't be undone.
-  const { data: match } = await supabase
-    .from('matches').select('is_active, voting_open, winner_side').eq('id', vote.match_id).single()
-
-  if (!match?.is_active || match.winner_side !== null)
-    return NextResponse.json({ error: 'Cannot undo — match already resolved' }, { status: 400 })
-  if (match.voting_open === false)
-    return NextResponse.json({ error: 'Cannot undo — voting is closed and votes are locked in' }, { status: 400 })
-
-  // Delete and refund
-  await supabase.from('votes').delete().eq('id', voteId)
-
-  const { data: userRows2 } = await supabase.from('users').select('tokens').eq('id', userId).limit(1)
-  const newTokens = (userRows2?.[0]?.tokens ?? 0) + vote.amount
-  await supabase.from('users').update({ tokens: newTokens }).eq('id', userId)
-
-  return NextResponse.json({ tokens: newTokens })
+  return NextResponse.json({ tokens: data as number })
 }

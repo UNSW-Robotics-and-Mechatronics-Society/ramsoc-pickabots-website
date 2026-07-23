@@ -8,6 +8,8 @@ import VoteModal from './VoteModal'
 import TeamLedgerModal from './TeamLedgerModal'
 import ComicFlash, { useComicFlash } from './ComicFlash'
 import Toast, { useToast, WinLossToast, useWinLossToast } from './Toast'
+import BegDial from './BegDial'
+import { BEG_THRESHOLD } from '@/lib/beg-config'
 import type { Match, Vote, VoteStandings } from '@/lib/types'
 
 interface ModalCtx {
@@ -19,6 +21,14 @@ interface ModalCtx {
 
 type CompFilter = 'standard' | 'open' | 'exhibition'
 
+type BegBannerState = {
+  begsUsed: number
+  begsAllowed: number
+  cooldownRemaining: number | null
+  eligible: boolean
+  reason: 'ok' | 'not_broke' | 'no_begs_left' | 'cooldown'
+}
+
 export default function VotePage() {
   const [matches, setMatches]   = useState<Match[]>([])
   const [tokens, setTokens]     = useState<number | null>(null)
@@ -29,6 +39,8 @@ export default function VotePage() {
   const [standings, setStandings] = useState<Record<string, VoteStandings>>({})
   const [selectedTeam, setSelectedTeam] = useState<{ name: string; division?: 'standards' | 'open' } | null>(null)
   const [filter, setFilter]     = useState<CompFilter>('standard')
+  const [begOpen, setBegOpen]   = useState(false)
+  const [begState, setBegState] = useState<BegBannerState | null>(null)
 
   // comp_type is 'standard'/'open'/'bossbot' — map to the app's internal
   // 'standards'/'open' Division naming used as a best-effort disambiguation
@@ -50,6 +62,17 @@ export default function VotePage() {
   useEffect(() => { prevMatchesRef.current = matches },  [matches])
   useEffect(() => { votesRef.current = votes },          [votes])
   useEffect(() => { showWinLossRef.current = showWinLoss }, [showWinLoss])
+
+  // Beg eligibility (remaining begs + cooldown) for the "Down bad?" banner.
+  const refreshBeg = useCallback(async () => {
+    try {
+      const res = await fetch('/api/beg')
+      if (res.ok) setBegState(await res.json())
+    } catch { /* non-fatal: banner falls back to its default label */ }
+  }, [])
+  // Cooldown is measured in completed matches, so re-check when matches change.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { refreshBeg() }, [matches, refreshBeg])
 
   // ── Load on mount ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -240,6 +263,46 @@ export default function VotePage() {
 
       <main style={{ padding: '14px 16px 88px', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
+        {/* Beg for tokens — shown only when running low. Subline surfaces begs
+            remaining + any cooldown so players see their status before opening. */}
+        {tokens !== null && tokens < BEG_THRESHOLD && (() => {
+          const remaining = begState ? Math.max(0, begState.begsAllowed - begState.begsUsed) : null
+          const subline =
+            begState?.reason === 'no_begs_left'
+              ? 'No begs remaining'
+              : begState?.reason === 'cooldown'
+                ? `Available in ${begState.cooldownRemaining} match${begState.cooldownRemaining === 1 ? '' : 'es'} · ${remaining} left`
+                : remaining !== null
+                  ? `${remaining} beg${remaining === 1 ? '' : 's'} left`
+                  : null
+          const spent = begState?.reason === 'no_begs_left'
+          return (
+            <button
+              onClick={() => setBegOpen(true)}
+              style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3,
+                padding: '12px 16px', borderRadius: 14, cursor: 'pointer',
+                border: '1px solid rgba(255,180,0,0.35)',
+                background: 'linear-gradient(135deg, rgba(255,107,0,0.16) 0%, rgba(155,48,255,0.08) 100%)',
+                backdropFilter: 'blur(14px)',
+                boxShadow: '0 0 20px rgba(255,180,0,0.12)',
+                textTransform: 'uppercase', color: '#FFD700',
+                textShadow: '0 0 10px rgba(255,215,0,0.4)',
+                opacity: spent ? 0.55 : 1,
+              }}
+            >
+              <span style={{ fontSize: '0.72rem', fontWeight: 900, letterSpacing: 2 }}>
+                🪙 Down bad? Beg for tokens
+              </span>
+              {subline && (
+                <span style={{ fontSize: '0.5rem', fontWeight: 900, letterSpacing: 2, color: 'rgba(255,215,0,0.65)' }}>
+                  {subline}
+                </span>
+              )}
+            </button>
+          )
+        })()}
+
         {/* Standard / Open / Exhibition tab */}
         <div style={{ display: 'flex', gap: 6 }}>
           {(['standard', 'open', 'exhibition'] as CompFilter[]).map(f => (
@@ -353,6 +416,7 @@ export default function VotePage() {
       <ComicFlash state={flash} />
       <Toast toast={toast} />
       <WinLossToast queue={winLossQueue} onDismiss={dismissWinLoss} />
+      {begOpen && <BegDial onClose={() => setBegOpen(false)} onAwarded={t => { setTokens(t); refreshBeg() }} />}
 
       <style>{`@keyframes spin { to{transform:rotate(360deg)} }`}</style>
     </>

@@ -31,6 +31,8 @@ export default function BottomNav() {
     pathname.startsWith("/sign-in") ||
     pathname.startsWith("/sign-up") ||
     pathname.startsWith("/standby") ||
+    pathname.startsWith("/onboarding") ||
+    pathname.startsWith("/dev") ||
     pathname.startsWith("/admin")
   ) {
     return null;
