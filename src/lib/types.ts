@@ -14,6 +14,12 @@ export interface Match {
   voting_open: boolean
   winner_side: 'left' | 'right' | null
   created_at: string
+  // Denormalized live vote pools (see migration 0007) — drive the odds without
+  // a per-match standings poll. Optional so older rows / payloads degrade safely.
+  pool_left?: number
+  pool_right?: number
+  votes_left?: number
+  votes_right?: number
 }
 
 export interface Vote {

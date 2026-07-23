@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { getBrowserSupabase } from '@/lib/supabase-browser'
 import Header from './Header'
 import Ring, { COMP_META } from './Ring'
@@ -10,6 +10,8 @@ import Toast, { useToast, WinLossToast, useWinLossToast } from './Toast'
 import BegDial from './BegDial'
 import { BEG_THRESHOLD } from '@/lib/beg-config'
 import type { Match, Vote, VoteStandings } from '@/lib/types'
+import { standingsFromMatch } from '@/lib/vote-pool'
+import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js'
 
 interface ModalCtx {
   matchId: string
@@ -35,7 +37,12 @@ export default function VotePage() {
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState<string | null>(null)
   const [modalCtx, setModalCtx] = useState<ModalCtx | null>(null)
-  const [standings, setStandings] = useState<Record<string, VoteStandings>>({})
+  // Odds are derived from the pool totals carried on each match row (pushed via
+  // Realtime / initial fetch) — no per-match standings poll needed.
+  const standings = useMemo<Record<string, VoteStandings>>(
+    () => Object.fromEntries(matches.map(m => [m.id, standingsFromMatch(m)])),
+    [matches],
+  )
   const [filter, setFilter]     = useState<CompFilter>('standard')
   const [begOpen, setBegOpen]   = useState(false)
   const [begState, setBegState] = useState<BegBannerState | null>(null)
@@ -104,24 +111,8 @@ export default function VotePage() {
     load()
   }, [refreshBeg])
 
-  // ── Poll live standings for active matches ───────────────────────────────────
-  useEffect(() => {
-    const activeIds = matches.filter(m => m.is_active).map(m => m.id)
-    if (activeIds.length === 0) return
-    async function fetchStandings() {
-      const results = await Promise.all(
-        activeIds.map(id => fetch(`/api/matches/${id}/standings`).then(r => r.json()).catch(() => null))
-      )
-      setStandings(prev => {
-        const next = { ...prev }
-        activeIds.forEach((id, i) => { if (results[i]) next[id] = results[i] })
-        return next
-      })
-    }
-    fetchStandings()
-    const interval = setInterval(fetchStandings, 3000)
-    return () => clearInterval(interval)
-  }, [matches])
+  // (Standings are no longer polled — see the `standings` useMemo above, fed by
+  //  the pool_left/right columns that arrive on each match row via Realtime.)
 
   // ── Live match updates ────────────────────────────────────────────────────────
   const refetchMatches = useCallback(async () => {
@@ -162,18 +153,62 @@ export default function VotePage() {
     }
   }, [])
 
+  const refreshTokens = useCallback(async () => {
+    try {
+      const r = await fetch('/api/user')
+      if (r.ok) setTokens((await r.json()).tokens)
+    } catch { /* transient */ }
+  }, [])
+
+  // Realtime: merge only the changed match row from the payload — no full
+  // /api/matches refetch, so a pool update on every vote does NOT trigger a
+  // 200-client refetch storm. Odds recompute from the row's pool columns.
+  const handleRealtimeMatch = useCallback(
+    (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => {
+      if (payload.eventType === 'DELETE') {
+        const oldId = (payload.old as { id?: string } | null)?.id
+        if (oldId) setMatches(prev => prev.filter(m => m.id !== oldId))
+        return
+      }
+      const row = payload.new as unknown as Match
+      if (!row?.id) return
+      // Win/loss toast on the transition to resolved (compare against local prev,
+      // since Realtime's `old` only carries the primary key by default).
+      const prev = prevMatchesRef.current.find(p => p.id === row.id)
+      if (row.winner_side && !prev?.winner_side) {
+        const vote = votesRef.current[row.id]
+        if (vote) {
+          const won = vote.side === row.winner_side
+          const name = vote.side === 'left' ? row.left_name : row.right_name
+          showWinLossRef.current(won ? 'win' : 'loss', name)
+          setTimeout(refreshTokens, 2500)
+        }
+      }
+      setMatches(cur => {
+        const idx = cur.findIndex(m => m.id === row.id)
+        if (idx === -1) return [...cur, row]
+        const next = [...cur]
+        next[idx] = row
+        return next
+      })
+    },
+    [refreshTokens],
+  )
+
   useEffect(() => {
     const sb = getBrowserSupabase()
     if (sb) {
       const channel = sb
         .channel('public:matches')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, () => { refetchMatches() })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, handleRealtimeMatch)
         .subscribe()
       return () => { sb.removeChannel(channel) }
     }
+    // Fallback when Realtime isn't configured (no anon key): poll /api/matches
+    // (which now carries the pools, so odds still update ~every 5s).
     const id = setInterval(refetchMatches, 5000)
     return () => clearInterval(id)
-  }, [refetchMatches])
+  }, [handleRealtimeMatch, refetchMatches])
 
   // ── Open vote modal ───────────────────────────────────────────────────────────
   function handleVote(matchId: string, side: 'left' | 'right', botName: string, compType: string) {
