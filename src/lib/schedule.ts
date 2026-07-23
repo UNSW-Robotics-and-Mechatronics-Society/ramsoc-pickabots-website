@@ -107,10 +107,10 @@ export function dueForNotify(
   matches: BracketMatch[],
   schedule: MatchSchedule,
   leadMatches: number,
-): string[] {
+): { matchId: string; ring: number }[] {
   const byId = new Map(matches.map(m => [m.id, m]));
-  const due: string[] = [];
-  for (const ring of schedule.rings) {
+  const due: { matchId: string; ring: number }[] = [];
+  schedule.rings.forEach((ring, ringIndex) => {
     const readyPending = ring
       .map(e => e.matchId)
       .filter(id => {
@@ -119,9 +119,10 @@ export function dueForNotify(
           && !!m.slotA.teamName && !!m.slotB.teamName;
       });
     for (let i = 0; i < readyPending.length && i <= leadMatches; i++) {
-      due.push(readyPending[i]);
+      // ring is 1-based for human-facing SMS copy ("Ring {ring}").
+      due.push({ matchId: readyPending[i], ring: ringIndex + 1 });
     }
-  }
+  });
   return due;
 }
 

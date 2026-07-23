@@ -1,12 +1,13 @@
 import "server-only";
 import supabase from "@/lib/supabase";
-import { DEFAULT_SMS_UP_NEXT } from "@/lib/sms-template";
+import { DEFAULT_SMS_UP_NEXT, DEFAULT_SMS_LOCATION } from "@/lib/sms-template";
 
 // Admin-editable key/value config (see migration 0009). Read/written via the
 // service key only.
 
 const SMS_UP_NEXT_KEY = "sms_up_next_template";
 const NOTIFY_LEAD_KEY = "sms_notify_lead";
+const SMS_LOCATION_KEY = "sms_location";
 
 /** Default: text captains when their team is this many matches from playing. */
 export const DEFAULT_NOTIFY_LEAD = 2;
@@ -58,4 +59,18 @@ export async function getNotifyLead(): Promise<number> {
 export async function setNotifyLead(value: number): Promise<void> {
   const n = Math.max(1, Math.min(16, Math.trunc(value)));
   await setConfig(NOTIFY_LEAD_KEY, String(n));
+}
+
+/** Venue text substituted for {location} in SMS templates. */
+export async function getSmsLocation(): Promise<string> {
+  try {
+    return (await getConfig(SMS_LOCATION_KEY)) || DEFAULT_SMS_LOCATION;
+  } catch (err) {
+    console.error("[config] getSmsLocation failed, using default:", err);
+    return DEFAULT_SMS_LOCATION;
+  }
+}
+
+export async function setSmsLocation(value: string): Promise<void> {
+  await setConfig(SMS_LOCATION_KEY, value.trim() || DEFAULT_SMS_LOCATION);
 }
