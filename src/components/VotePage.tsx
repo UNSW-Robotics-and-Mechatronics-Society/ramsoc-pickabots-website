@@ -2,11 +2,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getBrowserSupabase } from '@/lib/supabase-browser'
 import Header from './Header'
-import Ring from './Ring'
+import Ring, { COMP_META } from './Ring'
 import NextMatchCard from './NextMatchCard'
 import VoteModal from './VoteModal'
 import ComicFlash, { useComicFlash } from './ComicFlash'
-import Toast, { useToast } from './Toast'
+import Toast, { useToast, WinLossToast, useWinLossToast } from './Toast'
 import type { Match, Vote, VoteStandings } from '@/lib/types'
 
 interface ModalCtx {
@@ -16,8 +16,6 @@ interface ModalCtx {
   compType: string
 }
 
-type CompFilter = 'standard' | 'open'
-
 export default function VotePage() {
   const [matches, setMatches]   = useState<Match[]>([])
   const [tokens, setTokens]     = useState<number | null>(null)
@@ -25,21 +23,21 @@ export default function VotePage() {
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState<string | null>(null)
   const [modalCtx, setModalCtx] = useState<ModalCtx | null>(null)
-  const [filter, setFilter]     = useState<CompFilter>('standard')
   const [standings, setStandings] = useState<Record<string, VoteStandings>>({})
 
   const { state: flash, trigger: triggerFlash } = useComicFlash()
   const { toast, show: showToast } = useToast()
+  const { winLossState, showWinLoss } = useWinLossToast()
 
   // Refs let refetchMatches read the latest votes/matches without being in its
   // dependency array — keeping it stable so the Supabase subscription never
   // needlessly reconnects.
-  const prevMatchesRef = useRef<Match[]>([])
-  const votesRef       = useRef<Record<string, Vote>>({})
-  const showToastRef   = useRef(showToast)
-  useEffect(() => { prevMatchesRef.current = matches },   [matches])
-  useEffect(() => { votesRef.current = votes },           [votes])
-  useEffect(() => { showToastRef.current = showToast },   [showToast])
+  const prevMatchesRef  = useRef<Match[]>([])
+  const votesRef        = useRef<Record<string, Vote>>({})
+  const showWinLossRef  = useRef(showWinLoss)
+  useEffect(() => { prevMatchesRef.current = matches },  [matches])
+  useEffect(() => { votesRef.current = votes },          [votes])
+  useEffect(() => { showWinLossRef.current = showWinLoss }, [showWinLoss])
 
   // ── Load on mount ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -95,20 +93,14 @@ export default function VotePage() {
   }, [matches])
 
   // ── Live match updates ────────────────────────────────────────────────────────
-  // Re-pull just the matches (voting open/close, scores, resolution) so the
-  // page reflects admin changes without a manual refresh. Uses Supabase
-  // Realtime when the anon key is configured, else falls back to light polling.
   const refetchMatches = useCallback(async () => {
     try {
-      const [matchRes, userRes] = await Promise.all([
-        fetch('/api/matches'),
-        fetch('/api/user'),
-      ])
+      const matchRes = await fetch('/api/matches')
       if (!matchRes.ok) return
       const newMatches: Match[] = await matchRes.json()
 
-      // Notify the user if a match they voted on just got a winner declared.
-      // Only fires for the transition null → winner_side, never repeatedly.
+      // Detect newly-resolved matches the user voted on and show the big toast.
+      let wonOrLost = false
       for (const m of newMatches) {
         if (!m.winner_side) continue
         const prev = prevMatchesRef.current.find(p => p.id === m.id)
@@ -117,14 +109,23 @@ export default function VotePage() {
         if (!vote) continue // user didn't vote on this match
         const won = vote.side === m.winner_side
         const name = vote.side === 'left' ? m.left_name : m.right_name
-        showToastRef.current(won
-          ? `🏆 ${name} won! Tokens incoming!`
-          : `💔 ${name} lost. Better luck next time!`
-        )
+        showWinLossRef.current(won ? 'win' : 'loss', name)
+        wonOrLost = true
       }
 
       setMatches(newMatches)
-      if (userRes.ok) setTokens((await userRes.json()).tokens)
+
+      // Delay the token balance refresh on a win/loss so the toast is visible
+      // before the balance updates (gives the payout a moment to process too).
+      const refreshTokens = async () => {
+        const userRes = await fetch('/api/user')
+        if (userRes.ok) setTokens((await userRes.json()).tokens)
+      }
+      if (wonOrLost) {
+        setTimeout(refreshTokens, 2500)
+      } else {
+        refreshTokens()
+      }
     } catch {
       /* transient — next event/tick retries */
     }
@@ -151,9 +152,6 @@ export default function VotePage() {
   }
 
   // ── Confirm vote ──────────────────────────────────────────────────────────────
-  // Token accounting happens server-side in POST /api/votes (deduct + validate
-  // atomically) — this only optimistically reflects it, then reconciles with
-  // the server's returned balance (or reverts on failure).
   async function handleConfirm(amount: number) {
     if (!modalCtx) return
     const { matchId, side, botName } = modalCtx
@@ -207,43 +205,26 @@ export default function VotePage() {
     }
   }
 
-  // Only a match the admin has actually put "on the ring" is voteable.
-  // "Next" matches (queued, not yet active, not yet resolved) get their own
-  // read-only preview segment instead of appearing here.
+  // ── Match bucketing ───────────────────────────────────────────────────────────
+  // Always show exactly one ring per division (standard + open), even if no
+  // match is active yet. Bossbots appear as extras below when present.
   const activeMatches = matches.filter(m => m.is_active && m.winner_side === null)
-  const nextMatches   = matches.filter(m => !m.is_active && m.winner_side === null)
-  // Bossbot matches aren't gated by the Standard/Open filter — they're a
-  // one-off exhibition category, not part of either division's bracket.
-  const visibleActive = activeMatches.filter(m =>
-    (m.comp_type === 'bossbot' || m.comp_type === filter) &&
-    m.left_name && m.left_name !== 'TBD' &&
-    m.right_name && m.right_name !== 'TBD'
-  ).slice(0, 2)
+  const activeStandard = activeMatches.find(m => m.comp_type === 'standard') ?? null
+  const activeOpen     = activeMatches.find(m => m.comp_type === 'open')     ?? null
+  const activeBossbots = activeMatches.filter(m => m.comp_type === 'bossbot')
+
+  // Next Matches: at most 1 per division (standard + open) = max 2 total.
+  // Using find() naturally deduplicates within each division.
+  const allNext       = matches.filter(m => !m.is_active && m.winner_side === null)
+  const nextStandard  = allNext.find(m => m.comp_type === 'standard') ?? null
+  const nextOpen      = allNext.find(m => m.comp_type === 'open')     ?? null
+  const nextVisible   = ([nextStandard, nextOpen] as (Match | null)[]).filter(Boolean) as Match[]
 
   return (
     <>
       <Header tokens={tokens ?? 0} loading={loading} />
 
       <main style={{ padding: '14px 16px 88px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-        {/* Standard / Open filter — only affects the voteable list below;
-            Bossbot matches and the Next Matches segment ignore it. */}
-        <div style={{ display: 'flex', gap: 6 }}>
-          {(['standard', 'open'] as CompFilter[]).map(f => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              style={{
-                padding: '6px 16px', borderRadius: 999, fontSize: '0.6rem', fontWeight: 900,
-                letterSpacing: 2, textTransform: 'uppercase', cursor: 'pointer',
-                border: `1px solid ${filter === f ? 'rgba(255,107,0,0.6)' : 'rgba(255,255,255,0.1)'}`,
-                background: filter === f ? 'rgba(255,107,0,0.15)' : 'rgba(255,255,255,0.04)',
-                color: filter === f ? '#FF6B00' : 'rgba(255,255,255,0.4)',
-              }}
-            >
-              {f === 'standard' ? 'Standard' : 'Open'}
-            </button>
-          ))}
-        </div>
 
         {loading && (
           <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:12, padding:'48px 0' }}>
@@ -267,13 +248,46 @@ export default function VotePage() {
           </div>
         )}
 
-        {!loading && !error && visibleActive.length === 0 && (
-          <div style={{ textAlign:'center', padding:'48px 0', color:'#444', fontWeight:900, fontSize:'0.85rem', textTransform:'uppercase', letterSpacing:3 }}>
-            No active matches right now.
-          </div>
+        {/* Standard ring — always present */}
+        {!loading && !error && (
+          activeStandard
+            ? <Ring
+                key={activeStandard.id}
+                match={activeStandard}
+                vote={votes[activeStandard.id] ?? null}
+                standings={standings[activeStandard.id] ?? null}
+                votingOpen={activeStandard.voting_open}
+                onVote={side => handleVote(
+                  activeStandard.id, side,
+                  side === 'left' ? activeStandard.left_name : activeStandard.right_name,
+                  activeStandard.comp_type
+                )}
+                onUndo={() => handleUndo(activeStandard.id)}
+              />
+            : <PlaceholderRing compType="standard" />
         )}
 
-        {visibleActive.map(match => (
+        {/* Open ring — always present */}
+        {!loading && !error && (
+          activeOpen
+            ? <Ring
+                key={activeOpen.id}
+                match={activeOpen}
+                vote={votes[activeOpen.id] ?? null}
+                standings={standings[activeOpen.id] ?? null}
+                votingOpen={activeOpen.voting_open}
+                onVote={side => handleVote(
+                  activeOpen.id, side,
+                  side === 'left' ? activeOpen.left_name : activeOpen.right_name,
+                  activeOpen.comp_type
+                )}
+                onUndo={() => handleUndo(activeOpen.id)}
+              />
+            : <PlaceholderRing compType="open" />
+        )}
+
+        {/* Bossbot rings — extras, shown when present */}
+        {!loading && !error && activeBossbots.map(match => (
           <Ring
             key={match.id}
             match={match}
@@ -289,14 +303,13 @@ export default function VotePage() {
           />
         ))}
 
-        {/* Next Matches — read-only preview of whatever's queued up next
-            (per division), not affected by the Standard/Open filter above. */}
-        {!loading && !error && nextMatches.length > 0 && (
+        {/* Next Matches — max 1 per division (standard + open) = 2 total */}
+        {!loading && !error && nextVisible.length > 0 && (
           <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
             <span style={{ fontSize: '0.55rem', fontWeight: 900, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: 4 }}>
               Next Matches
             </span>
-            {nextMatches.map(match => (
+            {nextVisible.map(match => (
               <NextMatchCard key={match.id} match={match} />
             ))}
           </div>
@@ -306,8 +319,47 @@ export default function VotePage() {
       <VoteModal ctx={modalCtx} tokens={tokens ?? 0} onConfirm={handleConfirm} onClose={() => setModalCtx(null)} />
       <ComicFlash state={flash} />
       <Toast toast={toast} />
+      <WinLossToast state={winLossState} />
 
       <style>{`@keyframes spin { to{transform:rotate(360deg)} }`}</style>
     </>
+  )
+}
+
+// ── TBD placeholder shown when no match is active for a division ──────────────
+function PlaceholderRing({ compType }: { compType: 'standard' | 'open' }) {
+  const meta = COMP_META[compType]
+  return (
+    <div style={{
+      position: 'relative', borderRadius: 14,
+      border: `1px solid color-mix(in srgb, ${meta.color} 12%, transparent)`,
+      background: 'rgba(3,1,8,0.15)',
+      backdropFilter: 'blur(14px)',
+      minHeight: 140,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      flexDirection: 'column', gap: 10,
+      opacity: 0.35,
+    }}>
+      <div style={{
+        fontSize: '0.48rem', fontWeight: 900, color: meta.color,
+        textTransform: 'uppercase', letterSpacing: 4,
+      }}>
+        {meta.label}
+      </div>
+      <div style={{
+        fontSize: '1.1rem', fontWeight: 900,
+        color: 'rgba(255,255,255,0.25)', letterSpacing: 6,
+        textTransform: 'uppercase',
+      }}>
+        TBD  vs  TBD
+      </div>
+      <div style={{
+        fontSize: '0.48rem', fontWeight: 900,
+        color: 'rgba(255,255,255,0.18)', letterSpacing: 3,
+        textTransform: 'uppercase',
+      }}>
+        Match coming up
+      </div>
+    </div>
   )
 }

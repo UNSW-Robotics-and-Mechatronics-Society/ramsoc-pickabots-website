@@ -26,9 +26,13 @@ export async function POST(
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  await rewardWinners(matchId, winner_side).catch(err =>
-    console.error("[resolve] reward failed for match", matchId, err)
-  );
+  let payoutError: string | null = null;
+  try {
+    await rewardWinners(matchId, winner_side);
+  } catch (err) {
+    payoutError = err instanceof Error ? err.message : String(err);
+    console.error("[resolve] reward failed for match", matchId, payoutError);
+  }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, payoutError });
 }

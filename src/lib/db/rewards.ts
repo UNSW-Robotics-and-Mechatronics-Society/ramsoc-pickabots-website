@@ -7,28 +7,48 @@ import supabase from "@/lib/supabase";
  * Losers lose their votes regardless — no refund even if nobody backed the winner.
  */
 export async function rewardWinners(matchId: string, winnerSide: "left" | "right"): Promise<void> {
-  const { data: votes } = await supabase
+  const { data: votes, error: votesErr } = await supabase
     .from("votes")
     .select("user_id, side, amount")
     .eq("match_id", matchId);
 
-  if (!votes || votes.length === 0) return;
+  if (votesErr) {
+    console.error("[rewardWinners] failed to query votes for match", matchId, votesErr.message);
+    throw votesErr;
+  }
+  if (!votes || votes.length === 0) {
+    console.warn("[rewardWinners] no votes found for match", matchId, "— skipping payout. If this is unexpected, check the DB migration (bets → votes table rename).");
+    return;
+  }
 
   const totalPool = votes.reduce((sum, v) => sum + (v.amount as number), 0);
   const winningVotes = votes.filter(v => v.side === winnerSide);
   const winningPool = winningVotes.reduce((sum, v) => sum + (v.amount as number), 0);
 
-  // Nobody backed the winner — losers still lose, nobody gets rewarded
-  if (winningPool === 0) return;
+  console.log(`[rewardWinners] match ${matchId}: ${votes.length} votes, pool=${totalPool}, winner=${winnerSide}, winners=${winningVotes.length}`);
+
+  if (winningPool === 0) {
+    console.log("[rewardWinners] nobody backed the winner — no payout");
+    return;
+  }
 
   const rewardPerToken = totalPool / winningPool;
 
   for (const vote of winningVotes) {
     const reward = Math.round(vote.amount * rewardPerToken * 100) / 100;
-    const { data: userRows } = await supabase
+    const { data: userRows, error: userErr } = await supabase
       .from("users").select("tokens").eq("id", vote.user_id).limit(1);
+    if (userErr) {
+      console.error("[rewardWinners] failed to read tokens for user", vote.user_id, userErr.message);
+      continue;
+    }
     const current = userRows?.[0]?.tokens ?? 0;
-    await supabase
+    const { error: updateErr } = await supabase
       .from("users").update({ tokens: current + reward }).eq("id", vote.user_id);
+    if (updateErr) {
+      console.error("[rewardWinners] failed to update tokens for user", vote.user_id, updateErr.message);
+    } else {
+      console.log(`[rewardWinners] paid user ${vote.user_id}: +${reward} tokens (${current} → ${current + reward})`);
+    }
   }
 }
