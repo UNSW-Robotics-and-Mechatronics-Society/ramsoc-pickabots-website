@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Coins } from 'lucide-react'
 import {
@@ -43,7 +43,7 @@ interface BegDialProps {
 
 // Full left↔right sweep duration (one direction), tuned to be a genuine but
 // fair timing challenge.
-const SWEEP_MS = 900
+const SWEEP_MS = 750
 
 function randomBand() {
   // centre somewhere in the middle 50% of the track, half-width ~8-12%
@@ -58,13 +58,17 @@ export default function BegDial({ onClose, onAwarded }: BegDialProps) {
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [result, setResult] = useState<BegSuccessResponse | null>(null)
 
-  // Dial mechanics
-  const [needlePos, setNeedlePos] = useState(0) // 0..100, percent along track
+  // Dial mechanics. The needle is animated by writing to the DOM node directly
+  // (needleRef) each frame — NOT via React state — so the painted position is
+  // always exactly what scoring reads (posRef), with no per-frame re-render lag
+  // or stutter. stoppedPos only holds the frozen position for post-stop renders.
+  const [stoppedPos, setStoppedPos] = useState(0)
   const [band, setBand] = useState(() => randomBand())
   const [frozen, setFrozen] = useState(false)
   const rafRef = useRef<number | null>(null)
   const startRef = useRef<number | null>(null)
   const posRef = useRef(0)
+  const needleRef = useRef<HTMLDivElement>(null)
 
   // Body scroll lock while open
   useEffect(() => {
@@ -111,7 +115,7 @@ export default function BegDial({ onClose, onAwarded }: BegDialProps) {
       const cyclePos = (elapsed % (SWEEP_MS * 2)) / SWEEP_MS
       const pos = cyclePos <= 1 ? cyclePos * 100 : (2 - cyclePos) * 100
       posRef.current = pos
-      setNeedlePos(pos)
+      if (needleRef.current) needleRef.current.style.left = `${pos}%`
       rafRef.current = requestAnimationFrame(tick)
     }
     rafRef.current = requestAnimationFrame(tick)
@@ -132,6 +136,7 @@ export default function BegDial({ onClose, onAwarded }: BegDialProps) {
     setFrozen(true)
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
     rafRef.current = null
+    setStoppedPos(posRef.current)
 
     const dist = Math.abs(posRef.current - band.center)
     const accuracy = dist > band.halfWidth ? 0 : 1 - dist / band.halfWidth
@@ -245,7 +250,7 @@ export default function BegDial({ onClose, onAwarded }: BegDialProps) {
                 Time it right. Stop the needle inside the green zone for the best payout.
               </p>
 
-              <DialTrack needlePos={needlePos} band={band} frozen={frozen} />
+              <DialTrack pos={stoppedPos} band={band} frozen={frozen} needleRef={needleRef} />
 
               <p className="text-center text-[0.6rem] font-black uppercase tracking-[0.2em] text-white/35">
                 Bullseye +{BEG_MAX_AWARD} · edge +{BEG_MIN_AWARD} · miss +0
@@ -275,7 +280,7 @@ export default function BegDial({ onClose, onAwarded }: BegDialProps) {
 
           {phase === 'result' && result && (
             <div className="flex flex-col items-center gap-4 py-2 text-center">
-              <DialTrack needlePos={needlePos} band={band} frozen />
+              <DialTrack pos={stoppedPos} band={band} frozen needleRef={needleRef} />
               {result.awarded > 0 ? (
                 <>
                   <div className="text-3xl">🎉</div>
@@ -325,12 +330,13 @@ function CloseButton({ onClose }: { onClose: () => void }) {
 }
 
 interface DialTrackProps {
-  needlePos: number
+  pos: number
   band: { center: number; halfWidth: number }
   frozen: boolean
+  needleRef: RefObject<HTMLDivElement | null>
 }
 
-function DialTrack({ needlePos, band, frozen }: DialTrackProps) {
+function DialTrack({ pos, band, frozen, needleRef }: DialTrackProps) {
   const bandLeft = Math.max(0, band.center - band.halfWidth)
   const bandWidth = Math.min(100, band.center + band.halfWidth) - bandLeft
 
@@ -365,11 +371,13 @@ function DialTrack({ needlePos, band, frozen }: DialTrackProps) {
           boxShadow: '0 0 8px rgba(159,255,160,0.9)',
         }}
       />
-      {/* Needle */}
+      {/* Needle — position is driven imperatively via needleRef during the
+          sweep; `pos` only sets the initial/frozen location on (re)render. */}
       <div
+        ref={needleRef}
         className="absolute top-1/2"
         style={{
-          left: `${needlePos}%`,
+          left: `${pos}%`,
           width: 4,
           height: 32,
           transform: 'translate(-50%, -50%)',
