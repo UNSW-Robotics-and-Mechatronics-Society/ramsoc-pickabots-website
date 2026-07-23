@@ -15,7 +15,7 @@ import {
 import { cn } from "@/lib/cn";
 import { MATCH_DRAG_TYPE, SlotRow, TimeCell } from "./MatchTeamSlot";
 import { useTeamFilter, TeamFilterBar, isMatchDimmed } from "./TeamFilterBar";
-import BiddingToggle from "./BiddingToggle";
+import VotingToggle from "./VotingToggle";
 
 const RING_OPTIONS: ConcurrentRings[] = [1, 2, 3, 4];
 const AUTO_COMPLETE_FROM: MatchStatus[] = ['todo', 'next', 'active'];
@@ -121,8 +121,8 @@ function MatchCard({
     match.status === 'skipped'   ? 'border-red-400 shadow-[0_0_10px_rgba(248,113,113,0.45)]' :
     'border-white/[0.28]';
 
-  // Scoring only when active AND betting is closed — bets must be locked before scores change.
-  const scoringAllowed = match.status === 'active' && !match.biddingOpen;
+  // Scoring only when active AND voting is closed — votes must be locked before scores change.
+  const scoringAllowed = match.status === 'active' && !match.votingOpen;
 
   function setScore(slot: 'a' | 'b', delta: number) {
     const updated: BracketMatch = {
@@ -171,7 +171,7 @@ function MatchCard({
       )}
     >
       {/* Top row — mirrors the bracket card's time row (but with no time);
-          holds the remove control (left, exhibition only) and the bid toggle
+          holds the remove control (left, exhibition only) and the vote toggle
           (right, active only). Always present so every card is the same height
           as the bracket boxes. */}
       <div
@@ -216,9 +216,9 @@ function MatchCard({
         )}
 
         {match.status === 'active' ? (
-          <BiddingToggle
-            open={match.biddingOpen}
-            onToggle={() => onChange({ ...match, biddingOpen: !match.biddingOpen })}
+          <VotingToggle
+            open={match.votingOpen}
+            onToggle={() => onChange({ ...match, votingOpen: !match.votingOpen })}
           />
         ) : (
           <span />
@@ -349,7 +349,7 @@ export default function MatchesPanel({
       slotB: { teamName: '', score: 0 },
       targetScore: 2,
       status: 'active',
-      biddingOpen: true,
+      votingOpen: false,
     };
     const nextMatches = [...matches, newMatch];
     onMatchesChange(nextMatches);
@@ -357,8 +357,8 @@ export default function MatchesPanel({
   }
 
   // Fully delete an exhibition match: remove it from the bracket data; the roll
-  // drops it from whichever ring it was in. (reconcile refunds any bets on it
-  // when its betting row is cleaned up.)
+  // drops it from whichever ring it was in. (reconcile refunds any votes on it
+  // when its voting row is cleaned up.)
   function handleRemoveMatch(matchId: string) {
     const nextMatches = matches.filter(m => m.id !== matchId);
     onMatchesChange(nextMatches);

@@ -6,7 +6,7 @@ import {
 } from "@/lib/mock-data";
 import { type MatchSchedule, generateSchedule, applyScheduleStatus, rollSchedule } from "@/lib/schedule";
 import { toDbCategory, fromDbCategory } from "./division";
-import { payoutMatch } from "./payouts";
+import { rewardWinners } from "./rewards";
 
 const DIVISIONS: Division[] = ["standards", "open"];
 const DEFAULT_TEAM_COUNT: TeamCount = 16;
@@ -23,7 +23,7 @@ type BracketMatchRow = {
   slot_b_score: number;
   target_score: number;
   status: string;
-  bidding_open: boolean | null;
+  voting_open: boolean | null;
 };
 
 function rowToMatch(r: BracketMatchRow): BracketMatch {
@@ -38,7 +38,7 @@ function rowToMatch(r: BracketMatchRow): BracketMatch {
     targetScore: r.target_score,
     status: r.status as MatchStatus,
     // Default closed for rows created before this column existed.
-    biddingOpen: r.bidding_open ?? false,
+    votingOpen: r.voting_open ?? false,
   };
 }
 
@@ -57,7 +57,7 @@ function matchToRow(m: BracketMatch, teamIdByName: Map<string, string>) {
     slot_b_score: m.slotB.score,
     target_score: m.targetScore,
     status: m.status,
-    bidding_open: m.biddingOpen,
+    voting_open: m.votingOpen,
   };
 }
 
@@ -106,7 +106,7 @@ export async function getBracketState(): Promise<BracketState> {
 }
 
 /**
- * Marks a betting row's outcome once its bracket match resolves. Only
+ * Marks a vote row's outcome once its bracket match resolves. Only
  * "completed" is handled transition-gated (not folded into the full
  * reconciliation below) because it's a one-way event — a completed match
  * never needs its winner_side re-derived on a later save. Best-effort: a
@@ -130,16 +130,16 @@ async function syncCompletedMatches(beforeStatusById: Map<string, MatchStatus>, 
     console.log("[syncCompletedMatches] matches updated:", matchRows, "err:", updateErr);
 
     for (const row of matchRows ?? []) {
-      console.log("[syncCompletedMatches] paying out match", row.id, "winner:", winnerSide);
-      await payoutMatch(row.id, winnerSide).catch(err =>
-        console.error("[syncCompletedMatches] payout failed for match", row.id, err)
+      console.log("[syncCompletedMatches] rewarding winners for match", row.id, "winner:", winnerSide);
+      await rewardWinners(row.id, winnerSide).catch(err =>
+        console.error("[syncCompletedMatches] reward failed for match", row.id, err)
       );
     }
   }
 }
 
 /**
- * Full reconciliation of the public betting `matches` table against the
+ * Full reconciliation of the public voting `matches` table against the
  * bracket's current active/next matches — runs on every save (not gated on
  * detecting a transition this round), so it self-heals regardless of how
  * a mismatch happened: creates a row for any active/next bracket match
@@ -150,15 +150,15 @@ async function syncCompletedMatches(beforeStatusById: Map<string, MatchStatus>, 
  * was active during testing/reseeding and later got reset to "todo" by a
  * resize without ever passing through "completed"), and deletes rows whose
  * bracket match is "todo"/"skipped" or gone entirely (resize dropped that
- * round) — those don't correspond to anything current. Any bets against a
+ * round) — those don't correspond to anything current. Any votes against a
  * deleted row are refunded first, since the FK is ON DELETE CASCADE and
- * would otherwise silently drop the bet along with the user's already-
+ * would otherwise silently drop the vote along with the user's already-
  * deducted tokens.
  */
-async function reconcileBettingMatches(bracketMatchById: Map<string, BracketMatch>): Promise<void> {
+async function reconcileVotingMatches(bracketMatchById: Map<string, BracketMatch>): Promise<void> {
   const { data: rows, error } = await supabase
     .from("matches")
-    .select("id, bracket_match_id, is_active, bidding_open, left_name, right_name")
+    .select("id, bracket_match_id, is_active, voting_open, left_name, right_name")
     .is("winner_side", null)
     .not("bracket_match_id", "is", null);
   if (error || !rows) return;
@@ -176,9 +176,9 @@ async function reconcileBettingMatches(bracketMatchById: Map<string, BracketMatc
     const desired = {
       comp_type: toDbCategory(bm.division),
       is_active: bm.status === "active",
-      // Only active matches can have bidding opened; non-active are always closed.
-      // Active matches default closed — admin explicitly opens bidding.
-      bidding_open: bm.status === "active" ? (bm.biddingOpen ?? false) : false,
+      // Only active matches can have voting opened; non-active are always closed.
+      // Active matches default closed — admin explicitly opens voting.
+      voting_open: bm.status === "active" ? (bm.votingOpen ?? false) : false,
       left_name: bm.slotA.teamName || "TBD",
       right_name: bm.slotB.teamName || "TBD",
     };
@@ -187,7 +187,7 @@ async function reconcileBettingMatches(bracketMatchById: Map<string, BracketMatc
       await supabase.from("matches").insert({ bracket_match_id: bm.id, ...desired });
     } else if (
       existing.is_active !== desired.is_active ||
-      existing.bidding_open !== desired.bidding_open ||
+      existing.voting_open !== desired.voting_open ||
       existing.left_name !== desired.left_name ||
       existing.right_name !== desired.right_name
     ) {
@@ -197,19 +197,19 @@ async function reconcileBettingMatches(bracketMatchById: Map<string, BracketMatc
 
   if (toDelete.length === 0) return;
 
-  const { data: betRows } = await supabase
-    .from("bets").select("user_id, amount").in("match_id", toDelete);
-  if (betRows && betRows.length > 0) {
+  const { data: voteRows } = await supabase
+    .from("votes").select("user_id, amount").in("match_id", toDelete);
+  if (voteRows && voteRows.length > 0) {
     const refundByUser = new Map<string, number>();
-    for (const b of betRows) {
-      const uid = b.user_id as string;
-      refundByUser.set(uid, (refundByUser.get(uid) ?? 0) + (b.amount as number));
+    for (const v of voteRows) {
+      const uid = v.user_id as string;
+      refundByUser.set(uid, (refundByUser.get(uid) ?? 0) + (v.amount as number));
     }
     for (const [userId, refund] of refundByUser) {
       const { data: user } = await supabase.from("users").select("tokens").eq("id", userId).single();
       if (user) await supabase.from("users").update({ tokens: (user.tokens as number) + refund }).eq("id", userId);
     }
-    console.warn(`[bracket] refunded ${betRows.length} bet(s) on stale matches before cleanup: ${toDelete.join(", ")}`);
+    console.warn(`[bracket] refunded ${voteRows.length} vote(s) on stale matches before cleanup: ${toDelete.join(", ")}`);
   }
   await supabase.from("matches").delete().in("id", toDelete);
 }
@@ -253,10 +253,10 @@ export async function saveBracketState(state: BracketState): Promise<void> {
     );
   if (schedErr) throw new Error(`Failed to save bracket_schedule: ${schedErr.message}`);
 
-  // Betting rows follow the SCHEDULE-derived active/next (one active + one next
+  // Voting rows follow the SCHEDULE-derived active/next (one active + one next
   // per ring) rather than the raw stored status — so changing the ring count
   // immediately surfaces the right number of active matches on the public
-  // bidding page. applyScheduleStatus preserves completed/skipped, so the
+  // voting page. applyScheduleStatus preserves completed/skipped, so the
   // completed-transition sync below still behaves correctly.
   let effective = matches;
   for (const d of DIVISIONS) {
@@ -266,12 +266,12 @@ export async function saveBracketState(state: BracketState): Promise<void> {
   try {
     await syncCompletedMatches(beforeStatusById, effective);
   } catch (err) {
-    console.error("[bracket] betting sync failed:", err);
+    console.error("[bracket] voting sync failed:", err);
   }
 
   try {
-    await reconcileBettingMatches(new Map(effective.map(m => [m.id, m])));
+    await reconcileVotingMatches(new Map(effective.map(m => [m.id, m])));
   } catch (err) {
-    console.error("[bracket] betting reconcile failed:", err);
+    console.error("[bracket] voting reconcile failed:", err);
   }
 }

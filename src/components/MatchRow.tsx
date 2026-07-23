@@ -6,7 +6,7 @@ import { cn } from "@/lib/cn";
 export type Bot = {
   name: string;
   /** Current crowd pick share, 0–100. Display only for now. */
-  odds: number;
+  supportPct: number;
 };
 
 export type Match = {
@@ -54,7 +54,7 @@ export default function MatchRow({ match }: { match: Match }) {
             picked ? "text-black/60" : "text-foreground/50",
           )}
         >
-          {bot.odds}% picked
+          {bot.supportPct}% voted
         </span>
       </button>
     );

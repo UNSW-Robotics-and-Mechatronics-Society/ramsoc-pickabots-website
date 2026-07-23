@@ -13,7 +13,7 @@ type Item = {
 };
 
 const ITEMS: Item[] = [
-  { href: "/voting", label: "Bid", Icon: Coins },
+  { href: "/voting", label: "Vote", Icon: Coins },
   { href: "/leaderboard", label: "Leaderboard", Icon: Trophy },
   { href: "/competition", label: "Bracket", Icon: Swords },
   { href: "/matches", label: "Matches", Icon: CalendarClock },

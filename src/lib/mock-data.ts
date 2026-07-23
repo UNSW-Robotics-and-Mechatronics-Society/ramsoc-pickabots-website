@@ -30,10 +30,10 @@ export type BracketMatch = {
   slotB: MatchSlot;
   targetScore: number;
   status: MatchStatus;
-  // Whether the public may place bids on this match. Only meaningful while the
-  // match is active (on the ring); the admin toggles it open after betting closes.
-  // Defaults closed — admin must explicitly open bidding.
-  biddingOpen: boolean;
+  // Whether the public may place votes on this match. Only meaningful while the
+  // match is active (on the ring); the admin toggles it open manually.
+  // Defaults closed — admin must explicitly open voting.
+  votingOpen: boolean;
 };
 
 // ── round count helpers ────────────────────────────────────────────────────────
@@ -116,7 +116,7 @@ export function generateDoubleElimBracket(teamCount: TeamCount, division: Divisi
         slotB: { teamName: '', score: 0 },
         targetScore: 2,
         status: 'todo',
-        biddingOpen: false,
+        votingOpen: false,
       });
     }
   }
@@ -135,7 +135,7 @@ export function generateDoubleElimBracket(teamCount: TeamCount, division: Divisi
         slotB: { teamName: '', score: 0 },
         targetScore: 2,
         status: 'todo',
-        biddingOpen: false,
+        votingOpen: false,
       });
     }
   }
@@ -153,7 +153,7 @@ export function generateDoubleElimBracket(teamCount: TeamCount, division: Divisi
       slotB: { teamName: '', score: 0 },
       targetScore: 2,
       status: 'todo',
-      biddingOpen: true,
+      votingOpen: false,
     });
   }
   matches.push({
@@ -166,7 +166,7 @@ export function generateDoubleElimBracket(teamCount: TeamCount, division: Divisi
     slotB: { teamName: '', score: 0 },
     targetScore: 2,
     status: 'todo',
-    biddingOpen: true,
+    votingOpen: false,
   });
   // 3rd place: the two semi-final losers play each other.
   matches.push({
@@ -179,7 +179,7 @@ export function generateDoubleElimBracket(teamCount: TeamCount, division: Divisi
     slotB: { teamName: '', score: 0 },
     targetScore: 2,
     status: 'todo',
-    biddingOpen: true,
+    votingOpen: false,
   });
 
   // Seed first two WB R1 matches as active / next
@@ -223,7 +223,7 @@ export function transferBracket(
       target.slotB       = { ...old.slotB };
       target.targetScore = old.targetScore;
       target.status      = old.status;
-      target.biddingOpen = old.biddingOpen;
+      target.votingOpen = old.votingOpen;
     }
   }
 

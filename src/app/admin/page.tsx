@@ -18,7 +18,7 @@ export default async function AdminPage({ searchParams }: Props) {
     user = await currentUser();
   } catch {
     // Clerk API unreachable (e.g. network error in dev) — fail safe
-    redirect("/bid");
+    redirect("/voting");
   }
 
   if (!isAdminUser(user)) {
