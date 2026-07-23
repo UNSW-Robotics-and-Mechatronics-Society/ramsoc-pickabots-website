@@ -151,6 +151,50 @@ export async function getTeamContacts(teamId: string): Promise<TeamContact[]> {
     );
 }
 
+/** Every team captain (for the current competition year) with contact details —
+ *  for the admin "broadcast to all captains" tool. */
+export async function getAllCaptainContacts(): Promise<
+  { teamId: string; teamName: string; fullName: string; phone: string }[]
+> {
+  // Teams for this year.
+  const { data: teamRows, error: tErr } = await supabase
+    .from("teams")
+    .select("id, name")
+    .eq("competition_year", COMPETITION_YEAR);
+  if (tErr) throw new Error(`Failed to load teams: ${tErr.message}`);
+  const teamById = new Map((teamRows ?? []).map(t => [t.id as string, t.name as string]));
+  if (teamById.size === 0) return [];
+
+  // Captains on those teams.
+  const { data: memberRows, error: mErr } = await supabase
+    .from("team_members")
+    .select("profile_id, team_id, role")
+    .eq("role", "captain")
+    .in("team_id", [...teamById.keys()]);
+  if (mErr) throw new Error(`Failed to load captains: ${mErr.message}`);
+  const captains = memberRows ?? [];
+  if (captains.length === 0) return [];
+
+  const { data: profileRows, error: pErr } = await supabase
+    .from("profiles")
+    .select("id, full_name, phone")
+    .in("id", captains.map(c => c.profile_id as string));
+  if (pErr) throw new Error(`Failed to load captain profiles: ${pErr.message}`);
+  const profileById = new Map((profileRows ?? []).map(p => [p.id as string, p]));
+
+  return captains
+    .map(c => {
+      const p = profileById.get(c.profile_id as string);
+      return {
+        teamId: c.team_id as string,
+        teamName: teamById.get(c.team_id as string) ?? "",
+        fullName: (p?.full_name as string) ?? "Unknown",
+        phone: (p?.phone as string) ?? "",
+      };
+    })
+    .sort((a, b) => a.teamName.localeCompare(b.teamName));
+}
+
 /** Look up a team's row (id, name, division) by its uuid. */
 export async function getTeamById(teamId: string): Promise<OnboardingTeam | null> {
   const { data, error } = await supabase

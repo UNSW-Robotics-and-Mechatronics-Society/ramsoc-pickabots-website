@@ -87,6 +87,35 @@ export function applyScheduleStatus(
   });
 }
 
+/**
+ * Match IDs whose team is within `leadMatches` of playing, per ring — i.e. at
+ * position 0 (active), 1 (next), … leadMatches in their ring's ready-pending
+ * queue. Used to text captains ahead of time so they're at the arena before
+ * they're up. Only ready matches (both teams known, not completed/skipped)
+ * count toward a position — same readiness rule as applyScheduleStatus.
+ */
+export function dueForNotify(
+  matches: BracketMatch[],
+  schedule: MatchSchedule,
+  leadMatches: number,
+): string[] {
+  const byId = new Map(matches.map(m => [m.id, m]));
+  const due: string[] = [];
+  for (const ring of [...schedule.rings, ...(schedule.exhibitionRings ?? [])]) {
+    const readyPending = ring
+      .map(e => e.matchId)
+      .filter(id => {
+        const m = byId.get(id);
+        return m && m.status !== 'completed' && m.status !== 'skipped'
+          && !!m.slotA.teamName && !!m.slotB.teamName;
+      });
+    for (let i = 0; i < readyPending.length && i <= leadMatches; i++) {
+      due.push(readyPending[i]);
+    }
+  }
+  return due;
+}
+
 export function formatTime(minute: number): string {
   const h = Math.floor(minute / 60);
   const m = minute % 60;

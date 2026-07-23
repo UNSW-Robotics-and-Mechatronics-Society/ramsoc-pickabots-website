@@ -20,3 +20,7 @@ insert into public.pickabots_config (key, value) values
   ('sms_up_next_template',
    'RAMSOC Pickabots: Team "{team}" you''re UP NEXT in {division}. Please head to the arena and check in with a judge.')
 on conflict (key) do nothing;
+
+-- How many matches ahead of playing to text a team's captains (default 2).
+insert into public.pickabots_config (key, value) values ('sms_notify_lead', '2')
+on conflict (key) do nothing;

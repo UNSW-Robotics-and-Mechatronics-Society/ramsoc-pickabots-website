@@ -102,4 +102,65 @@ export async function upNextMessage(teamName: string, division: Division): Promi
   return renderSmsTemplate(template, { team: teamName, division });
 }
 
+// ── Shared captain-alert send (used by the auto trigger + the manual route) ────
+import { sendManySms, type SmsMessage } from "@/lib/sms";
+
+export type CaptainNotifyResult = {
+  matchId: string;
+  sent: number;
+  skipped?: boolean;
+  reason?: string;
+};
+
+/**
+ * Text both teams' captains that their match is coming up, using the configured
+ * template. Idempotent via bracket_matches.captain_notified unless `force`.
+ */
+export async function notifyCaptainsForMatch(
+  matchId: string,
+  opts: { force?: boolean } = {},
+): Promise<CaptainNotifyResult> {
+  const m = await getBracketMatchTeams(matchId);
+  if (!m) return { matchId, sent: 0, skipped: true, reason: "not found" };
+  if (!opts.force && m.captainNotified) return { matchId, sent: 0, skipped: true, reason: "already notified" };
+
+  const template = await getSmsUpNextTemplate();
+  const slots = [
+    { teamId: m.teamAId, fallbackName: m.slotAName },
+    { teamId: m.teamBId, fallbackName: m.slotBName },
+  ];
+
+  const messages: SmsMessage[] = [];
+  const messageTeamIds: (string | null)[] = [];
+  for (const slot of slots) {
+    if (!slot.teamId) continue;
+    const [contacts, team] = await Promise.all([getTeamContacts(slot.teamId), getTeamById(slot.teamId)]);
+    const teamName = team?.name ?? slot.fallbackName;
+    for (const captain of contacts.filter(c => c.role === "captain" && c.phone)) {
+      messages.push({ to: captain.phone, body: renderSmsTemplate(template, { team: teamName, division: m.division }) });
+      messageTeamIds.push(slot.teamId);
+    }
+  }
+
+  if (messages.length === 0) {
+    await setCaptainNotified(matchId, true);
+    return { matchId, sent: 0, reason: "no captain phone numbers" };
+  }
+
+  const results = await sendManySms(messages);
+  await logSmsResults(
+    results.map((r, i) => ({
+      to: r.to,
+      body: messages[i].body,
+      status: r.status,
+      error: r.error,
+      teamId: messageTeamIds[i],
+      matchId,
+      kind: "auto_next",
+    })),
+  );
+  await setCaptainNotified(matchId, true);
+  return { matchId, sent: results.filter(r => r.ok).length };
+}
+
 export { getTeamContacts, getTeamById, type TeamContact };

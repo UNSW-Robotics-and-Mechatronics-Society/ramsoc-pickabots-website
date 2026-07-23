@@ -136,7 +136,16 @@ const begMock: { mode: BegMockMode } = { mode: "eligible" };
 /** Mutable holder so the Settings panel mock can echo back saved values
  *  across GET/PUT calls (a const object property, per the React Compiler
  *  restriction on reassigning module-level `let`s from a component). */
-const smsConfigMock: { template: string } = { template: DEFAULT_SMS_UP_NEXT };
+const smsConfigMock: { template: string; notifyLead: number } = {
+  template: DEFAULT_SMS_UP_NEXT,
+  notifyLead: 2,
+};
+
+const MOCK_BROADCAST_RESULTS = Array.from({ length: 10 }, (_, i) => ({
+  to: `04xx xxx ${i}`,
+  ok: true,
+  status: "sent" as const,
+}));
 
 function begState() {
   switch (begMock.mode) {
@@ -206,22 +215,40 @@ if (typeof window !== "undefined" && !(window as unknown as { __devGalleryFetchP
       return jsonResponse({
         smsUpNextTemplate: smsConfigMock.template,
         smsUpNextDefault: DEFAULT_SMS_UP_NEXT,
+        smsNotifyLead: smsConfigMock.notifyLead,
       });
     }
 
     // PUT /api/admin/config
     if (method === "PUT" && /\/api\/admin\/config$/.test(url)) {
       let template = smsConfigMock.template;
+      let notifyLead = smsConfigMock.notifyLead;
       try {
         const body = JSON.parse((init?.body as string) ?? "{}");
         if (typeof body.smsUpNextTemplate === "string") {
           template = body.smsUpNextTemplate.trim() === "" ? DEFAULT_SMS_UP_NEXT : body.smsUpNextTemplate;
         }
+        if (typeof body.smsNotifyLead === "number" && Number.isFinite(body.smsNotifyLead)) {
+          notifyLead = body.smsNotifyLead;
+        } else if (body.smsNotifyLead === undefined) {
+          notifyLead = smsConfigMock.notifyLead ?? 2;
+        }
       } catch {
         // ignore malformed body
       }
       smsConfigMock.template = template;
-      return jsonResponse({ ok: true, smsUpNextTemplate: template });
+      smsConfigMock.notifyLead = notifyLead;
+      return jsonResponse({ ok: true, smsUpNextTemplate: template, smsNotifyLead: notifyLead });
+    }
+
+    // GET /api/admin/broadcast
+    if (method === "GET" && /\/api\/admin\/broadcast$/.test(url)) {
+      return jsonResponse({ total: 12, withPhone: 10 });
+    }
+
+    // POST /api/admin/broadcast
+    if (method === "POST" && /\/api\/admin\/broadcast$/.test(url)) {
+      return jsonResponse({ sent: 10, total: 10, results: MOCK_BROADCAST_RESULTS });
     }
 
     // POST /api/admin/sms

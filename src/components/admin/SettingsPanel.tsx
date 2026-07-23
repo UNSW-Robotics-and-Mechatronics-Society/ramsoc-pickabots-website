@@ -1,19 +1,39 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { RotateCcw, Save } from "lucide-react";
+import { RotateCcw, Save, Send } from "lucide-react";
 import { cn } from "@/lib/cn";
 import {
   renderSmsTemplate,
   SMS_TEMPLATE_PLACEHOLDERS,
 } from "@/lib/sms-template";
+import ConfirmDialog from "@/components/admin/ConfirmDialog";
+
+const DEFAULT_SMS_NOTIFY_LEAD = 2;
 
 type ConfigResponse = {
   smsUpNextTemplate: string;
   smsUpNextDefault: string;
+  smsNotifyLead?: number;
 };
 
-type ConfigPutResponse = { ok: true; smsUpNextTemplate: string } | { error: string };
+type ConfigPutResponse =
+  | { ok: true; smsUpNextTemplate: string; smsNotifyLead: number }
+  | { error: string };
+
+type BroadcastCountsResponse = { total: number; withPhone: number };
+
+type BroadcastResultRow = {
+  to: string;
+  ok: boolean;
+  status: "sent" | "failed" | "skipped";
+  error?: string;
+};
+
+type BroadcastPostResponse =
+  | { sent: number; total: number; results: BroadcastResultRow[] }
+  | { sent: 0; results: []; note: string }
+  | { error: string };
 
 export default function SettingsPanel() {
   const [loading, setLoading]   = useState(true);
@@ -21,9 +41,22 @@ export default function SettingsPanel() {
   const [template, setTemplate] = useState("");
   const [savedTemplate, setSavedTemplate] = useState("");
   const [defaultTemplate, setDefaultTemplate] = useState("");
+  const [notifyLead, setNotifyLead] = useState(DEFAULT_SMS_NOTIFY_LEAD);
+  const [savedNotifyLead, setSavedNotifyLead] = useState(DEFAULT_SMS_NOTIFY_LEAD);
   const [saving, setSaving]     = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedFlash, setSavedFlash] = useState(false);
+
+  // Broadcast
+  const [broadcastCounts, setBroadcastCounts] = useState<BroadcastCountsResponse | null>(null);
+  const [broadcastCountsError, setBroadcastCountsError] = useState<string | null>(null);
+  const [broadcastBody, setBroadcastBody] = useState("");
+  const [broadcastConfirmOpen, setBroadcastConfirmOpen] = useState(false);
+  const [broadcastSending, setBroadcastSending] = useState(false);
+  const [broadcastError, setBroadcastError] = useState<string | null>(null);
+  const [broadcastResult, setBroadcastResult] = useState<
+    { sent: number; total: number; results: BroadcastResultRow[] } | { note: string } | null
+  >(null);
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -38,10 +71,25 @@ export default function SettingsPanel() {
       setTemplate(data.smsUpNextTemplate);
       setSavedTemplate(data.smsUpNextTemplate);
       setDefaultTemplate(data.smsUpNextDefault);
+      const lead = data.smsNotifyLead ?? DEFAULT_SMS_NOTIFY_LEAD;
+      setNotifyLead(lead);
+      setSavedNotifyLead(lead);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load settings");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadBroadcastCounts() {
+    setBroadcastCountsError(null);
+    try {
+      const res = await fetch("/api/admin/broadcast");
+      if (!res.ok) throw new Error(`Failed to load captain counts (${res.status})`);
+      const data = (await res.json()) as BroadcastCountsResponse;
+      setBroadcastCounts(data);
+    } catch (err) {
+      setBroadcastCountsError(err instanceof Error ? err.message : "Failed to load captain counts");
     }
   }
 
@@ -50,12 +98,16 @@ export default function SettingsPanel() {
     // other admin panels in this repo).
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
+    loadBroadcastCounts();
     return () => { if (flashTimer.current) clearTimeout(flashTimer.current); };
   }, []);
 
   const charCount = template.length;
   const parts = charCount === 0 ? 0 : Math.ceil(charCount / 160);
-  const dirty = template !== savedTemplate;
+  const dirty = template !== savedTemplate || notifyLead !== savedNotifyLead;
+
+  const broadcastCharCount = broadcastBody.length;
+  const broadcastParts = broadcastCharCount === 0 ? 0 : Math.ceil(broadcastCharCount / 160);
 
   const preview = useMemo(
     () => renderSmsTemplate(template, { team: "Iron Fist", division: "standards" }),
@@ -78,7 +130,7 @@ export default function SettingsPanel() {
       const res = await fetch("/api/admin/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ smsUpNextTemplate: template }),
+        body: JSON.stringify({ smsUpNextTemplate: template, smsNotifyLead: notifyLead }),
       });
       const data = (await res.json()) as ConfigPutResponse;
       if (!res.ok || "error" in data) {
@@ -86,6 +138,8 @@ export default function SettingsPanel() {
       }
       setTemplate(data.smsUpNextTemplate);
       setSavedTemplate(data.smsUpNextTemplate);
+      setNotifyLead(data.smsNotifyLead);
+      setSavedNotifyLead(data.smsNotifyLead);
       setSavedFlash(true);
       if (flashTimer.current) clearTimeout(flashTimer.current);
       flashTimer.current = setTimeout(() => setSavedFlash(false), 2000);
@@ -93,6 +147,41 @@ export default function SettingsPanel() {
       setSaveError(err instanceof Error ? err.message : "Save failed");
     } finally {
       setSaving(false);
+    }
+  }
+
+  function handleNotifyLeadChange(raw: string) {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return;
+    setNotifyLead(Math.min(16, Math.max(1, Math.round(n))));
+  }
+
+  async function handleBroadcastSend() {
+    setBroadcastConfirmOpen(false);
+    setBroadcastSending(true);
+    setBroadcastError(null);
+    setBroadcastResult(null);
+    try {
+      const res = await fetch("/api/admin/broadcast", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: broadcastBody }),
+      });
+      const data = (await res.json()) as BroadcastPostResponse;
+      if (!res.ok || "error" in data) {
+        throw new Error("error" in data ? data.error : `Send failed (${res.status})`);
+      }
+      if ("note" in data) {
+        setBroadcastResult({ note: data.note });
+      } else {
+        setBroadcastResult({ sent: data.sent, total: data.total, results: data.results });
+      }
+      // Refresh counts in case they changed since mount.
+      loadBroadcastCounts();
+    } catch (err) {
+      setBroadcastError(err instanceof Error ? err.message : "Send failed");
+    } finally {
+      setBroadcastSending(false);
     }
   }
 
@@ -170,6 +259,26 @@ export default function SettingsPanel() {
                 by the &ldquo;up next&rdquo; button in a team&rsquo;s Contact panel.
               </p>
 
+              <div className="mt-4 border-t border-white/10 pt-3">
+                <label className="flex flex-wrap items-center gap-1.5 text-xs text-foreground">
+                  Alert captains when their team is
+                  <input
+                    type="number"
+                    min={1}
+                    max={16}
+                    step={1}
+                    value={notifyLead}
+                    onChange={e => handleNotifyLeadChange(e.target.value)}
+                    className="w-14 rounded-lg border border-white/10 bg-white/8 px-2 py-1 text-center text-xs text-foreground outline-none focus:border-white/30"
+                  />
+                  matches from playing
+                </label>
+                <p className="mt-1.5 text-[0.65rem] text-foreground/40">
+                  2 = they get the heads-up one match before they&rsquo;re on-deck, so
+                  they&rsquo;re already at the arena.
+                </p>
+              </div>
+
               {saveError && (
                 <p className="mt-2 text-[0.65rem] text-red-300">{saveError}</p>
               )}
@@ -201,9 +310,92 @@ export default function SettingsPanel() {
                 </span>
               </div>
             </div>
+
+            <div className="rounded-2xl border border-white/22 bg-[#0d1018] p-3">
+              <h3 className="mb-1.5 text-xs font-medium text-foreground">
+                Broadcast to all captains
+              </h3>
+
+              {broadcastCountsError && (
+                <p className="mb-2 text-[0.65rem] text-red-300">{broadcastCountsError}</p>
+              )}
+
+              <p className="mb-2 text-[0.65rem] text-foreground/50">
+                {broadcastCounts
+                  ? `${broadcastCounts.total} captains · ${broadcastCounts.withPhone} with a phone number`
+                  : "Loading captain counts…"}
+              </p>
+
+              <textarea
+                value={broadcastBody}
+                onChange={e => setBroadcastBody(e.target.value)}
+                placeholder="Hey! Welcome to Sumobots 2026 — knockouts start now. Your bot is up soon, head to the arena…"
+                rows={4}
+                className="w-full resize-none rounded-lg border border-white/10 bg-white/8 px-2 py-1.5 text-xs text-foreground placeholder:text-foreground/30 outline-none focus:border-white/30"
+              />
+
+              <p className="mt-1 text-[0.6rem] text-foreground/35">
+                {broadcastCharCount} chars
+                {broadcastParts > 1
+                  ? ` · ${broadcastParts} SMS parts`
+                  : broadcastParts === 1
+                  ? " · 1 SMS part"
+                  : ""}
+              </p>
+
+              {broadcastError && (
+                <p className="mt-2 text-[0.65rem] text-red-300">{broadcastError}</p>
+              )}
+
+              {broadcastResult && "note" in broadcastResult && (
+                <p className="mt-2 text-[0.65rem] text-foreground/50">{broadcastResult.note}</p>
+              )}
+
+              {broadcastResult && "sent" in broadcastResult && (
+                <div className="mt-2">
+                  <p className="text-[0.65rem] text-green-300">
+                    Sent {broadcastResult.sent}/{broadcastResult.total}
+                  </p>
+                  {broadcastResult.results.some(r => r.status !== "sent") && (
+                    <ul className="mt-1 space-y-0.5 text-[0.6rem] text-foreground/50">
+                      {broadcastResult.results
+                        .filter(r => r.status !== "sent")
+                        .slice(0, 5)
+                        .map((r, i) => (
+                          <li key={`${r.to}-${i}`} className="truncate">
+                            {r.to} — {r.status}
+                            {r.error ? `: ${r.error}` : ""}
+                          </li>
+                        ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+
+              <div className="mt-3">
+                <button
+                  onClick={() => setBroadcastConfirmOpen(true)}
+                  disabled={broadcastSending || broadcastBody.trim().length === 0}
+                  className="flex items-center gap-1.5 rounded-lg border border-[#FF6B00]/40 bg-[#FF6B00]/20 px-3 py-1.5 text-xs font-medium text-[#FF6B00] transition-colors hover:bg-[#FF6B00]/30 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Send size={12} />
+                  {broadcastSending ? "Sending…" : "Send to all captains"}
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
+
+      {broadcastConfirmOpen && (
+        <ConfirmDialog
+          title="Send broadcast?"
+          message={`Send this message to all ${broadcastCounts?.withPhone ?? 0} captains? This can't be undone.`}
+          confirmLabel="Send"
+          onConfirm={handleBroadcastSend}
+          onCancel={() => setBroadcastConfirmOpen(false)}
+        />
+      )}
     </div>
   );
 }

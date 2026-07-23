@@ -6,6 +6,10 @@ import { DEFAULT_SMS_UP_NEXT } from "@/lib/sms-template";
 // service key only.
 
 const SMS_UP_NEXT_KEY = "sms_up_next_template";
+const NOTIFY_LEAD_KEY = "sms_notify_lead";
+
+/** Default: text captains when their team is this many matches from playing. */
+export const DEFAULT_NOTIFY_LEAD = 2;
 
 async function getConfig(key: string): Promise<string | null> {
   const { data, error } = await supabase
@@ -37,4 +41,21 @@ export async function getSmsUpNextTemplate(): Promise<string> {
 
 export async function setSmsUpNextTemplate(value: string): Promise<void> {
   await setConfig(SMS_UP_NEXT_KEY, value);
+}
+
+/** How many matches ahead of playing to text a team's captains. Clamped ≥1. */
+export async function getNotifyLead(): Promise<number> {
+  try {
+    const raw = await getConfig(NOTIFY_LEAD_KEY);
+    const n = raw === null ? DEFAULT_NOTIFY_LEAD : parseInt(raw, 10);
+    return Number.isFinite(n) && n >= 1 ? n : DEFAULT_NOTIFY_LEAD;
+  } catch (err) {
+    console.error("[config] getNotifyLead failed, using default:", err);
+    return DEFAULT_NOTIFY_LEAD;
+  }
+}
+
+export async function setNotifyLead(value: number): Promise<void> {
+  const n = Math.max(1, Math.min(16, Math.trunc(value)));
+  await setConfig(NOTIFY_LEAD_KEY, String(n));
 }

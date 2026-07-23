@@ -4,9 +4,11 @@ import {
   type BracketMatch, type BracketSide, type Division, type MatchStatus, type TeamCount,
   generateDoubleElimBracket, winner,
 } from "@/lib/mock-data";
-import { type MatchSchedule, generateSchedule, applyScheduleStatus, rollSchedule } from "@/lib/schedule";
+import { type MatchSchedule, generateSchedule, applyScheduleStatus, rollSchedule, dueForNotify } from "@/lib/schedule";
 import { toDbCategory, fromDbCategory } from "./division";
 import { rewardWinners } from "./rewards";
+import { notifyCaptainsForMatch } from "./notify";
+import { getNotifyLead } from "./config";
 
 const DIVISIONS: Division[] = ["standards", "open"];
 const DEFAULT_TEAM_COUNT: TeamCount = 16;
@@ -273,5 +275,23 @@ export async function saveBracketState(state: BracketState): Promise<void> {
     await reconcileVotingMatches(new Map(effective.map(m => [m.id, m])));
   } catch (err) {
     console.error("[bracket] voting reconcile failed:", err);
+  }
+
+  // Lead-time captain alerts: text captains once their team is within
+  // `notifyLead` matches of playing. Deduped per match via captain_notified, so
+  // running on every save is safe. Best-effort — never fails the bracket save.
+  try {
+    const lead = await getNotifyLead();
+    const dueIds = new Set<string>();
+    for (const d of DIVISIONS) {
+      for (const id of dueForNotify(effective, schedules[d], lead)) dueIds.add(id);
+    }
+    for (const id of dueIds) {
+      await notifyCaptainsForMatch(id).catch(err =>
+        console.error("[bracket] captain notify failed for", id, err),
+      );
+    }
+  } catch (err) {
+    console.error("[bracket] captain-notify pass failed:", err);
   }
 }
