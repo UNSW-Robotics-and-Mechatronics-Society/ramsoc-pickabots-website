@@ -22,13 +22,16 @@ export async function GET() {
     const displayName = clerkUser?.fullName || clerkUser?.username || 'Anonymous Pilot'
     console.log('[GET /api/user] no row found, inserting userId:', userId)
 
-    // Try with display_name first; fall back without it if column doesn't exist yet
+    // Try with display_name first; fall back without it if column doesn't exist yet.
+    // Upsert with ignoreDuplicates so a concurrent request (or place_vote, which
+    // now provisions this row itself) racing us to create the same id is a no-op
+    // instead of a duplicate-key error.
     let { error: insertErr } = await supabase
-      .from('users').insert({ id: userId, tokens: 100, display_name: displayName })
+      .from('users').upsert({ id: userId, tokens: 100, display_name: displayName }, { onConflict: 'id', ignoreDuplicates: true })
     console.log('[GET /api/user] insert w/ display_name result:', insertErr ?? 'ok')
     if (insertErr?.message?.includes('display_name')) {
       ;({ error: insertErr } = await supabase
-        .from('users').insert({ id: userId, tokens: 100 }))
+        .from('users').upsert({ id: userId, tokens: 100 }, { onConflict: 'id', ignoreDuplicates: true }))
       console.log('[GET /api/user] insert without display_name result:', insertErr ?? 'ok')
     }
     if (insertErr) {

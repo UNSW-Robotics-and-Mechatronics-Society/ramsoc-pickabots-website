@@ -135,12 +135,15 @@ export async function attemptBeg(userId: string, accuracy: number): Promise<BegR
       .eq("id", userId);
     if (error) throw new Error(`Failed to record beg: ${error.message}`);
   } else {
-    const { error } = await supabase.from("users").insert({
-      id: userId,
-      tokens: newTokens,
-      beg_count: newBegCount,
-      last_beg_match_count: completed,
-    });
+    const { error } = await supabase.from("users").upsert(
+      {
+        id: userId,
+        tokens: newTokens,
+        beg_count: newBegCount,
+        last_beg_match_count: completed,
+      },
+      { onConflict: "id" },
+    );
     if (error) throw new Error(`Failed to record beg: ${error.message}`);
   }
 

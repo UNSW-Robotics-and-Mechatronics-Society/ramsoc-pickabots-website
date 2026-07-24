@@ -27,6 +27,10 @@ const isOnboardingExempt = createRouteMatcher([
 const ACCESS_COOKIE     = "pickabots_access";
 const ONBOARDED_COOKIE  = "pickabots_onboarded";
 
+// Temporarily disabled so people can sign up with Clerk and bid immediately.
+// Flip back to true to re-enable the /onboarding redirect gate.
+const ONBOARDING_GATE_ENABLED = false;
+
 // /admin is auth-gated here (must be signed in). The admin role check
 // (publicMetadata.role === "admin") is enforced in app/admin/page.tsx via
 // currentUser() — per Next.js guidance, authorization lives in the Server
@@ -48,7 +52,7 @@ export default clerkMiddleware(async (auth, req) => {
 
   // Then the onboarding gate: signed-in users who haven't completed onboarding
   // are funnelled to /onboarding (the cookie is set once onboarding finishes).
-  if (userId && !isOnboardingExempt(req)) {
+  if (ONBOARDING_GATE_ENABLED && userId && !isOnboardingExempt(req)) {
     const cookie = req.cookies.get(ONBOARDED_COOKIE);
     if (cookie?.value !== "1") {
       return NextResponse.redirect(new URL("/onboarding", req.url));
