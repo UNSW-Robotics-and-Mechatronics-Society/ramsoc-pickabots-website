@@ -9,8 +9,11 @@ export default async function Page() {
   return (
     <>
       <LeaderboardPage players={players} />
-      {/* Standings shift when matches resolve (winner_side) and payouts land (votes.payout). */}
-      <RealtimeRefresh tables={['matches', 'votes']} />
+      {/* Standings shift when matches resolve (winner_side), votes settle
+          (votes.payout), and — critically — when the payout credits land on
+          users.tokens, which is the value this page actually ranks by and the
+          last write rewardWinners() makes. */}
+      <RealtimeRefresh tables={['matches', 'votes', 'users']} />
     </>
   )
 }
