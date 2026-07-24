@@ -4,9 +4,18 @@ import { NextResponse } from "next/server";
 // /dev is a development-only component gallery. It's exempted from every gate
 // here so it's reachable without auth/standby, and the page itself 404s in
 // production (see app/dev/page.tsx), so exempting it is safe.
-const isPublicRoute      = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)", "/dev(.*)"]);
-const isPasswordExempt   = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)", "/standby", "/api/(.*)", "/dev(.*)"]);
+//
+// The public surface: `/` is the marketing landing (app/page.tsx renders it for
+// signed-out visitors and redirects signed-in users into the app), and
+// `/robots.txt` + `/sitemap.xml` are the crawler files. All three must return
+// 200 to signed-out crawlers — Googlebot is always signed out — so search
+// engines can index the site instead of caching a stale 404. They are exempt
+// from every gate below; none of them expose gated app content.
+const PUBLIC_PATHS       = ["/", "/robots.txt", "/sitemap.xml"];
+const isPublicRoute      = createRouteMatcher([...PUBLIC_PATHS, "/sign-in(.*)", "/sign-up(.*)", "/dev(.*)"]);
+const isPasswordExempt   = createRouteMatcher([...PUBLIC_PATHS, "/sign-in(.*)", "/sign-up(.*)", "/standby", "/api/(.*)", "/dev(.*)"]);
 const isOnboardingExempt = createRouteMatcher([
+  ...PUBLIC_PATHS,
   "/onboarding(.*)",
   "/dev(.*)",
   "/sign-in(.*)",

@@ -23,7 +23,10 @@ const GRAIN = `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http:
 type Props = { players: LeaderboardEntry[] }
 
 export default function LeaderboardPage({ players }: Props) {
-  useRealtimeRefresh(['matches', 'votes'])
+  // Include `users`: tokens (the ranking key) live there, and the payout credit
+  // is the last write when a match resolves — without it the standings only
+  // moved on the earlier matches/votes events, before the tokens changed.
+  useRealtimeRefresh(['matches', 'votes', 'users'])
   const [selected, setSelected] = useState<{ id: string; name: string; rank: number } | null>(null)
 
   const PLAYERS: Player[] = players.map((p, i) => ({

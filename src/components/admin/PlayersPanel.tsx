@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Phone, Mail, Trash2, Download, Plus } from "lucide-react";
+import { Phone, Mail, Trash2, Download, Plus, Minus } from "lucide-react";
 import { cn } from "@/lib/cn";
 import ConfirmDialog from "./ConfirmDialog";
 
@@ -81,7 +81,11 @@ export default function PlayersPanel() {
   const [error, setError]     = useState<string | null>(null);
   const [search, setSearch]         = useState("");
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
-  const [boostAmounts, setBoostAmounts] = useState<Record<string, number>>({});
+  // Held as raw text (not number) so partial entries survive a re-render —
+  // notably a lone "-" while typing a negative deduction. A controlled
+  // type="number" input reports its `.value` as "" mid-minus, which would
+  // otherwise get coerced to 0 and wipe the "-" before the digits arrive.
+  const [boostAmounts, setBoostAmounts] = useState<Record<string, string>>({});
   const [busyId, setBusyId]     = useState<string | null>(null);
   const [kickTarget, setKickTarget] = useState<Player | null>(null);
 
@@ -123,17 +127,23 @@ export default function PlayersPanel() {
     }
   }), [players, searchLower, filterMode]);
 
-  function boostAmountFor(id: string): number {
-    return boostAmounts[id] ?? 50;
+  function boostTextFor(id: string): string {
+    return boostAmounts[id] ?? "50";
   }
 
-  function setBoostAmount(id: string, value: number) {
+  function setBoostText(id: string, value: string) {
     setBoostAmounts(prev => ({ ...prev, [id]: value }));
+  }
+
+  /** Parsed integer for a player's boost field ("" / "-" → NaN). */
+  function boostAmountFor(id: string): number {
+    return Math.trunc(Number(boostTextFor(id)));
   }
 
   async function handleBoost(id: string) {
     const amount = boostAmountFor(id);
-    if (!amount) return;
+    // Reject blank/partial ("-") and no-op zero; negatives are valid (deduct).
+    if (!Number.isFinite(amount) || amount === 0) return;
     setBusyId(id);
     try {
       const res = await fetch(`/api/admin/players/${id}`, {
@@ -243,6 +253,8 @@ export default function PlayersPanel() {
             const showFull   = p.fullName && p.fullName !== name;
             const isCaptain  = p.teamRole === "captain";
             const busy       = busyId === p.id;
+            const amount     = boostAmountFor(p.id);
+            const deduct     = amount < 0;
 
             return (
               <div
@@ -343,9 +355,14 @@ export default function PlayersPanel() {
                 {/* actions */}
                 <div className="flex flex-wrap items-center gap-1.5">
                   <input
-                    type="number"
-                    value={boostAmountFor(p.id)}
-                    onChange={e => setBoostAmount(p.id, Number(e.target.value))}
+                    type="text"
+                    inputMode="numeric"
+                    value={boostTextFor(p.id)}
+                    onChange={e => {
+                      // Allow blank, a lone "-", or a signed integer while typing.
+                      const v = e.target.value;
+                      if (v === "" || v === "-" || /^-?\d+$/.test(v)) setBoostText(p.id, v);
+                    }}
                     className="w-16 rounded-lg border border-white/10 bg-white/8 px-2 py-1 text-xs tabular-nums outline-none focus:border-white/30"
                   />
                   <button
@@ -353,8 +370,8 @@ export default function PlayersPanel() {
                     onClick={() => handleBoost(p.id)}
                     className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/8 px-2 py-1 text-[0.65rem] text-foreground/70 transition-colors hover:text-foreground/95 disabled:opacity-40"
                   >
-                    <Plus size={11} strokeWidth={2} />
-                    Boost
+                    {deduct ? <Minus size={11} strokeWidth={2} /> : <Plus size={11} strokeWidth={2} />}
+                    {deduct ? "Deduct" : "Boost"}
                   </button>
 
                   <button
