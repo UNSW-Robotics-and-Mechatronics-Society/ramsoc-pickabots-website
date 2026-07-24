@@ -1,8 +1,11 @@
 'use client'
+import { useState } from 'react'
 import AdminUserButton from './AdminUserButton'
 import RamCoin from './RamCoin'
+import CoinModal from './CoinModal'
 
 export default function Header({ tokens, loading }: { tokens: number; loading: boolean }) {
+  const [coinOpen, setCoinOpen] = useState(false)
   return (
     <header style={{
       position: 'sticky', top: 0, zIndex: 100,
@@ -43,7 +46,7 @@ export default function Header({ tokens, loading }: { tokens: number; loading: b
           backdropFilter: 'blur(8px)',
         }}>
           <span style={{ display: 'inline-block', animation: 'orbitSpin 6s linear infinite' }}>
-            <RamCoin size={22} />
+            <RamCoin size={22} onClick={() => setCoinOpen(true)} title="View your RAMSoc coin" />
           </span>
           <span style={{
             fontSize: '1.1rem', fontWeight: 900, color: '#FFD700', letterSpacing: 2,
@@ -57,6 +60,8 @@ export default function Header({ tokens, loading }: { tokens: number; loading: b
 
         <AdminUserButton />
       </div>
+
+      <CoinModal open={coinOpen} onClose={() => setCoinOpen(false)} />
 
       <style>{`
         @keyframes orbitSpin {

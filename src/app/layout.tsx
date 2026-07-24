@@ -22,11 +22,19 @@ const anta = Anta({
 });
 
 export const metadata: Metadata = {
+  // Lets canonical / Open Graph URLs below (and on child pages) be written as
+  // relative paths and resolved against the production origin.
+  metadataBase: new URL("https://pickabots.ramsocunsw.org"),
   title: "RAMSoc Pickabots",
   description:
     "Pickabots — the RAMSoc UNSW robotics competition. Build, compete, and win.",
   icons: {
     icon: [{ url: "/ramsoc_logo.svg", type: "image/svg+xml" }],
+  },
+  openGraph: {
+    siteName: "Pickabots",
+    locale: "en_AU",
+    type: "website",
   },
 };
 

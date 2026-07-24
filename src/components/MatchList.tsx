@@ -221,7 +221,7 @@ export default function MatchList({ matches, teamCount, schedules, exhibitionSch
             <p style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.3)' }}>No matches scheduled</p>
           </div>
         ) : (
-          <BracketZoomPan ref={zoomPanRef} key={viewMode} fitAxis="width">
+          <BracketZoomPan ref={zoomPanRef} key={viewMode} fitAxis="width" momentum>
             {tableContent}
           </BracketZoomPan>
         )}
