@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { RotateCcw, Save, Send } from "lucide-react";
+import { RotateCcw, Save, Send, Upload, AlertTriangle, Coins } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { type Division, type TeamCount } from "@/lib/mock-data";
 import {
   renderSmsTemplate,
   SMS_TEMPLATE_PLACEHOLDERS,
@@ -13,15 +14,68 @@ import ConfirmDialog from "@/components/admin/ConfirmDialog";
 
 const DEFAULT_SMS_NOTIFY_LEAD = 2;
 
+// One parsed row of the seed-import CSV. Structurally matches AdminPageClient's
+// SeedImportRow/SeedImportResult (the callback contract), kept local so this
+// panel doesn't import from its own parent.
+type SeedImportRow = { name: string; division: Division; seed: number };
+type SeedImportResult = { imported: number; unmatched: SeedImportRow[] };
+
+type Props = {
+  division: Division;
+  teamCount: TeamCount;
+  teamCounts: TeamCount[];
+  onTeamCountChange: (n: TeamCount) => void;
+  onSetAllPresent: (present: boolean) => Promise<void>;
+  onSetAllInBracket: (inBracket: boolean) => Promise<void>;
+  onImportSeeds: (rows: SeedImportRow[]) => Promise<SeedImportResult>;
+  onAutoFill: () => void;
+  onResetAll: () => void;
+};
+
 type ConfigResponse = {
   smsUpNextTemplate: string;
   smsUpNextDefault: string;
   smsNotifyLead?: number;
+  allIn?: boolean;
 };
 
 type ConfigPutResponse =
-  | { ok: true; smsUpNextTemplate: string; smsNotifyLead: number }
+  | { ok: true; smsUpNextTemplate: string; smsNotifyLead: number; allIn?: boolean }
   | { error: string };
+
+const DIVISION_LABEL: Record<Division, string> = { standards: "Standards", open: "Open" };
+
+function normalizeDivision(raw: string): Division | null {
+  const s = raw.trim().toLowerCase();
+  if (s === "standards" || s === "standard" || s === "std") return "standards";
+  if (s === "open" || s === "opn") return "open";
+  return null;
+}
+
+/**
+ * Parses the "Import seeds" file: one team per line as `name, division, seed`
+ * (comma OR pipe delimited). A non-numeric seed on the first line is treated
+ * as a header and skipped. Returns valid rows plus a reason for each bad one.
+ */
+function parseSeedCsv(text: string): { valid: SeedImportRow[]; invalid: { line: string; reason: string }[] } {
+  const valid: SeedImportRow[] = [];
+  const invalid: { line: string; reason: string }[] = [];
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  lines.forEach((line, idx) => {
+    const parts = line.split(line.includes("|") ? "|" : ",").map(p => p.trim());
+    if (parts.length < 3) { invalid.push({ line, reason: "expected name, division, seed" }); return; }
+    const [name, divRaw, seedRaw] = parts;
+    const seed = Number(seedRaw);
+    // Header row: first line whose seed column isn't a number.
+    if (idx === 0 && !Number.isFinite(seed)) return;
+    const division = normalizeDivision(divRaw);
+    if (!name) { invalid.push({ line, reason: "missing team name" }); return; }
+    if (!division) { invalid.push({ line, reason: `unknown division "${divRaw}"` }); return; }
+    if (!Number.isFinite(seed) || seed < 1) { invalid.push({ line, reason: `invalid seed "${seedRaw}"` }); return; }
+    valid.push({ name, division, seed: Math.trunc(seed) });
+  });
+  return { valid, invalid };
+}
 
 type BroadcastCountsResponse = { total: number; withPhone: number };
 
@@ -37,10 +91,30 @@ type BroadcastPostResponse =
   | { sent: 0; results: []; note: string }
   | { error: string };
 
-export default function SettingsPanel() {
+export default function SettingsPanel({
+  division, teamCount, teamCounts,
+  onTeamCountChange, onSetAllPresent, onSetAllInBracket,
+  onImportSeeds, onAutoFill, onResetAll,
+}: Props) {
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState<string | null>(null);
   const [template, setTemplate] = useState("");
+
+  // ── Team / Player / Reset sections ─────────────────────────────────────────
+  const [allIn, setAllIn]           = useState(false);
+  const [allInBusy, setAllInBusy]   = useState(false);
+  const [teamActionBusy, setTeamActionBusy] = useState(false);
+  const [teamActionMsg, setTeamActionMsg]   = useState<string | null>(null);
+  const [seedText, setSeedText]     = useState("");
+  const [importBusy, setImportBusy] = useState(false);
+  const [importResult, setImportResult] = useState<
+    { imported: number; unmatched: SeedImportRow[]; invalid: { line: string; reason: string }[] } | null
+  >(null);
+  const [pendingAutoFill, setPendingAutoFill] = useState(false);
+  const [confirmResetTokens, setConfirmResetTokens] = useState(false);
+  const [confirmResetAll, setConfirmResetAll]       = useState(false);
+  const [resetTokensMsg, setResetTokensMsg]         = useState<string | null>(null);
+  const seedFileRef = useRef<HTMLInputElement | null>(null);
   const [savedTemplate, setSavedTemplate] = useState("");
   const [defaultTemplate, setDefaultTemplate] = useState("");
   const [notifyLead, setNotifyLead] = useState(DEFAULT_SMS_NOTIFY_LEAD);
@@ -82,6 +156,7 @@ export default function SettingsPanel() {
       const lead = data.smsNotifyLead ?? DEFAULT_SMS_NOTIFY_LEAD;
       setNotifyLead(lead);
       setSavedNotifyLead(lead);
+      setAllIn(data.allIn ?? false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load settings");
     } finally {
@@ -147,6 +222,76 @@ export default function SettingsPanel() {
 
   function handleReset() {
     setTemplate(defaultTemplate);
+  }
+
+  // ── Team Settings actions (all current-division only) ──────────────────────
+  async function runTeamAction(label: string, fn: () => Promise<void>) {
+    setTeamActionBusy(true);
+    setTeamActionMsg(null);
+    try {
+      await fn();
+      setTeamActionMsg(label);
+    } catch (err) {
+      setTeamActionMsg(err instanceof Error ? err.message : "Action failed");
+    } finally {
+      setTeamActionBusy(false);
+    }
+  }
+
+  async function loadSeedFile(file: File) {
+    setSeedText(await file.text());
+    setImportResult(null);
+  }
+
+  async function handleImportSeeds() {
+    const { valid, invalid } = parseSeedCsv(seedText);
+    if (valid.length === 0) {
+      setImportResult({ imported: 0, unmatched: [], invalid });
+      return;
+    }
+    setImportBusy(true);
+    try {
+      const { imported, unmatched } = await onImportSeeds(valid);
+      setImportResult({ imported, unmatched, invalid });
+      if (imported > 0) setPendingAutoFill(true);
+    } catch (err) {
+      setImportResult({ imported: 0, unmatched: [], invalid: [{ line: "", reason: err instanceof Error ? err.message : "Import failed" }] });
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
+  // ── Player Settings actions ────────────────────────────────────────────────
+  async function toggleAllIn() {
+    const next = !allIn;
+    setAllInBusy(true);
+    setAllIn(next); // optimistic
+    try {
+      const res = await fetch("/api/admin/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allIn: next }),
+      });
+      const data = (await res.json()) as ConfigPutResponse;
+      if (!res.ok || "error" in data) throw new Error("error" in data ? data.error : `Save failed (${res.status})`);
+      setAllIn(data.allIn ?? next);
+    } catch {
+      setAllIn(!next); // revert
+    } finally {
+      setAllInBusy(false);
+    }
+  }
+
+  async function handleResetTokens() {
+    setConfirmResetTokens(false);
+    setResetTokensMsg(null);
+    try {
+      const res = await fetch("/api/admin/reset-tokens", { method: "POST" });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `Reset failed (${res.status})`);
+      setResetTokensMsg("Every player reset to 100 RamCoin ✓");
+    } catch (err) {
+      setResetTokensMsg(err instanceof Error ? err.message : "Reset failed");
+    }
   }
 
   async function handleSave() {
@@ -243,7 +388,7 @@ export default function SettingsPanel() {
       {/* toolbar */}
       <div className="shrink-0 border-b border-white/10 px-3 py-2">
         <h2 className="truncate text-xs uppercase tracking-[0.18em] text-foreground/55">
-          SMS Settings
+          Settings
         </h2>
       </div>
 
@@ -263,6 +408,142 @@ export default function SettingsPanel() {
 
         {!loading && !error && (
           <div className="flex flex-col gap-3">
+            {/* ── Team Settings ──────────────────────────────────────────── */}
+            <div className="rounded-2xl border border-white/22 bg-[#0d1018] p-3">
+              <h3 className="mb-2 text-xs font-medium text-foreground">Team Settings</h3>
+
+              {/* Number of teams (bracket size) */}
+              <div className="mb-3">
+                <span className="text-[0.6rem] uppercase tracking-wider text-foreground/40">Number of Teams</span>
+                <div className="mt-1 flex flex-wrap items-center gap-1">
+                  {teamCounts.map(n => (
+                    <button
+                      key={n}
+                      onClick={() => onTeamCountChange(n)}
+                      className={cn(
+                        "rounded px-2.5 py-1 text-xs transition-colors",
+                        teamCount === n
+                          ? "bg-white/20 text-foreground"
+                          : "bg-white/5 text-foreground/50 hover:text-foreground/80",
+                      )}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Bulk present / in-bracket — current division only */}
+              <div className="mb-3 border-t border-white/10 pt-3">
+                <span className="text-[0.6rem] uppercase tracking-wider text-foreground/40">
+                  Bulk actions · {DIVISION_LABEL[division]}
+                </span>
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  <button
+                    disabled={teamActionBusy}
+                    onClick={() => runTeamAction(`All ${DIVISION_LABEL[division]} teams set present`, () => onSetAllPresent(true))}
+                    className="rounded-lg border border-green-400/40 bg-green-400/15 px-2.5 py-1 text-xs text-green-300 transition-colors hover:bg-green-400/25 disabled:opacity-40"
+                  >
+                    All Present
+                  </button>
+                  <button
+                    disabled={teamActionBusy}
+                    onClick={() => runTeamAction(`All ${DIVISION_LABEL[division]} teams set absent`, () => onSetAllPresent(false))}
+                    className="rounded-lg border border-red-400/30 bg-red-400/10 px-2.5 py-1 text-xs text-red-300/80 transition-colors hover:bg-red-400/20 disabled:opacity-40"
+                  >
+                    All Absent
+                  </button>
+                  <span className="mx-1 text-foreground/20">·</span>
+                  <button
+                    disabled={teamActionBusy}
+                    onClick={() => runTeamAction(`All ${DIVISION_LABEL[division]} teams added to bracket`, () => onSetAllInBracket(true))}
+                    className="rounded-lg border border-purple-400/50 bg-purple-400/20 px-2.5 py-1 text-xs text-purple-300 transition-colors hover:bg-purple-400/30 disabled:opacity-40"
+                  >
+                    All In Bracket
+                  </button>
+                  <button
+                    disabled={teamActionBusy}
+                    onClick={() => runTeamAction(`All ${DIVISION_LABEL[division]} teams removed from bracket`, () => onSetAllInBracket(false))}
+                    className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1 text-xs text-foreground/50 transition-colors hover:text-foreground/80 disabled:opacity-40"
+                  >
+                    All Out
+                  </button>
+                </div>
+                {teamActionMsg && <p className="mt-1.5 text-[0.65rem] text-foreground/50">{teamActionMsg}</p>}
+              </div>
+
+              {/* Import seeds */}
+              <div className="border-t border-white/10 pt-3">
+                <span className="text-[0.6rem] uppercase tracking-wider text-foreground/40">Import Seeds</span>
+                <p className="mt-0.5 text-[0.6rem] text-foreground/35">
+                  One team per line: <span className="font-mono text-foreground/50">name, division, seed</span> (comma or | separated). Updates existing teams by name — it can&rsquo;t create new ones.
+                </p>
+                <textarea
+                  value={seedText}
+                  onChange={e => { setSeedText(e.target.value); setImportResult(null); }}
+                  placeholder={"Iron Fist, standards, 1\nVoltage, standards, 2\nInferno, open, 1"}
+                  rows={4}
+                  className="mt-1.5 w-full resize-none rounded-lg border border-white/10 bg-white/8 px-2 py-1.5 font-mono text-[0.7rem] text-foreground placeholder:text-foreground/25 outline-none focus:border-white/30"
+                />
+                <input
+                  ref={seedFileRef}
+                  type="file"
+                  accept=".csv,text/csv,text/plain"
+                  className="hidden"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) loadSeedFile(f); e.target.value = ""; }}
+                />
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <button
+                    onClick={() => seedFileRef.current?.click()}
+                    className="rounded-lg border border-white/20 bg-white/5 px-2.5 py-1 text-xs text-foreground/70 transition-colors hover:bg-white/10"
+                  >
+                    Choose CSV…
+                  </button>
+                  <button
+                    disabled={importBusy || seedText.trim() === ""}
+                    onClick={handleImportSeeds}
+                    className="flex items-center gap-1.5 rounded-lg border border-[#FF6B00]/40 bg-[#FF6B00]/20 px-2.5 py-1 text-xs font-medium text-[#FF6B00] transition-colors hover:bg-[#FF6B00]/30 disabled:opacity-40"
+                  >
+                    <Upload size={12} />
+                    {importBusy ? "Importing…" : "Import Seeds"}
+                  </button>
+                </div>
+                {importResult && (
+                  <div className="mt-2 rounded-lg border border-white/10 bg-white/5 p-2 text-[0.65rem]">
+                    {importResult.imported > 0 && (
+                      <p className="text-green-300">Imported {importResult.imported} seed{importResult.imported === 1 ? "" : "s"} ✓</p>
+                    )}
+                    {importResult.unmatched.length > 0 && (
+                      <div className="mt-1 text-foreground/55">
+                        <p className="text-amber-300/80">{importResult.unmatched.length} skipped — no matching team:</p>
+                        <ul className="mt-0.5 space-y-0.5">
+                          {importResult.unmatched.slice(0, 6).map((r, i) => (
+                            <li key={i} className="truncate">• {r.name} / {r.division} (seed {r.seed})</li>
+                          ))}
+                          {importResult.unmatched.length > 6 && <li>…and {importResult.unmatched.length - 6} more</li>}
+                        </ul>
+                      </div>
+                    )}
+                    {importResult.invalid.length > 0 && (
+                      <div className="mt-1 text-foreground/55">
+                        <p className="text-red-300/80">{importResult.invalid.length} unreadable row{importResult.invalid.length === 1 ? "" : "s"}:</p>
+                        <ul className="mt-0.5 space-y-0.5">
+                          {importResult.invalid.slice(0, 6).map((r, i) => (
+                            <li key={i} className="truncate">• {r.line ? `"${r.line}" — ` : ""}{r.reason}</li>
+                          ))}
+                          {importResult.invalid.length > 6 && <li>…and {importResult.invalid.length - 6} more</li>}
+                        </ul>
+                      </div>
+                    )}
+                    {importResult.imported === 0 && importResult.unmatched.length === 0 && importResult.invalid.length === 0 && (
+                      <p className="text-foreground/50">Nothing to import.</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ── SMS Settings ───────────────────────────────────────────── */}
             <div className="rounded-2xl border border-white/22 bg-[#0d1018] p-3">
               <h3 className="mb-1.5 text-xs font-medium text-foreground">
                 &ldquo;Up next&rdquo; SMS template
@@ -490,6 +771,62 @@ export default function SettingsPanel() {
                 </button>
               </div>
             </div>
+
+            {/* ── Player Settings ────────────────────────────────────────── */}
+            <div className="rounded-2xl border border-white/22 bg-[#0d1018] p-3">
+              <h3 className="mb-2 text-xs font-medium text-foreground">Player Settings</h3>
+
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-xs text-foreground">Reset all players&rsquo; RamCoin</p>
+                  <p className="text-[0.65rem] text-foreground/40">Sets every balance back to 100. Voting history and past results are kept.</p>
+                </div>
+                <button
+                  onClick={() => setConfirmResetTokens(true)}
+                  className="flex shrink-0 items-center gap-1.5 rounded-lg border border-[#FF6B00]/40 bg-[#FF6B00]/15 px-3 py-1.5 text-xs font-medium text-[#FF6B00] transition-colors hover:bg-[#FF6B00]/25"
+                >
+                  <Coins size={12} />
+                  Reset to 100
+                </button>
+              </div>
+              {resetTokensMsg && <p className="mt-1.5 text-[0.65rem] text-foreground/50">{resetTokensMsg}</p>}
+
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3">
+                <div className="min-w-0">
+                  <p className="text-xs text-foreground">ALL IN mode</p>
+                  <p className="text-[0.65rem] text-foreground/40">Removes the 50%-of-balance vote cap — players can stake their whole balance on one vote.</p>
+                </div>
+                <button
+                  disabled={allInBusy}
+                  onClick={toggleAllIn}
+                  className={cn(
+                    "shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-40",
+                    allIn
+                      ? "border-[#FF6B00]/60 bg-[#FF6B00]/25 text-[#FF6B00]"
+                      : "border-white/15 bg-white/5 text-foreground/50 hover:text-foreground/80",
+                  )}
+                >
+                  {allIn ? "ALL IN: ON" : "ALL IN: OFF"}
+                </button>
+              </div>
+            </div>
+
+            {/* ── Reset All — kept last, most destructive ─────────────────── */}
+            <div className="rounded-2xl border border-red-500/40 bg-red-500/5 p-3">
+              <h3 className="mb-1 flex items-center gap-1.5 text-xs font-medium text-red-300">
+                <AlertTriangle size={13} />
+                Reset All
+              </h3>
+              <p className="mb-2 text-[0.65rem] text-foreground/45">
+                Clears both divisions&rsquo; brackets, schedules and exhibition matches, wipes all voting history, and resets every balance to 100. Special teams are kept. Can&rsquo;t be undone.
+              </p>
+              <button
+                onClick={() => setConfirmResetAll(true)}
+                className="w-full rounded-lg border border-red-500/60 bg-red-600 px-3 py-2 text-xs font-bold uppercase tracking-wider text-white transition-colors hover:bg-red-500"
+              >
+                Reset Everything
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -501,6 +838,37 @@ export default function SettingsPanel() {
           confirmLabel="Send"
           onConfirm={handleBroadcastSend}
           onCancel={() => setBroadcastConfirmOpen(false)}
+        />
+      )}
+
+      {/* Post-import: offer to re-seed the CURRENT division's bracket */}
+      {pendingAutoFill && (
+        <ConfirmDialog
+          title="Auto-fill teams again?"
+          message={`Seeds imported. Re-seed the ${DIVISION_LABEL[division]} bracket's Round 1 from its In-Bracket teams now? This overwrites the ${DIVISION_LABEL[division]} bracket's current teams, scores and results. Only the ${DIVISION_LABEL[division]} bracket is affected — switch divisions to auto-fill the other.`}
+          confirmLabel="Auto Fill"
+          onConfirm={() => { onAutoFill(); setPendingAutoFill(false); }}
+          onCancel={() => setPendingAutoFill(false)}
+        />
+      )}
+
+      {confirmResetTokens && (
+        <ConfirmDialog
+          title="Reset all RamCoin?"
+          message="Every player's balance is set back to 100 RamCoin. Voting history and past results are kept. This can't be undone."
+          confirmLabel="Reset RamCoin"
+          onConfirm={handleResetTokens}
+          onCancel={() => setConfirmResetTokens(false)}
+        />
+      )}
+
+      {confirmResetAll && (
+        <ConfirmDialog
+          title="Reset everything?"
+          message="This clears every team, score, and result from BOTH divisions' brackets (Standards and Open) and resets their schedules to default order and times. All exhibition matches are deleted. Every player's balance resets to 100 and their entire voting history is permanently deleted. Special teams you've added are not affected. This can't be undone."
+          confirmLabel="Reset All"
+          onConfirm={() => { onResetAll(); setConfirmResetAll(false); }}
+          onCancel={() => setConfirmResetAll(false)}
         />
       )}
     </div>

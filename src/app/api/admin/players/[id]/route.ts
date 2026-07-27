@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { currentUser } from "@clerk/nextjs/server";
 import { isAdminUser } from "@/lib/auth";
 import { boostPlayer, kickPlayer } from "@/lib/db/players";
+import { bumpLeaderboardSignal } from "@/lib/db/leaderboard";
 
 // PATCH { boost: number } → adjust a player's token balance (boost or deduct).
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -17,6 +19,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   try {
     const tokens = await boostPlayer(id, Math.trunc(amount));
+    // Adjusting a balance reorders standings — reflect it on open leaderboards
+    // right away, and make that refresh read fresh data.
+    await bumpLeaderboardSignal();
+    revalidateTag("leaderboard", { expire: 0 });
     return NextResponse.json({ ok: true, tokens });
   } catch (err) {
     return NextResponse.json(
@@ -34,6 +40,10 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const { id } = await params;
   try {
     await kickPlayer(id);
+    // Removing a player drops them from the standings — refresh open
+    // leaderboards right away.
+    await bumpLeaderboardSignal();
+    revalidateTag("leaderboard", { expire: 0 });
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json(

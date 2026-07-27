@@ -9,6 +9,7 @@ import TeamLedgerModal from './TeamLedgerModal'
 import ComicFlash, { useComicFlash } from './ComicFlash'
 import Toast, { useToast, WinLossToast, useWinLossToast } from './Toast'
 import BegDial from './BegDial'
+import RamCoin from './RamCoin'
 import { BEG_THRESHOLD } from '@/lib/beg-config'
 import type { Match, Vote, VoteStandings } from '@/lib/types'
 
@@ -32,6 +33,7 @@ type BegBannerState = {
 export default function VotePage() {
   const [matches, setMatches]   = useState<Match[]>([])
   const [tokens, setTokens]     = useState<number | null>(null)
+  const [allIn, setAllIn]       = useState(false)
   const [votes, setVotes]       = useState<Record<string, Vote>>({})
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState<string | null>(null)
@@ -94,6 +96,7 @@ export default function VotePage() {
         prevMatchesRef.current = matchData
         if (userData._supabaseError) console.error('[VotePage] Supabase error:', userData._supabaseError)
         setTokens(userData.tokens)
+        setAllIn(!!userData.allIn)
 
         const votesByMatch: Record<string, Vote> = {}
         for (const v of votesData as Vote[]) votesByMatch[v.match_id] = v
@@ -108,23 +111,25 @@ export default function VotePage() {
     load()
   }, [])
 
-  // ── Poll live standings for active matches ───────────────────────────────────
+  // ── Poll live standings (odds) for active matches ─────────────────────────────
+  // One batched, server-cached request per tick (see /api/standings) rather than
+  // one request per active match, so a room full of viewers is a single vote
+  // scan every couple of seconds instead of hundreds of requests per second.
   useEffect(() => {
-    const activeIds = matches.filter(m => m.is_active).map(m => m.id)
-    if (activeIds.length === 0) return
+    const hasActive = matches.some(m => m.is_active)
+    if (!hasActive) return
+    let cancelled = false
     async function fetchStandings() {
-      const results = await Promise.all(
-        activeIds.map(id => fetch(`/api/matches/${id}/standings`).then(r => r.json()).catch(() => null))
-      )
-      setStandings(prev => {
-        const next = { ...prev }
-        activeIds.forEach((id, i) => { if (results[i]) next[id] = results[i] })
-        return next
-      })
+      try {
+        const res = await fetch('/api/standings')
+        if (!res.ok) return
+        const batch = await res.json() as Record<string, VoteStandings>
+        if (!cancelled) setStandings(prev => ({ ...prev, ...batch }))
+      } catch { /* transient — next tick retries */ }
     }
     fetchStandings()
     const interval = setInterval(fetchStandings, 3000)
-    return () => clearInterval(interval)
+    return () => { cancelled = true; clearInterval(interval) }
   }, [matches])
 
   // ── Live match updates ────────────────────────────────────────────────────────
@@ -144,7 +149,8 @@ export default function VotePage() {
         if (!vote) continue // user didn't vote on this match
         const won = vote.side === m.winner_side
         const name = vote.side === 'left' ? m.left_name : m.right_name
-        showWinLossRef.current(won ? 'win' : 'loss', name)
+        // Gold + confetti only when an ALL-IN bet actually wins.
+        showWinLossRef.current(won ? 'win' : 'loss', name, won && !!vote.allIn)
         wonOrLost = true
       }
 
@@ -154,7 +160,11 @@ export default function VotePage() {
       // before the balance updates (gives the payout a moment to process too).
       const refreshTokens = async () => {
         const userRes = await fetch('/api/user')
-        if (userRes.ok) setTokens((await userRes.json()).tokens)
+        if (userRes.ok) {
+          const u = await userRes.json()
+          setTokens(u.tokens)
+          setAllIn(!!u.allIn)
+        }
       }
       if (wonOrLost) {
         setTimeout(refreshTokens, 2500)
@@ -195,11 +205,14 @@ export default function VotePage() {
     const current = tokens ?? 0
     if (current < amount) { showToast('Not enough tokens!'); return }
 
-    const optimisticVote: Vote = { id: `pending-${matchId}`, match_id: matchId, side, amount, botName }
+    // All-in = staked the entire balance. Tracked on the vote so its win can
+    // trigger the gold/confetti screen (see refetchMatches).
+    const wentAllIn = current > 0 && amount >= current
+    const optimisticVote: Vote = { id: `pending-${matchId}`, match_id: matchId, side, amount, botName, allIn: wentAllIn }
     setVotes(prev => ({ ...prev, [matchId]: optimisticVote }))
     setTokens(current - amount)
     triggerFlash()
-    showToast(`🪙 ${amount} locked on ${botName}!`)
+    showToast(<><RamCoin size={13} style={{ marginRight: 5 }}/>{amount} locked on {botName}!</>)
 
     try {
       const res = await fetch('/api/votes', {
@@ -292,7 +305,7 @@ export default function VotePage() {
               }}
             >
               <span style={{ fontSize: '0.72rem', fontWeight: 900, letterSpacing: 2 }}>
-                🪙 Down bad? Beg for tokens
+                <RamCoin size={13} style={{ marginRight: 6 }}/>Down bad? Beg Rambo for RamCoins
               </span>
               {subline && (
                 <span style={{ fontSize: '0.5rem', fontWeight: 900, letterSpacing: 2, color: 'rgba(255,215,0,0.65)' }}>
@@ -405,13 +418,17 @@ export default function VotePage() {
               Next Matches
             </span>
             {nextVisible.map(match => (
-              <NextMatchCard key={match.id} match={match} />
+              <NextMatchCard
+                key={match.id}
+                match={match}
+                onTeamClick={name => handleTeamClick(name, match.comp_type)}
+              />
             ))}
           </div>
         )}
       </main>
 
-      <VoteModal ctx={modalCtx} tokens={tokens ?? 0} onConfirm={handleConfirm} onClose={() => setModalCtx(null)} />
+      <VoteModal ctx={modalCtx} tokens={tokens ?? 0} allIn={allIn} onConfirm={handleConfirm} onClose={() => setModalCtx(null)} />
       <TeamLedgerModal target={selectedTeam} onClose={() => setSelectedTeam(null)} />
       <ComicFlash state={flash} />
       <Toast toast={toast} />

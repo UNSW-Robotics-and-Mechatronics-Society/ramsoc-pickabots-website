@@ -9,12 +9,11 @@ import {
   type ConcurrentRings, type MatchSchedule, type ExhibitionSchedule,
   generateSchedule, applyScheduleStatus, rollSchedule, rollExhibitionSchedule, START_MINUTE,
 } from "@/lib/schedule";
-import { cn } from "@/lib/cn";
-import { useAdminPanels, type PanelId } from "./AdminPanelContext";
-import MultiPanelSplit from "./MultiPanelSplit";
+import { type PanelId } from "./AdminPanelContext";
+import PanelGrid        from "./PanelGrid";
 import TeamList        from "./TeamList";
 import AdminBracket    from "./AdminBracket";
-import MatchesPanel, { MIN_MATCH_LIST_W } from "./MatchesPanel";
+import MatchesPanel    from "./MatchesPanel";
 import ConfirmDialog   from "./ConfirmDialog";
 import PlayersPanel    from "./PlayersPanel";
 import SettingsPanel   from "./SettingsPanel";
@@ -32,10 +31,32 @@ function computeEliminated(matches: BracketMatch[]): Set<string> {
   return out;
 }
 
-const ALL_PANEL_IDS: PanelId[] = ['teams', 'bracket', 'matches', 'players', 'settings'];
 const TEAM_COUNTS: TeamCount[] = [4, 8, 16, 32, 64];
-// Stable reference: 25% / 50% / 25% when all three panels are visible
-const DEFAULT_3_PANEL_DIVIDERS = [25, 75];
+
+// A single parsed row of the "Import seeds" CSV. Shared shape between the
+// Settings panel (which parses the file) and the import handler here (which
+// matches names against the team list).
+export type SeedImportRow = { name: string; division: Division; seed: number };
+export type SeedImportResult = { imported: number; unmatched: SeedImportRow[] };
+
+// Standard balanced seeding order: expands recursively so seed 1 lands in M1
+// and seed 2 in M_last (opposite halves). For 8 matches → [1,8,5,4,3,6,7,2].
+// Lifted from AdminBracket so both the bracket's Auto Fill button and the
+// Settings panel's post-import prompt can re-seed Round 1 identically.
+function seedOrder(N: number): number[] {
+  let seeds = [1];
+  let tc = 2;
+  while (seeds.length < N) {
+    const next: number[] = [];
+    for (let p = 0; p < seeds.length; p++) {
+      const s = seeds[p], comp = tc + 1 - s;
+      if (p % 2 === 0) { next.push(s, comp); } else { next.push(comp, s); }
+    }
+    seeds = next;
+    tc *= 2;
+  }
+  return seeds;
+}
 
 type InitialBracket = {
   matches: BracketMatch[];
@@ -50,7 +71,7 @@ type InitialBracket = {
 type SpecialTeamCategory = 'std' | 'open' | 'boss' | 'other';
 type SpecialTeam = {
   id: string; name: string; email: string; phone: string; notes: string;
-  category: SpecialTeamCategory; present: boolean;
+  category: SpecialTeamCategory; present: boolean; inBracket: boolean;
 };
 type SpecialTeamInput = { name: string; email: string; phone: string; notes: string; category: SpecialTeamCategory };
 type SpecialTeamPatch = Partial<Omit<SpecialTeam, 'id'>>;
@@ -70,8 +91,6 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
   const [pendingCount, setPending]   = useState<TeamCount | null>(null);
   const [schedules,    setSchedules] = useState<Record<Division, MatchSchedule>>(initialBracket.schedules);
   const [exhibitionSchedule, setExhibitionSchedule] = useState<ExhibitionSchedule>(initialBracket.exhibitionSchedule);
-
-  const { visiblePanels } = useAdminPanels();
 
   // Debounced save-on-change — skips the very first render, since that's
   // just the server-fetched initial state being echoed back.
@@ -220,6 +239,104 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
     setSchedules(prev => ({ ...prev, [division]: rollSchedule(prev[division], next, division) }));
   }
 
+  // ── auto-fill Round 1 from the In-Bracket teams ──────────────────────────────
+  // Re-seeds the CURRENT division's WB Round 1 from its in-bracket teams (seeded
+  // by seed, unseeded shuffled into leftover slots), overwriting existing teams/
+  // scores. Lifted out of AdminBracket so the bracket's Auto Fill button and the
+  // Settings panel's post-import prompt share one implementation.
+  function handleAutoFill() {
+    const div = division;
+    // In-bracket = explicit override, else auto (has a seed) — same rule as the
+    // Teams list toggle. A seeded team turned off keeps its seed but is skipped.
+    const divTeams = teams.filter(t => t.division === div && (t.inBracket ?? (t.seed != null)));
+    const withSeed = [...divTeams.filter(t => t.seed !== null)].sort((a, b) => (b.seed ?? 0) - (a.seed ?? 0));
+    const noSeed   = [...divTeams.filter(t => t.seed === null)];
+    for (let i = noSeed.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [noSeed[i], noSeed[j]] = [noSeed[j], noSeed[i]];
+    }
+    const sorted = [...withSeed, ...noSeed];
+
+    const r1 = matches
+      .filter(m => m.division === div && m.side === 'winners' && m.round === 1)
+      .sort((a, b) => a.matchNumber - b.matchNumber);
+    const numMatches = r1.length;
+    const T = 2 * numMatches;
+    const slotASeeds = seedOrder(numMatches);
+
+    const seeded = matches.map(m => {
+      if (m.division !== div || m.side !== 'winners' || m.round !== 1) return m;
+      const i     = r1.findIndex(r => r.id === m.id);
+      const aSeed = slotASeeds[i];
+      const bSeed = T + 1 - aSeed;
+      return {
+        ...m,
+        slotA: { teamName: sorted[aSeed - 1]?.name ?? '', score: 0 },
+        slotB: { teamName: sorted[bSeed - 1]?.name ?? '', score: 0 },
+      };
+    });
+
+    setMatches(seeded);
+    setSchedules(prev => ({
+      ...prev,
+      [div]: rollSchedule(
+        generateSchedule(
+          [],
+          prev[div].concurrentRings,
+          prev[div].rings[0]?.[0]?.startMinute ?? START_MINUTE,
+          prev[div].matchMinutes,
+          prev[div].gapMinutes,
+        ),
+        seeded,
+        div,
+      ),
+    }));
+  }
+
+  // ── bulk team actions (Settings panel) — current division only ───────────────
+  async function bulkPostTeams(body: Record<string, unknown>) {
+    const res = await fetch('/api/admin/teams/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'Bulk update failed');
+  }
+
+  async function handleSetAllPresent(present: boolean) {
+    const ids = teams.filter(t => t.division === division).map(t => t.id);
+    setTeams(prev => prev.map(t => t.division === division ? { ...t, present } : t));
+    await bulkPostTeams({ ids, present });
+  }
+
+  async function handleSetAllInBracket(inBracket: boolean) {
+    const ids = teams.filter(t => t.division === division).map(t => t.id);
+    setTeams(prev => prev.map(t => t.division === division ? { ...t, inBracket } : t));
+    await bulkPostTeams({ ids, inBracket });
+  }
+
+  // Matches each CSV row to an existing team by name+division (teams come from
+  // the shared registration table, so import can only update seeds, never
+  // create teams). Returns how many matched and which rows didn't — the
+  // caller surfaces the skipped list.
+  async function handleImportSeeds(rows: SeedImportRow[]): Promise<SeedImportResult> {
+    const norm = (s: string) => s.trim().toLowerCase();
+    const matched: { id: string; seed: number }[] = [];
+    const unmatched: SeedImportRow[] = [];
+    for (const row of rows) {
+      const team = teams.find(t => t.division === row.division && norm(t.name) === norm(row.name));
+      if (team) matched.push({ id: team.id, seed: row.seed });
+      else unmatched.push(row);
+    }
+
+    if (matched.length > 0) {
+      const seedById = new Map(matched.map(m => [m.id, m.seed]));
+      setTeams(prev => prev.map(t => seedById.has(t.id) ? { ...t, seed: seedById.get(t.id)! } : t));
+      await bulkPostTeams({ seeds: matched });
+    }
+    return { imported: matched.length, unmatched };
+  }
+
   // ── full competition reset ("Reset All") ──────────────────────────────────────
   // Clears every match's teams/scores/status across BOTH divisions and drops
   // exhibition matches entirely — same transform the old per-division "Clear
@@ -260,13 +377,15 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
     }
   }
 
-  // ── build panel list for MultiPanelSplit ─────────────────────────────────────
-  const panels = ALL_PANEL_IDS
-    .filter(p => visiblePanels.includes(p))
-    .map(p => ({
-      key:   p,
-      minPx: p === 'matches' ? MIN_MATCH_LIST_W : undefined,
-      node: p === 'teams' ? (
+  // ── panel content for the draggable/resizable grid ──────────────────────────
+  // Every panel's node is built here; PanelGrid mounts only the ones currently
+  // on the grid (see AdminPanelContext.visiblePanels), so the unused ones never
+  // render. Each panel keeps its own container-query layout — the grid only
+  // resizes the tile's box, so font sizes stay constant.
+  const panelMap: Record<PanelId, { title: string; node: React.ReactNode }> = {
+    teams: {
+      title: 'Teams',
+      node: (
         <TeamList
           teams={teams}
           division={division}
@@ -277,26 +396,14 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
           onUpdateSpecialTeam={handleUpdateSpecialTeam}
           onDeleteSpecialTeam={handleDeleteSpecialTeam}
         />
-      ) : p === 'bracket' ? (
+      ),
+    },
+    bracket: {
+      title: 'Bracket',
+      node: (
         <div className="flex h-full flex-col">
-          {/* Bracket size selector */}
-          <div className="flex shrink-0 items-center gap-1 border-b border-white/10 px-3 py-1.5">
-            <span className="mr-1 text-[0.55rem] uppercase tracking-wider text-foreground/40">Teams</span>
-            {TEAM_COUNTS.map(n => (
-              <button
-                key={n}
-                onClick={() => requestSizeChange(n)}
-                className={cn(
-                  "rounded px-2 py-0.5 text-[0.6rem] transition-colors",
-                  teamCount === n
-                    ? "bg-white/20 text-foreground"
-                    : "text-foreground/50 hover:text-foreground/80",
-                )}
-              >
-                {n}
-              </button>
-            ))}
-          </div>
+          {/* Bracket size ("Number of Teams") and Reset All now live in the
+              Settings panel; the bracket keeps only its own Auto Fill button. */}
           <div className="min-h-0 flex-1">
             <AdminBracket
               teams={teams}
@@ -306,11 +413,15 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
               schedule={schedules[division]}
               onMatchesChange={commitMatches}
               onScheduleChange={s => setSchedules(prev => ({ ...prev, [division]: s }))}
-              onResetAll={handleResetAll}
+              onAutoFill={handleAutoFill}
             />
           </div>
         </div>
-      ) : p === 'matches' ? (
+      ),
+    },
+    matches: {
+      title: 'Matches',
+      node: (
         <MatchesPanel
           matches={effectiveMatches}
           division={division}
@@ -325,21 +436,32 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
           onExhibitionScheduleChange={setExhibitionSchedule}
           onMatchesChange={commitMatches}
         />
-      ) : p === 'players' ? (
-        <PlayersPanel />
-      ) : (
-        <SettingsPanel />
       ),
-    }));
+    },
+    players:  { title: 'Players',  node: <PlayersPanel /> },
+    settings: {
+      title: 'Settings',
+      node: (
+        <SettingsPanel
+          division={division}
+          teamCount={teamCount}
+          teamCounts={TEAM_COUNTS}
+          onTeamCountChange={requestSizeChange}
+          onSetAllPresent={handleSetAllPresent}
+          onSetAllInBracket={handleSetAllInBracket}
+          onImportSeeds={handleImportSeeds}
+          onAutoFill={handleAutoFill}
+          onResetAll={handleResetAll}
+        />
+      ),
+    },
+  };
 
   return (
     <>
-      {/* Panels */}
+      {/* Draggable / resizable panel grid */}
       <div className="h-full w-full">
-        <MultiPanelSplit
-          panels={panels}
-          defaultPercents={panels.length === 3 ? DEFAULT_3_PANEL_DIVIDERS : undefined}
-        />
+        <PanelGrid panels={panelMap} />
       </div>
 
       {/* Confirm bracket size change */}

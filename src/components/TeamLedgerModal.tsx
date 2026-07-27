@@ -1,6 +1,7 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import RamCoin from './RamCoin'
 
 const GRAIN = `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)' opacity='1'/%3E%3C/svg%3E")`
 
@@ -41,7 +42,24 @@ const POOL_LABEL: Record<TeamLedger['pool'], string> = {
   standards: 'STANDARDS', open: 'OPEN', boss: 'BOSS', other: 'OTHER',
 }
 
-function StatTile({ label, value, color }: { label: string; value: string; color: string }) {
+// Team type drives the modal's accent color + label. Category wins over the
+// "special" flag: an open or standards team reads green/orange even when it's
+// a special team; only teams that are neither (boss/other pools) read purple.
+type TeamType = 'standard' | 'open' | 'special'
+
+const TEAM_TYPE_META: Record<TeamType, { label: string; color: string }> = {
+  standard: { label: 'Standard', color: '#FF6B00' },
+  open:     { label: 'Open',     color: '#4cff00' },
+  special:  { label: 'Special',  color: '#9B30FF' },
+}
+
+const teamTypeOf = (pool: TeamLedger['pool']): TeamType =>
+  pool === 'open' ? 'open' : pool === 'standards' ? 'standard' : 'special'
+
+// Blend an accent hex with transparency for borders/glows/tints.
+const tint = (color: string, pct: number) => `color-mix(in srgb, ${color} ${pct}%, transparent)`
+
+function StatTile({ label, value, color }: { label: string; value: ReactNode; color: string }) {
   return (
     <div style={{
       flex: 1, minWidth: 0, padding: '10px 8px', borderRadius: 10,
@@ -61,7 +79,7 @@ function StatTile({ label, value, color }: { label: string; value: string; color
 // Fetches and renders one team's ledger. Keyed by name+division from the
 // parent so switching targets mounts a fresh instance instead of resetting
 // state inside an effect — same reasoning as UserLedgerModal's LedgerBody.
-function LedgerBody({ name, division }: { name: string; division?: 'standards' | 'open' }) {
+function LedgerBody({ name, division, onResolved }: { name: string; division?: 'standards' | 'open'; onResolved: (r: { key: string; type: TeamType }) => void }) {
   const [ledger, setLedger] = useState<TeamLedger | null>(null)
   const [error, setError] = useState<string | null>(null)
   const loading = !ledger && !error
@@ -75,10 +93,10 @@ function LedgerBody({ name, division }: { name: string; division?: 'standards' |
         if (!res.ok) throw new Error(body.error ?? 'Failed to load team')
         return body as TeamLedger
       })
-      .then(data => { if (!cancelled) setLedger(data) })
+      .then(data => { if (!cancelled) { setLedger(data); onResolved({ key: `${name}-${division ?? ''}`, type: teamTypeOf(data.pool) }) } })
       .catch((e: unknown) => { if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load team') })
     return () => { cancelled = true }
-  }, [name, division])
+  }, [name, division, onResolved])
 
   return (
     <>
@@ -108,8 +126,10 @@ function LedgerBody({ name, division }: { name: string; division?: 'standards' |
             <StatTile label="Win Rate" value={`${ledger.winRate}%`} color="#fff" />
             <StatTile label="Record" value={`${ledger.wins}W / ${ledger.losses}L`} color="#fff" />
             <StatTile
-              label={`Tokens Bet · ${POOL_LABEL[ledger.pool]}`}
-              value={`🪙 ${ledger.totalTokensBet.toLocaleString()} · #${ledger.rank}/${ledger.poolSize}`}
+              // Pool stays in the label — it's what the #rank/poolSize in the
+              // value is ranked within.
+              label={`RamCoins Attracted · ${POOL_LABEL[ledger.pool]}`}
+              value={<><RamCoin size={12} style={{ marginRight: 4 }}/>{ledger.totalTokensBet.toLocaleString()} · #{ledger.rank}/{ledger.poolSize}</>}
               color="#FFD700"
             />
           </div>
@@ -191,6 +211,12 @@ function LedgerBody({ name, division }: { name: string; division?: 'standards' |
 
 export default function TeamLedgerModal({ target, onClose }: Props) {
   const isOpen = target !== null
+  // Resolved once the ledger loads (see LedgerBody's onResolved), tagged with
+  // the team key it belongs to. Held here because the outer sheet (border,
+  // glow, name) is themed by type, but the type only becomes known after the
+  // fetch inside LedgerBody. Tagging by key lets a stale color from a
+  // previously viewed team fall back to the seed instead of lingering.
+  const [resolved, setResolved] = useState<{ key: string; type: TeamType } | null>(null)
 
   useEffect(() => {
     if (!isOpen) return
@@ -200,6 +226,13 @@ export default function TeamLedgerModal({ target, onClose }: Props) {
   }, [isOpen])
 
   if (!target) return null
+
+  const key = `${target.name}-${target.division ?? ''}`
+  // Seed from the division we already have (special teams arrive without one →
+  // default to standard/orange); onResolved corrects it once the pool is known.
+  const type: TeamType = (resolved?.key === key ? resolved.type : null)
+    ?? (target.division === 'open' ? 'open' : 'standard')
+  const meta = TEAM_TYPE_META[type]
 
   return createPortal(
     <div
@@ -218,13 +251,13 @@ export default function TeamLedgerModal({ target, onClose }: Props) {
         background: 'rgba(4,2,12,0.88)',
         backdropFilter: 'blur(20px)',
         WebkitBackdropFilter: 'blur(20px)',
-        backgroundImage: 'radial-gradient(ellipse at 20% 0%, rgba(255,107,0,0.07) 0%, transparent 55%), radial-gradient(ellipse at 80% 100%, rgba(155,48,255,0.05) 0%, transparent 55%)',
-        border: '1px solid rgba(255,107,0,0.3)',
+        backgroundImage: `radial-gradient(ellipse at 20% 0%, ${tint(meta.color, 8)} 0%, transparent 55%), radial-gradient(ellipse at 80% 100%, rgba(155,48,255,0.05) 0%, transparent 55%)`,
+        border: `1px solid ${tint(meta.color, 32)}`,
         borderBottom: 'none',
         borderRadius: '18px 18px 0 0',
         width: '100%', maxWidth: 480,
         animation: 'teamLedgerSlideUp 0.3s cubic-bezier(0.34,1.56,0.64,1) forwards',
-        boxShadow: '0 -8px 48px rgba(255,85,0,0.12)',
+        boxShadow: `0 -8px 48px ${tint(meta.color, 14)}`,
       }}>
         <div style={{
           position: 'absolute', inset: 0, pointerEvents: 'none',
@@ -238,9 +271,21 @@ export default function TeamLedgerModal({ target, onClose }: Props) {
           display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
           padding: '22px 20px 0',
         }}>
-          <div style={{ fontSize: '0.95rem', fontWeight: 900, color: '#FF6B00', textTransform: 'uppercase', letterSpacing: 3,
-            textShadow: '0 0 16px rgba(255,107,0,0.5)' }}>
-            {target.name}
+          <div>
+            <div style={{ fontSize: '0.5rem', fontWeight: 900, letterSpacing: 3, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', marginBottom: 5 }}>
+              Team Info
+            </div>
+            <div style={{ fontSize: '0.95rem', fontWeight: 900, color: meta.color, textTransform: 'uppercase', letterSpacing: 3,
+              textShadow: `0 0 16px ${tint(meta.color, 50)}` }}>
+              {target.name}
+            </div>
+            <div style={{
+              display: 'inline-block', marginTop: 7, padding: '3px 9px', borderRadius: 999,
+              fontSize: '0.44rem', fontWeight: 900, letterSpacing: 2, textTransform: 'uppercase',
+              color: meta.color, background: tint(meta.color, 14), border: `1px solid ${tint(meta.color, 32)}`,
+            }}>
+              {meta.label}
+            </div>
           </div>
           <button onClick={onClose} style={{
             background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: '#888',
@@ -256,7 +301,7 @@ export default function TeamLedgerModal({ target, onClose }: Props) {
           touchAction: 'pan-y',
           padding: '16px 20px 0',
         }}>
-          <LedgerBody name={target.name} division={target.division} key={`${target.name}-${target.division ?? ''}`} />
+          <LedgerBody name={target.name} division={target.division} onResolved={setResolved} key={key} />
         </div>
       </div>
 

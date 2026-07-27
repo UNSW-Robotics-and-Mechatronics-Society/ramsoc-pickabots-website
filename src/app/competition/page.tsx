@@ -1,15 +1,12 @@
 import { getBracketState } from '@/lib/db/bracket'
 import BracketPage from '@/components/BracketPage'
-import RealtimeRefresh from '@/components/RealtimeRefresh'
 
 export const dynamic = 'force-dynamic'
 
 export default async function CompetitionPage() {
   const { matches, teamCount, schedules } = await getBracketState()
-  return (
-    <>
-      <BracketPage matches={matches} teamCount={teamCount} schedules={schedules} />
-      <RealtimeRefresh tables={['bracket_matches', 'bracket_config', 'bracket_schedule']} />
-    </>
-  )
+  // Live updates are driven from inside BracketPage via useRealtimeRefresh
+  // (subscribed to the bracket tables). getBracketState is cached and
+  // invalidated on save.
+  return <BracketPage matches={matches} teamCount={teamCount} schedules={schedules} />
 }

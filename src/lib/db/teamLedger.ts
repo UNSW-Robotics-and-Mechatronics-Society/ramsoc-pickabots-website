@@ -1,4 +1,5 @@
 import "server-only";
+import { unstable_cache } from "next/cache";
 import supabase from "@/lib/supabase";
 import { getBracketState } from "./bracket";
 import { fromDbCategory } from "./division";
@@ -36,8 +37,10 @@ export type TeamLedger = {
 };
 
 // Same labeling as BracketMatchCard.tsx's matchSideLabel(), duplicated here
-// rather than imported — that file is a 'use client' component.
-function roundLabel(m: BracketMatch): string {
+// rather than imported — that file is a 'use client' component. Shared with
+// teamsLeaderboard.ts so a team's knocked-out round reads identically in the
+// leaderboard row and in this modal.
+export function roundLabel(m: BracketMatch): string {
   if (m.side === "finals-semi")  return `Semi ${m.matchNumber}`;
   if (m.side === "finals-third") return "3rd Place";
   if (m.side === "finals-final") return "Grand Final";
@@ -54,23 +57,38 @@ function poolFor(category: string): TeamLedgerPool {
   return category as TeamLedgerPool;
 }
 
-async function getTokensByName(): Promise<Map<string, number>> {
-  const [{ data: matchRows, error: mErr }, { data: voteRows, error: vErr }] = await Promise.all([
-    supabase.from("matches").select("id, left_name, right_name"),
-    supabase.from("votes").select("match_id, side, amount"),
-  ]);
-  if (mErr) throw new Error(`Failed to load matches: ${mErr.message}`);
-  if (vErr) throw new Error(`Failed to load votes: ${vErr.message}`);
+// Total tokens bet per team name, as a serializable entry list. Cached (short
+// TTL) so many concurrent team-modal opens — each ranks the team against its
+// pool by tokens bet — collapse to one scan of matches+votes instead of one
+// per open. Returns entries rather than a Map because unstable_cache persists
+// its result across requests and can't serialize a Map.
+const getTokenTotalEntries = unstable_cache(
+  async (): Promise<[string, number][]> => {
+    const [{ data: matchRows, error: mErr }, { data: voteRows, error: vErr }] = await Promise.all([
+      supabase.from("matches").select("id, left_name, right_name"),
+      supabase.from("votes").select("match_id, side, amount"),
+    ]);
+    if (mErr) throw new Error(`Failed to load matches: ${mErr.message}`);
+    if (vErr) throw new Error(`Failed to load votes: ${vErr.message}`);
 
-  const matchById = new Map((matchRows ?? []).map(m => [m.id as string, m]));
-  const totals = new Map<string, number>();
-  for (const v of voteRows ?? []) {
-    const m = matchById.get(v.match_id as string);
-    if (!m) continue;
-    const name = v.side === "left" ? (m.left_name as string) : (m.right_name as string);
-    totals.set(name, (totals.get(name) ?? 0) + (v.amount as number));
-  }
-  return totals;
+    const matchById = new Map((matchRows ?? []).map(m => [m.id as string, m]));
+    const totals = new Map<string, number>();
+    for (const v of voteRows ?? []) {
+      const m = matchById.get(v.match_id as string);
+      if (!m) continue;
+      const name = v.side === "left" ? (m.left_name as string) : (m.right_name as string);
+      totals.set(name, (totals.get(name) ?? 0) + (v.amount as number));
+    }
+    return Array.from(totals);
+  },
+  ["team-token-totals"],
+  { revalidate: 10, tags: ["tokens"] },
+);
+
+// Exported so the teams leaderboard ranks on exactly the same totals this
+// modal shows — one team's "RamCoins Attracted" can't disagree with its row.
+export async function getTokensByName(): Promise<Map<string, number>> {
+  return new Map(await getTokenTotalEntries());
 }
 
 export async function getTeamLedger(name: string, divisionHint?: Division): Promise<TeamLedger | null> {

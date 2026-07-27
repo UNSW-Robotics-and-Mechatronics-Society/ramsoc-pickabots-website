@@ -4,8 +4,8 @@ import type { CSSProperties } from 'react'
 // RAMSoc-blue token coin bearing the RAMSoc emblem. The emblem is the shared
 // /ramsoc_logo.svg (a white mark), tinted via a CSS mask so it stays crisp at
 // any size and lives in exactly one place. Used inline wherever the RC
-// currency is shown. Pass `onClick` to make a coin interactive — the header
-// balance coin does this to open the expandable 3D coin (see CoinModal).
+// currency is shown in running text. The header's hero coin is the rotating 3D
+// SpinningRamCoin instead; pass `onClick` to make any coin interactive.
 export default function RamCoin({
   size = 20,
   style,

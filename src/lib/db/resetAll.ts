@@ -22,3 +22,15 @@ export async function resetTokensAndHistory(): Promise<void> {
   const { error: usersErr } = await supabase.from("users").update({ tokens: 100 }).not("id", "is", null);
   if (usersErr) throw new Error(`Failed to reset tokens: ${usersErr.message}`);
 }
+
+/**
+ * Resets EVERY player's balance to 100 without touching voting history — the
+ * votes and matches (voting mirror) rows are left intact, so past results and
+ * the leaderboard's win/loss record survive. This is the lighter "give
+ * everyone a fresh 100 RamCoin" action, distinct from resetTokensAndHistory's
+ * full wipe.
+ */
+export async function resetTokensOnly(): Promise<void> {
+  const { error } = await supabase.from("users").update({ tokens: 100 }).not("id", "is", null);
+  if (error) throw new Error(`Failed to reset RamCoin: ${error.message}`);
+}

@@ -9,8 +9,7 @@ import {
 } from "@/lib/mock-data";
 import {
   type MatchSchedule,
-  START_MINUTE,
-  editMatchTime, generateSchedule, rollSchedule,
+  editMatchTime,
 } from "@/lib/schedule";
 import { cn } from "@/lib/cn";
 import { MATCH_DRAG_TYPE, SlotRow, TimeCell } from "./MatchTeamSlot";
@@ -327,20 +326,19 @@ type Props = {
   schedule: MatchSchedule;
   onMatchesChange: (next: BracketMatch[]) => void;
   onScheduleChange: (s: MatchSchedule) => void;
-  /** Full competition reset — both divisions, exhibition matches, tokens,
-   * and voting history. Implemented in AdminPageClient (needs access to
-   * both divisions' schedules, which this component doesn't have). */
-  onResetAll: () => void;
+  /** Re-seed the current division's Round 1 from its In-Bracket teams.
+   * Implemented in AdminPageClient so the Settings panel's post-import prompt
+   * can reuse it; this component only triggers it (behind a confirm). */
+  onAutoFill: () => void;
 };
 
-export default function AdminBracket({ teams, matches, division, teamCount, schedule, onMatchesChange, onScheduleChange, onResetAll }: Props) {
+export default function AdminBracket({ teams, matches, division, teamCount, schedule, onMatchesChange, onScheduleChange, onAutoFill }: Props) {
   const [containerWidth, setContainerWidth] = useState(0);
   const [manualScale, setManualScale]       = useState<number | null>(null);
   const [manualStretch, setManualStretch]   = useState<number | null>(null);
   const [manualVScale, setManualVScale]     = useState<number | null>(null);
   const [draggingId, setDragging]           = useState<string | null>(null);
   const [bracketView, setBracketView]       = useState<'all' | 'winners' | 'losers' | 'knockouts' | 'finals'>('all');
-  const [confirmResetAll, setConfirmResetAll] = useState(false);
   const [confirmAutoFill, setConfirmAutoFill] = useState(false);
   const { bracketFullscreen: fullscreen, setBracketFullscreen: setFullscreen } = useAdminPanels();
   const containerRef                        = useRef<HTMLDivElement>(null);
@@ -438,89 +436,6 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
     }));
   }
 
-  function requestResetAll() {
-    setConfirmResetAll(true);
-  }
-
-  // The actual reset (both divisions' brackets/schedules, exhibition
-  // matches, tokens, voting history) happens in AdminPageClient — this just
-  // gates it behind the confirm dialog.
-  function applyResetAll() {
-    onResetAll();
-    setConfirmResetAll(false);
-  }
-
-  function autoFillTeams() {
-    const divTeams  = teams.filter(t => t.division === division);
-    // Highest seed value = seed 1 (strongest). Unseeded teams are shuffled to the end.
-    const withSeed  = [...divTeams.filter(t => t.seed !== null)].sort((a, b) => (b.seed ?? 0) - (a.seed ?? 0));
-    const noSeed    = [...divTeams.filter(t => t.seed === null)];
-    for (let i = noSeed.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [noSeed[i], noSeed[j]] = [noSeed[j], noSeed[i]];
-    }
-    // sorted[0] = seed 1 (best), sorted[1] = seed 2, …
-    const sorted = [...withSeed, ...noSeed];
-
-    const r1 = matches
-      .filter(m => m.division === division && m.side === 'winners' && m.round === 1)
-      .sort((a, b) => a.matchNumber - b.matchNumber);
-    const numMatches = r1.length;
-    const T = 2 * numMatches;   // bracket team slots
-
-    // Standard balanced seeding: expands recursively so seed 1 lands in M1 and
-    // seed 2 lands in M_last (opposite sides). For 8 matches → [1,8,5,4,3,6,7,2].
-    // slotB for each match = T+1 − slotA (symmetric pairing).
-    function seedOrder(N: number): number[] {
-      let seeds = [1];
-      let tc = 2;
-      while (seeds.length < N) {
-        const next: number[] = [];
-        for (let p = 0; p < seeds.length; p++) {
-          const s = seeds[p], comp = tc + 1 - s;
-          if (p % 2 === 0) { next.push(s, comp); } else { next.push(comp, s); }
-        }
-        seeds = next;
-        tc *= 2;
-      }
-      return seeds;
-    }
-
-    const slotASeeds = seedOrder(numMatches);
-
-    const seeded = matches.map(m => {
-      if (m.division !== division || m.side !== 'winners' || m.round !== 1) return m;
-      const i     = r1.findIndex(r => r.id === m.id);
-      const aSeed = slotASeeds[i];
-      const bSeed = T + 1 - aSeed;
-      return {
-        ...m,
-        slotA: { teamName: sorted[aSeed - 1]?.name ?? '', score: 0 },
-        slotB: { teamName: sorted[bSeed - 1]?.name ?? '', score: 0 },
-      };
-    });
-
-    // Don't propagate byes here — if there are fewer teams than bracket slots
-    // some R1 matches will have one empty slot. The admin handles those manually
-    // (or they auto-complete when scored), rather than pre-marking a wave of
-    // R1/R2 matches as "completed" before the event even starts.
-
-    onMatchesChange(seeded);
-    // Rebuild as a rolling schedule — only currently-playable matches (real R1
-    // + bye-advanced R2), never the waiting ones. Keep ring count and timing.
-    onScheduleChange(rollSchedule(
-      generateSchedule(
-        [],
-        schedule.concurrentRings,
-        schedule.rings[0]?.[0]?.startMinute ?? START_MINUTE,
-        schedule.matchMinutes,
-        schedule.gapMinutes,
-      ),
-      seeded,
-      division,
-    ));
-  }
-
   // Group matches for rendering
   const divMatches = matches.filter(m => m.division === division);
 
@@ -613,12 +528,6 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
             )}
           >
             {fullscreen ? 'Exit Full Screen' : 'Full Screen'}
-          </button>
-          <button
-            onClick={requestResetAll}
-            className="rounded-lg border border-white/25 bg-white/5 px-3 py-1 text-xs text-foreground/70 transition-colors hover:bg-red-400/10 hover:border-red-400/30 hover:text-red-300"
-          >
-            Reset All
           </button>
           <button
             onClick={() => setConfirmAutoFill(true)}
@@ -838,24 +747,13 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
         </div>
       </div>
 
-      {/* Confirm full competition reset */}
-      {confirmResetAll && (
-        <ConfirmDialog
-          title="Reset everything?"
-          message="This clears every team, score, and result from BOTH divisions' brackets (Standards and Open) and resets their schedules to default order and times. All exhibition matches are deleted. Every user's balance resets to 100 tokens and their entire voting history is permanently deleted. Special teams you've added are not affected. This can't be undone."
-          confirmLabel="Reset All"
-          onConfirm={applyResetAll}
-          onCancel={() => setConfirmResetAll(false)}
-        />
-      )}
-
-      {/* Confirm auto-fill (re-seeds Round 1 from the team list) */}
+      {/* Confirm auto-fill (re-seeds Round 1 from the In-Bracket teams) */}
       {confirmAutoFill && (
         <ConfirmDialog
           title="Auto-fill the bracket?"
-          message="Round 1 will be re-seeded from the team list (by seed, then random), overwriting any team names, scores, and results already entered in this bracket. This can't be undone."
+          message="Round 1 will be re-seeded from the In-Bracket teams (by seed, then random for any unseeded ones), overwriting any team names, scores, and results already entered in this bracket. Teams with In Bracket turned off are left out. This can't be undone."
           confirmLabel="Auto Fill"
-          onConfirm={() => { autoFillTeams(); setConfirmAutoFill(false); }}
+          onConfirm={() => { onAutoFill(); setConfirmAutoFill(false); }}
           onCancel={() => setConfirmAutoFill(false)}
         />
       )}

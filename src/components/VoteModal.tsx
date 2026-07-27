@@ -17,11 +17,14 @@ interface ModalCtx {
 interface VoteModalProps {
   ctx: ModalCtx | null
   tokens: number
+  // ALL IN mode (admin toggle): lifts the 50%-of-balance cap so a player can
+  // stake their whole balance on one vote. place_vote enforces this too.
+  allIn?: boolean
   onConfirm: (amount: number) => void
   onClose: () => void
 }
 
-export default function VoteModal({ ctx, tokens, onConfirm, onClose }: VoteModalProps) {
+export default function VoteModal({ ctx, tokens, allIn = false, onConfirm, onClose }: VoteModalProps) {
   const [amount, setAmount] = useState(10)
   // Raw text of the amount field — kept separate from `amount` so the user
   // can freely type (clear the field, type digits that momentarily exceed
@@ -29,6 +32,9 @@ export default function VoteModal({ ctx, tokens, onConfirm, onClose }: VoteModal
   // by the slider, quick-amount buttons, reward preview, and confirm) always
   // tracks the clamped, valid interpretation of whatever's been typed so far.
   const [amountText, setAmountText] = useState('10')
+  // Shows the "Are you sure?" step when the player is about to stake their
+  // whole balance (an all-in bet).
+  const [askingAllIn, setAskingAllIn] = useState(false)
   const isOpen = ctx !== null
 
   // Resets the default amount whenever a new vote modal opens (or the
@@ -41,6 +47,7 @@ export default function VoteModal({ ctx, tokens, onConfirm, onClose }: VoteModal
     const initial = Math.min(10, tokens)
     setAmount(initial)
     setAmountText(String(initial))
+    setAskingAllIn(false)
   }
 
   // Without this, the page behind the (visually blocking) modal is still
@@ -56,7 +63,17 @@ export default function VoteModal({ ctx, tokens, onConfirm, onClose }: VoteModal
 
   if (!ctx) return null
 
-  const cap = Math.max(1, Math.floor(tokens * MAX_VOTE_FRAC))
+  const cap = Math.max(1, allIn ? tokens : Math.floor(tokens * MAX_VOTE_FRAC))
+  // An "all in" bet stakes the entire balance. Only really reachable in the
+  // admin's ALL IN mode (where cap === tokens); triggers the confirm step.
+  const isAllInBet = tokens > 0 && amount >= tokens
+
+  // CONFIRM: interpose an "are you sure?" step for all-in bets; otherwise fire.
+  function requestConfirm() {
+    if (isAllInBet) setAskingAllIn(true)
+    else onConfirm(amount)
+  }
+
   const subtitle = ctx.compType === 'bossbot'
     ? (ctx.side === 'right' ? '💀 Voting BOSSBOT wins' : '⚡ Voting challenger wins')
     : `Targeting ${ctx.botName} for victory`
@@ -154,7 +171,7 @@ export default function VoteModal({ ctx, tokens, onConfirm, onClose }: VoteModal
             background: 'rgba(255,107,0,0.05)', border: '1px solid rgba(255,107,0,0.12)',
             borderRadius: 10, padding: '10px 14px', marginBottom: 16,
           }}>
-            <span style={{ fontSize: '0.55rem', color: '#555', textTransform: 'uppercase', fontWeight: 900, letterSpacing: 4 }}>Ramcoins</span>
+            <span style={{ fontSize: '0.55rem', color: '#555', textTransform: 'uppercase', fontWeight: 900, letterSpacing: 4 }}>RamCoins</span>
             <span style={{ fontSize: '1rem', fontWeight: 900, color: '#FFD700', letterSpacing: 1, display: 'flex', alignItems: 'center', gap: 5 }}><RamCoin size={18}/>{tokens}</span>
           </div>
 
@@ -175,7 +192,7 @@ export default function VoteModal({ ctx, tokens, onConfirm, onClose }: VoteModal
               <span>1</span><span>MAX {cap}</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 12 }}>
-              <span style={{ fontSize: '1rem', color: '#FFD700', fontWeight: 900, alignSelf: 'flex-end', paddingBottom: 4 }}>🪙</span>
+              <RamCoin size={16} style={{ alignSelf: 'flex-end', marginBottom: 4 }}/>
               <input
                 type="text" inputMode="numeric" pattern="[0-9]*"
                 value={amountText}
@@ -190,7 +207,7 @@ export default function VoteModal({ ctx, tokens, onConfirm, onClose }: VoteModal
                   textAlign: 'center', padding: 0, fontFamily: 'inherit',
                 }}
               />
-              <span style={{ fontSize: '0.6rem', color: '#555', fontWeight: 900, alignSelf: 'flex-end', paddingBottom: 6, letterSpacing: 3 }}>CR</span>
+              <span style={{ fontSize: '0.6rem', color: '#555', fontWeight: 900, alignSelf: 'flex-end', paddingBottom: 6, letterSpacing: 3 }}>RC</span>
             </div>
           </div>
 
@@ -207,7 +224,7 @@ export default function VoteModal({ ctx, tokens, onConfirm, onClose }: VoteModal
                   textTransform: 'uppercase', letterSpacing: 3,
                   fontFamily: 'inherit',
                 }}>
-                {pct === 1 ? 'MAX (50%)' : `${pct * 100}%`}
+                {pct === 1 ? (allIn ? 'ALL IN' : 'MAX (50%)') : `${pct * 100}%`}
               </button>
             ))}
           </div>
@@ -222,24 +239,71 @@ export default function VoteModal({ ctx, tokens, onConfirm, onClose }: VoteModal
           </div>
 
           <div style={{ textAlign: 'center', fontSize: '0.48rem', color: '#fff', fontWeight: 900, textTransform: 'uppercase', letterSpacing: 4, marginBottom: 14 }}>
-            Max Vote: 50% of balance <strong style={{ color: '#fff' }}>{cap}</strong> Credits
+            {allIn ? 'ALL IN — max' : 'Max Vote: 50% of balance'} <strong style={{ color: '#fff' }}>{cap}</strong> RamCoins
           </div>
         </div>
 
         {/* Footer — stays fixed below the scrollable body, always visible/clickable */}
         <div style={{ position: 'relative', flexShrink: 0, padding: '14px 20px calc(22px + env(safe-area-inset-bottom, 0px))' }}>
-          <button onClick={() => onConfirm(amount)} style={{
+          <button onClick={requestConfirm} style={{
             width: '100%', padding: 15,
-            background: 'linear-gradient(135deg, #FF6B00 0%, #cc4400 100%)',
-            border: '1px solid rgba(255,107,0,0.4)',
-            borderRadius: 12, fontSize: '0.9rem', fontWeight: 900, color: '#fff',
+            background: isAllInBet
+              ? 'linear-gradient(135deg, #FFD700 0%, #FF8A00 100%)'
+              : 'linear-gradient(135deg, #FF6B00 0%, #cc4400 100%)',
+            border: `1px solid ${isAllInBet ? 'rgba(255,215,0,0.5)' : 'rgba(255,107,0,0.4)'}`,
+            borderRadius: 12, fontSize: '0.9rem', fontWeight: 900, color: isAllInBet ? '#1a1200' : '#fff',
             textTransform: 'uppercase', letterSpacing: 5, fontFamily: 'inherit',
-            boxShadow: '0 4px 24px rgba(255,107,0,0.35)',
-            textShadow: '0 1px 4px rgba(0,0,0,0.5)',
+            boxShadow: isAllInBet ? '0 4px 24px rgba(255,196,0,0.45)' : '0 4px 24px rgba(255,107,0,0.35)',
+            textShadow: isAllInBet ? 'none' : '0 1px 4px rgba(0,0,0,0.5)',
           }}>
-            ◆ CONFIRM VOTE ◆
+            {isAllInBet ? '◆ GO ALL IN ◆' : '◆ CONFIRM VOTE ◆'}
           </button>
         </div>
+
+        {/* All-in "are you sure?" — covers the sheet until the player commits
+            or backs out. Reachable only when the bet stakes the whole balance. */}
+        {askingAllIn && (
+          <div style={{
+            position: 'absolute', inset: 0, zIndex: 10,
+            borderRadius: '18px 18px 0 0',
+            background: 'rgba(6,3,0,0.94)',
+            backdropFilter: 'blur(6px)',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            padding: '28px 26px calc(28px + env(safe-area-inset-bottom, 0px))', textAlign: 'center',
+          }}>
+            <div style={{ fontSize: '2.6rem', lineHeight: 1, marginBottom: 12 }}>⚠️</div>
+            <div style={{
+              fontSize: '1.35rem', fontWeight: 900, letterSpacing: 3, color: '#FFD700',
+              textTransform: 'uppercase', textShadow: '0 0 18px rgba(255,215,0,0.5)',
+            }}>
+              Go all in?
+            </div>
+            <div style={{ marginTop: 12, fontSize: '0.8rem', color: 'rgba(255,255,255,0.8)', lineHeight: 1.5, maxWidth: 300 }}>
+              You&rsquo;re staking <strong style={{ color: '#FFD700' }}>all {tokens}</strong> of your RamCoin on{' '}
+              <strong style={{ color: '#fff' }}>{ctx.botName}</strong>. Lose and you&rsquo;re wiped out.
+            </div>
+            <div style={{ display: 'flex', gap: 10, marginTop: 22, width: '100%', maxWidth: 340 }}>
+              <button onClick={() => setAskingAllIn(false)} style={{
+                flex: 1, padding: 13, background: 'rgba(255,255,255,0.06)',
+                border: '1px solid rgba(255,255,255,0.18)', borderRadius: 12,
+                fontSize: '0.75rem', fontWeight: 900, color: '#bbb',
+                textTransform: 'uppercase', letterSpacing: 2, fontFamily: 'inherit',
+              }}>
+                Cancel
+              </button>
+              <button onClick={() => { setAskingAllIn(false); onConfirm(amount) }} style={{
+                flex: 1.4, padding: 13,
+                background: 'linear-gradient(135deg, #FFD700 0%, #FF8A00 100%)',
+                border: '1px solid rgba(255,215,0,0.5)', borderRadius: 12,
+                fontSize: '0.75rem', fontWeight: 900, color: '#1a1200',
+                textTransform: 'uppercase', letterSpacing: 2, fontFamily: 'inherit',
+                boxShadow: '0 4px 20px rgba(255,196,0,0.5)',
+              }}>
+                All In!
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <style>{`@keyframes slideUp { from{transform:translateY(100%)} to{transform:translateY(0)} }`}</style>

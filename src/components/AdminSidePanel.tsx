@@ -5,21 +5,13 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
 import { ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { useAdminPanels, type PanelId } from "@/components/admin/AdminPanelContext";
-
-const PANEL_LABELS: { id: PanelId; label: string }[] = [
-  { id: 'teams',   label: 'Teams' },
-  { id: 'bracket', label: 'Bracket' },
-  { id: 'matches', label: 'Matches' },
-  { id: 'players', label: 'Players' },
-  { id: 'settings', label: 'Settings' },
-];
+import { useAdminPanels } from "@/components/admin/AdminPanelContext";
 
 export default function AdminSidePanel() {
   const { user, isLoaded }           = useUser();
   const pathname                     = usePathname();
   const searchParams                 = useSearchParams();
-  const { visiblePanels, togglePanel, bracketFullscreen } = useAdminPanels();
+  const { bracketFullscreen }        = useAdminPanels();
 
   if (!isLoaded) return null;
   if ((user?.publicMetadata as { role?: string } | undefined)?.role !== "admin") return null;
@@ -30,10 +22,10 @@ export default function AdminSidePanel() {
 
   return (
     <div className="pointer-events-none fixed right-4 top-6 z-50 flex items-start gap-2">
-      {/* Stacked controls column — division toggle + view toggle (admin only) */}
+      {/* Division toggle (admin only) — panels are added from the grid's
+          palette tray, not here. */}
       {isOnAdmin && (
         <div className="pointer-events-auto flex flex-col items-end gap-1.5">
-          {/* Division toggle */}
           <div className="glass-nav flex items-center gap-1 rounded-full px-1.5 py-1.5">
             <Link
               href="/admin?division=standards"
@@ -57,24 +49,6 @@ export default function AdminSidePanel() {
             >
               Open
             </Link>
-          </div>
-
-          {/* View toggle */}
-          <div className="glass-nav flex items-center gap-1 rounded-full px-1.5 py-1.5">
-            {PANEL_LABELS.map(({ id, label }) => (
-              <button
-                key={id}
-                onClick={() => togglePanel(id)}
-                className={cn(
-                  "rounded-full px-3 py-1 text-xs font-semibold transition-all",
-                  visiblePanels.includes(id)
-                    ? "bg-white/20 text-foreground ring-1 ring-white/30"
-                    : "text-foreground/50 hover:text-foreground/80",
-                )}
-              >
-                {label}
-              </button>
-            ))}
           </div>
         </div>
       )}

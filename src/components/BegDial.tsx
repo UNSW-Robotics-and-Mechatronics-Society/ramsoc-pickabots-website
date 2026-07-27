@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState, useCallback, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Coins } from 'lucide-react'
+import RamCoin from './RamCoin'
 import {
   BEG_MAX_AWARD,
   BEG_MIN_AWARD,
@@ -302,9 +303,9 @@ export default function BegDial({ onClose, onAwarded }: BegDialProps) {
                 className="flex items-center gap-2 rounded-full border px-4 py-1.5"
                 style={{ background: 'rgba(255,107,0,0.08)', borderColor: 'rgba(255,180,0,0.3)' }}
               >
-                <span className="text-base">🪙</span>
+                <RamCoin size={16}/>
                 <span className="text-lg font-black text-[#FFD700]">{result.tokens}</span>
-                <span className="text-[0.55rem] font-black tracking-[0.2em] text-white/40">CR</span>
+                <span className="text-[0.55rem] font-black tracking-[0.2em] text-white/40">RC</span>
               </div>
               <CloseButton onClose={onClose} />
             </div>
