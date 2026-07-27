@@ -11,8 +11,42 @@ import {
   renderBroadcastTemplate,
 } from "@/lib/sms-template";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
+import RamCoin from "@/components/RamCoin";
 
 const DEFAULT_SMS_NOTIFY_LEAD = 2;
+
+// "System watch" thresholds — when a value crosses these, the KPI header
+// flags it instead of showing a bare number. Tuned for a one-day event: the
+// ClickSend floor is "still enough credit for a full broadcast", the DB
+// latency ceiling is "a query that would visibly stall the admin panel".
+const CLICKSEND_CRIT_AUD = 10;
+const CLICKSEND_WARN_AUD = 25;
+const DB_LATENCY_WARN_MS = 300;
+const DB_LATENCY_CRIT_MS = 800;
+
+type WatchStatus = "ok" | "warn" | "crit";
+
+function watchStatus(value: number, warnAt: number, critAt: number, direction: "low" | "high"): WatchStatus {
+  if (direction === "low") {
+    if (value <= critAt) return "crit";
+    if (value <= warnAt) return "warn";
+    return "ok";
+  }
+  if (value >= critAt) return "crit";
+  if (value >= warnAt) return "warn";
+  return "ok";
+}
+
+const WATCH_DOT_CLASS: Record<WatchStatus, string> = {
+  ok: "bg-green-400",
+  warn: "bg-amber-400",
+  crit: "bg-red-400",
+};
+const WATCH_TEXT_CLASS: Record<WatchStatus, string> = {
+  ok: "text-foreground/70",
+  warn: "text-amber-300",
+  crit: "text-red-300",
+};
 
 // One parsed row of the seed-import CSV. Structurally matches AdminPageClient's
 // SeedImportRow/SeedImportResult (the callback contract), kept local so this
@@ -88,14 +122,19 @@ type BroadcastCountsResponse = { total: number; withPhone: number };
 
 type AccountBalanceResponse = { balance: number; currency: string } | { error: string };
 
+type PhaseProgress = { label: string; done: number; total: number };
+
 type KpisResponse =
   | {
       onboardedPlayers: number;
-      ramCoinCirculating: number;
+      ramCoinCirculated: number;
       votesToday: number;
+      votesByHour: number[];
       matchesDone: number;
       matchesTotal: number;
+      matchesByPhase: PhaseProgress[];
       estimatedFinishTime: string | null;
+      dbLatencyMs: number;
     }
   | { error: string };
 
@@ -143,18 +182,32 @@ export default function SettingsPanel({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedFlash, setSavedFlash] = useState(false);
 
-  // Broadcast
-  const [broadcastCounts, setBroadcastCounts] = useState<BroadcastCountsResponse | null>(null);
-  const [broadcastCountsError, setBroadcastCountsError] = useState<string | null>(null);
+  // KPI header's "system watch" row — ClickSend balance + DB latency, both
+  // flagged against a low/high threshold rather than shown as bare numbers.
   const [accountBalance, setAccountBalance] = useState<{ balance: number; currency: string } | null>(null);
   const [accountBalanceError, setAccountBalanceError] = useState<string | null>(null);
   const [accountBalanceLoading, setAccountBalanceLoading] = useState(true);
 
   const [kpis, setKpis] = useState<
-    { onboardedPlayers: number; ramCoinCirculating: number; votesToday: number; matchesDone: number; matchesTotal: number; estimatedFinishTime: string | null } | null
+    | {
+        onboardedPlayers: number;
+        ramCoinCirculated: number;
+        votesToday: number;
+        votesByHour: number[];
+        matchesDone: number;
+        matchesTotal: number;
+        matchesByPhase: PhaseProgress[];
+        estimatedFinishTime: string | null;
+        dbLatencyMs: number;
+      }
+    | null
   >(null);
   const [kpisError, setKpisError] = useState<string | null>(null);
   const [kpisLoading, setKpisLoading] = useState(true);
+
+  // Broadcast
+  const [broadcastCounts, setBroadcastCounts] = useState<BroadcastCountsResponse | null>(null);
+  const [broadcastCountsError, setBroadcastCountsError] = useState<string | null>(null);
   const [broadcastBody, setBroadcastBody] = useState("");
   const [broadcastConfirmOpen, setBroadcastConfirmOpen] = useState(false);
   const [broadcastSending, setBroadcastSending] = useState(false);
@@ -494,18 +547,44 @@ export default function SettingsPanel({
                     </div>
                     <p className="mt-0.5 text-lg font-semibold text-foreground">{kpis.onboardedPlayers}</p>
                   </div>
+
                   <div className="rounded-lg border border-white/10 bg-white/5 p-2">
                     <div className="flex items-center gap-1 text-[0.6rem] uppercase tracking-wider text-foreground/40">
-                      <Coins size={11} /> RamCoin Circulating
+                      <RamCoin size={11} /> RamCoin Circulated
                     </div>
-                    <p className="mt-0.5 text-lg font-semibold text-foreground">{kpis.ramCoinCirculating.toLocaleString()}</p>
+                    <p className="mt-0.5 text-lg font-semibold text-foreground">{kpis.ramCoinCirculated.toLocaleString()}</p>
+                    <p className="text-[0.55rem] text-foreground/35">lifetime staked, all matches</p>
                   </div>
+
+                  {/* Votes today — mini bar chart, one bar per hour so far (last 8) */}
                   <div className="rounded-lg border border-white/10 bg-white/5 p-2">
                     <div className="flex items-center gap-1 text-[0.6rem] uppercase tracking-wider text-foreground/40">
                       <Vote size={11} /> Votes Today
                     </div>
                     <p className="mt-0.5 text-lg font-semibold text-foreground">{kpis.votesToday}</p>
+                    {(() => {
+                      const hours = kpis.votesByHour.slice(-8);
+                      const max = Math.max(1, ...hours);
+                      return (
+                        <div className="mt-1.5 flex h-6 items-end gap-[3px]">
+                          {hours.map((v, i) => (
+                            <div
+                              key={i}
+                              title={`${v} vote${v === 1 ? "" : "s"}`}
+                              className={cn(
+                                "flex-1 rounded-t-sm bg-[#FF6B00]",
+                                i === hours.length - 1 ? "opacity-100" : "opacity-45",
+                              )}
+                              style={{ height: `${Math.max(8, (v / max) * 100)}%` }}
+                            />
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
+
+                  {/* Matches done — mini bar chart per phase, so knockouts vs
+                      finals progress reads at a glance instead of one blended total */}
                   <div className="rounded-lg border border-white/10 bg-white/5 p-2">
                     <div className="flex items-center gap-1 text-[0.6rem] uppercase tracking-wider text-foreground/40">
                       <Trophy size={11} /> Matches Done
@@ -513,7 +592,27 @@ export default function SettingsPanel({
                     <p className="mt-0.5 text-lg font-semibold text-foreground">
                       {kpis.matchesDone}<span className="text-foreground/40">/{kpis.matchesTotal}</span>
                     </p>
+                    <div className="mt-1.5 flex h-6 items-stretch gap-1.5">
+                      {kpis.matchesByPhase.map(p => {
+                        const pct = p.total > 0 ? (p.done / p.total) * 100 : 0;
+                        return (
+                          <div
+                            key={p.label}
+                            title={`${p.label}: ${p.done}/${p.total}`}
+                            className="relative flex-1 overflow-hidden rounded-sm bg-white/10"
+                          >
+                            <div className="absolute inset-x-0 bottom-0 bg-[#FF6B00]" style={{ height: `${pct}%` }} />
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-0.5 flex gap-1.5 text-[0.55rem] text-foreground/35">
+                      {kpis.matchesByPhase.map(p => (
+                        <span key={p.label} className="flex-1 text-center">{p.label[0]}</span>
+                      ))}
+                    </div>
                   </div>
+
                   <div className="col-span-2 rounded-lg border border-white/10 bg-white/5 p-2 @sm:col-span-4">
                     <div className="flex items-center gap-1 text-[0.6rem] uppercase tracking-wider text-foreground/40">
                       <Clock size={11} /> Estimated Finish
@@ -524,6 +623,42 @@ export default function SettingsPanel({
                   </div>
                 </div>
               )}
+
+              {/* ── System watch — small side chips, flagged rather than bare numbers ── */}
+              <div className="mt-2 flex flex-wrap items-center gap-3 border-t border-white/10 pt-2">
+                {(() => {
+                  const status: WatchStatus | null =
+                    accountBalance ? watchStatus(accountBalance.balance, CLICKSEND_WARN_AUD, CLICKSEND_CRIT_AUD, "low") : null;
+                  return (
+                    <div className="flex items-center gap-1.5 text-[0.65rem]">
+                      <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", status ? WATCH_DOT_CLASS[status] : "bg-white/20")} />
+                      <span className="text-foreground/40">ClickSend</span>
+                      {accountBalanceLoading && <span className="text-foreground/40">loading…</span>}
+                      {!accountBalanceLoading && accountBalanceError && (
+                        <button onClick={loadAccountBalance} className="text-red-300/80 underline decoration-dotted">
+                          {accountBalanceError}
+                        </button>
+                      )}
+                      {!accountBalanceLoading && !accountBalanceError && accountBalance && (
+                        <span className={cn("font-medium", status ? WATCH_TEXT_CLASS[status] : "text-foreground")}>
+                          {accountBalance.balance.toFixed(2)} {accountBalance.currency}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {!kpisLoading && !kpisError && kpis && (() => {
+                  const status = watchStatus(kpis.dbLatencyMs, DB_LATENCY_WARN_MS, DB_LATENCY_CRIT_MS, "high");
+                  return (
+                    <div className="flex items-center gap-1.5 text-[0.65rem]">
+                      <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", WATCH_DOT_CLASS[status])} />
+                      <span className="text-foreground/40">DB response</span>
+                      <span className={cn("font-medium", WATCH_TEXT_CLASS[status])}>{kpis.dbLatencyMs} ms</span>
+                    </div>
+                  );
+                })()}
+              </div>
             </div>
 
             {/* ── Team Settings ──────────────────────────────────────────── */}
@@ -764,25 +899,9 @@ export default function SettingsPanel({
             </div>
 
             <div className="rounded-2xl border border-white/22 bg-[#0d1018] p-3">
-              <div className="mb-1.5 flex items-center justify-between gap-2">
-                <h3 className="text-xs font-medium text-foreground">
-                  Broadcast to all captains
-                </h3>
-                <div className="flex items-center gap-1 text-[0.65rem]">
-                  <Coins size={11} className="text-foreground/40" />
-                  {accountBalanceLoading && <span className="text-foreground/40">Loading balance…</span>}
-                  {!accountBalanceLoading && accountBalanceError && (
-                    <button onClick={loadAccountBalance} className="text-red-300/80 underline decoration-dotted">
-                      {accountBalanceError}
-                    </button>
-                  )}
-                  {!accountBalanceLoading && !accountBalanceError && accountBalance && (
-                    <span className="text-foreground/60">
-                      ClickSend balance: <span className="font-medium text-foreground">{accountBalance.balance.toFixed(2)} {accountBalance.currency}</span>
-                    </span>
-                  )}
-                </div>
-              </div>
+              <h3 className="mb-1.5 text-xs font-medium text-foreground">
+                Broadcast to all captains
+              </h3>
 
               {broadcastCountsError && (
                 <p className="mb-2 text-[0.65rem] text-red-300">{broadcastCountsError}</p>
