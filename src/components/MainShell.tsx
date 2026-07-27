@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 // viewport width — the bracket tree and the matches table both need every
 // pixel (and full-width gesture surfaces) so pan/scroll works anywhere, not
 // just inside the ~448px column the rest of the site uses.
-const FULL_BLEED = ["/competition", "/matches"];
+const FULL_BLEED = ["/competition", "/matches", "/overlay"];
 
 /**
  * The app's <main> wrapper. Most routes render inside a narrow, centered

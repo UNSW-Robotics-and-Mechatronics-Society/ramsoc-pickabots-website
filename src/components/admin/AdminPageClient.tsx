@@ -7,7 +7,7 @@ import {
 } from "@/lib/mock-data";
 import {
   type ConcurrentRings, type MatchSchedule, type ExhibitionSchedule,
-  generateSchedule, applyScheduleStatus, rollSchedule, rollExhibitionSchedule, START_MINUTE,
+  generateSchedule, applyScheduleStatus, rollSchedule, rollExhibitionSchedule, START_MINUTE, MAX_RINGS,
 } from "@/lib/schedule";
 import { type PanelId } from "./AdminPanelContext";
 import PanelGrid        from "./PanelGrid";
@@ -365,7 +365,7 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
       .flatMap(d => generateDoubleElimBracket(teamCount, d));
 
     const rebuildSchedule = (d: Division, s: MatchSchedule): MatchSchedule => {
-      const safeRings = Math.min(4, Math.max(1, s.concurrentRings)) as ConcurrentRings;
+      const safeRings = Math.min(MAX_RINGS, Math.max(1, s.concurrentRings)) as ConcurrentRings;
       return rollSchedule(
         generateSchedule([], safeRings, s.rings[0]?.[0]?.startMinute ?? START_MINUTE, s.matchMinutes, s.gapMinutes),
         regenerated,
