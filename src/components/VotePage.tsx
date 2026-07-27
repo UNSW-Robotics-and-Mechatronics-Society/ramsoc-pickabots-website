@@ -27,7 +27,7 @@ type BegBannerState = {
   begsAllowed: number
   cooldownRemaining: number | null
   eligible: boolean
-  reason: 'ok' | 'not_broke' | 'no_begs_left' | 'cooldown'
+  reason: 'ok' | 'not_broke' | 'active_vote' | 'no_begs_left' | 'cooldown'
 }
 
 export default function VotePage() {
@@ -283,12 +283,14 @@ export default function VotePage() {
           const subline =
             begState?.reason === 'no_begs_left'
               ? 'No begs remaining'
-              : begState?.reason === 'cooldown'
-                ? `Available in ${begState.cooldownRemaining} match${begState.cooldownRemaining === 1 ? '' : 'es'} · ${remaining} left`
-                : remaining !== null
-                  ? `${remaining} beg${remaining === 1 ? '' : 's'} left`
-                  : null
-          const spent = begState?.reason === 'no_begs_left'
+              : begState?.reason === 'active_vote'
+                ? 'Finish your live vote first'
+                : begState?.reason === 'cooldown'
+                  ? `Available in ${begState.cooldownRemaining} match${begState.cooldownRemaining === 1 ? '' : 'es'} · ${remaining} left`
+                  : remaining !== null
+                    ? `${remaining} beg${remaining === 1 ? '' : 's'} left`
+                    : null
+          const spent = begState?.reason === 'no_begs_left' || begState?.reason === 'active_vote'
           return (
             <button
               onClick={() => setBegOpen(true)}

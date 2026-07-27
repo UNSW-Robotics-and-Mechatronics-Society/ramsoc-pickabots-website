@@ -10,7 +10,7 @@ import {
 } from '@/lib/beg-config'
 
 // ── Types mirroring the API contract ──────────────────────────────────────────
-type BegReason = 'ok' | 'not_broke' | 'no_begs_left' | 'cooldown'
+type BegReason = 'ok' | 'not_broke' | 'active_vote' | 'no_begs_left' | 'cooldown'
 
 interface BegState {
   tokens: number
@@ -171,6 +171,8 @@ export default function BegDial({ onClose, onAwarded }: BegDialProps) {
     switch (s.reason) {
       case 'not_broke':
         return `You've still got tokens to play with — come back when you're under ${s.threshold}.`
+      case 'active_vote':
+        return "You've got RamCoin riding on a live match — wait for it to finish before begging."
       case 'no_begs_left':
         return `You've used all ${s.begsAllowed} of your begs.`
       case 'cooldown':

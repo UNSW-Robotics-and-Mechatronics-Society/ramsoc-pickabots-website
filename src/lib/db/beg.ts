@@ -21,10 +21,10 @@ export type BegState = {
   begsAllowed: number;
   /** null when ready now; otherwise how many more completed matches to wait. */
   cooldownRemaining: number | null;
-  /** true only when under threshold, has begs left, and cooldown satisfied. */
+  /** true only when under threshold, no live vote, has begs left, and cooldown satisfied. */
   eligible: boolean;
   /** reason it's not eligible, for UI copy. */
-  reason: "ok" | "not_broke" | "no_begs_left" | "cooldown";
+  reason: "ok" | "not_broke" | "active_vote" | "no_begs_left" | "cooldown";
 };
 
 async function countCompletedMatches(): Promise<number> {
@@ -34,6 +34,28 @@ async function countCompletedMatches(): Promise<number> {
     .eq("status", "completed");
   if (error) throw new Error(`Failed to count matches: ${error.message}`);
   return count ?? 0;
+}
+
+// True when the player has a vote riding on a still-live match (one that
+// hasn't been resolved yet). Begging is blocked while a stake is on the table
+// — otherwise a player could go all-in, then top up mid-match by begging.
+async function userHasActiveVote(userId: string): Promise<boolean> {
+  const { data: activeMatches, error: mErr } = await supabase
+    .from("matches")
+    .select("id")
+    .eq("is_active", true);
+  if (mErr) throw new Error(`Failed to load active matches: ${mErr.message}`);
+
+  const ids = (activeMatches ?? []).map(m => m.id as string);
+  if (ids.length === 0) return false;
+
+  const { count, error } = await supabase
+    .from("votes")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .in("match_id", ids);
+  if (error) throw new Error(`Failed to check active votes: ${error.message}`);
+  return (count ?? 0) > 0;
 }
 
 type UserBegRow = { tokens: number; beg_count: number; last_beg_match_count: number | null };
@@ -54,7 +76,7 @@ async function loadUser(userId: string): Promise<UserBegRow | null> {
   };
 }
 
-function evaluate(user: UserBegRow, completed: number): BegState {
+function evaluate(user: UserBegRow, completed: number, hasActiveVote: boolean): BegState {
   const begsUsed = user.beg_count;
   const matchesSince =
     user.last_beg_match_count === null ? Infinity : completed - user.last_beg_match_count;
@@ -63,6 +85,7 @@ function evaluate(user: UserBegRow, completed: number): BegState {
 
   let reason: BegState["reason"] = "ok";
   if (user.tokens >= BEG_THRESHOLD) reason = "not_broke";
+  else if (hasActiveVote) reason = "active_vote";
   else if (begsUsed >= BEG_MAX_TOTAL) reason = "no_begs_left";
   else if (cooldownRemaining !== null) reason = "cooldown";
 
@@ -79,7 +102,11 @@ function evaluate(user: UserBegRow, completed: number): BegState {
 }
 
 export async function getBegState(userId: string): Promise<BegState> {
-  const [user, completed] = await Promise.all([loadUser(userId), countCompletedMatches()]);
+  const [user, completed, hasActiveVote] = await Promise.all([
+    loadUser(userId),
+    countCompletedMatches(),
+    userHasActiveVote(userId),
+  ]);
   if (!user) {
     // No pickabots users row yet → treat as a fresh player at the default 100.
     return {
@@ -93,7 +120,7 @@ export async function getBegState(userId: string): Promise<BegState> {
       reason: "not_broke",
     };
   }
-  return evaluate(user, completed);
+  return evaluate(user, completed, hasActiveVote);
 }
 
 export type BegResult =
@@ -106,18 +133,24 @@ export type BegResult =
  * the beg. Returns the granted amount + new balance, or an error + fresh state.
  */
 export async function attemptBeg(userId: string, accuracy: number): Promise<BegResult> {
-  const [user, completed] = await Promise.all([loadUser(userId), countCompletedMatches()]);
+  const [user, completed, hasActiveVote] = await Promise.all([
+    loadUser(userId),
+    countCompletedMatches(),
+    userHasActiveVote(userId),
+  ]);
 
   // Materialise a row for a brand-new player so we can persist beg state.
   const effectiveUser: UserBegRow = user ?? { tokens: 100, beg_count: 0, last_beg_match_count: null };
-  const state = evaluate(effectiveUser, completed);
+  const state = evaluate(effectiveUser, completed, hasActiveVote);
   if (!state.eligible) {
     const msg =
       state.reason === "not_broke"
         ? `You can only beg when you have fewer than ${BEG_THRESHOLD} tokens.`
-        : state.reason === "no_begs_left"
-          ? "You've used all your begs."
-          : `Wait ${state.cooldownRemaining} more match${state.cooldownRemaining === 1 ? "" : "es"} before begging again.`;
+        : state.reason === "active_vote"
+          ? "You can't beg while you have a vote on a live match — wait for it to finish."
+          : state.reason === "no_begs_left"
+            ? "You've used all your begs."
+            : `Wait ${state.cooldownRemaining} more match${state.cooldownRemaining === 1 ? "" : "es"} before begging again.`;
     return { ok: false, error: msg, state };
   }
 
