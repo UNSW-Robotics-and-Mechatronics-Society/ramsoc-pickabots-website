@@ -157,7 +157,8 @@ export async function sendSms(to: string, body: string): Promise<SmsResult> {
 type ClickSendAccountResponse = {
   response_code?: string;
   response_msg?: string;
-  data?: { balance?: number; currency?: string };
+  // ClickSend returns balance as a numeric-looking string, not a JSON number.
+  data?: { balance?: number | string; currency?: string };
 };
 
 export type AccountBalance = { balance: number; currency: string };
@@ -177,9 +178,10 @@ export async function getAccountBalance(): Promise<AccountBalance> {
   });
   const json = (await res.json().catch(() => ({}))) as ClickSendAccountResponse;
 
-  if (!res.ok || json.response_code !== "SUCCESS" || json.data?.balance === undefined) {
+  const balance = json.data?.balance !== undefined ? Number(json.data.balance) : NaN;
+  if (!res.ok || json.response_code !== "SUCCESS" || !Number.isFinite(balance)) {
     throw new Error(json.response_msg || `ClickSend error (HTTP ${res.status})`);
   }
 
-  return { balance: json.data.balance, currency: json.data.currency ?? "AUD" };
+  return { balance, currency: json.data?.currency ?? "AUD" };
 }

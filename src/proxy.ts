@@ -22,6 +22,9 @@ const isOnboardingExempt = createRouteMatcher([
   "/sign-up(.*)",
   "/standby",
   "/api/(.*)",
+  // Admins are staff, not competitors — they should never be funnelled
+  // through competitor onboarding just to reach the admin panel.
+  "/admin(.*)",
 ]);
 
 const ACCESS_COOKIE     = "pickabots_access";
