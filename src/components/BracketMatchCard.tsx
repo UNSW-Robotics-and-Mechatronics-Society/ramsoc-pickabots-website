@@ -1,4 +1,4 @@
-import { type BracketMatch, winner } from '@/lib/mock-data'
+import { type BracketMatch, winner, WILDCARD_PURPLE } from '@/lib/mock-data'
 
 // ── layout constants — shared by the bracket tree (BracketPage) and the
 // read-only schedule view (MatchList); mirrors the admin bracket's column
@@ -24,6 +24,90 @@ export const STATUS_BORDER: Record<BracketMatch['status'], string> = {
 }
 
 export const GRAIN = `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)' opacity='1'/%3E%3C/svg%3E")`
+
+/**
+ * A wildcard holding box — drawn OUTSIDE the bracket tree (above the losers
+ * strip) with a connector dropping into the losers-bracket match it feeds, so
+ * it reads as a team coming in from outside rather than advancing through.
+ * Purple; the match it feeds is styled like any other.
+ */
+export function WildcardBox({
+  match, index, placeholder, onTeamClick,
+}: {
+  match: BracketMatch
+  index: number
+  placeholder?: string
+  onTeamClick?: (name: string) => void
+}) {
+  const name = match.slotA.teamName
+  const sent = match.status === 'completed'
+  return (
+    <div style={{ width: ROUND_W, display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+      <div style={{
+        width: '100%', height: MATCH_H * 0.62,
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(30,14,48,0.96)',
+        border: `1.5px ${name ? 'solid' : 'dashed'} ${WILDCARD_PURPLE}`,
+        borderRadius: 5,
+        boxShadow: `0 0 9px ${WILDCARD_PURPLE}44`,
+        // Dimmed once fed in — the team now lives in the bracket match below.
+        opacity: sent ? 0.55 : 1,
+        padding: '0 4px', overflow: 'hidden',
+      }}>
+        <span
+          onClick={name ? () => onTeamClick?.(name) : undefined}
+          style={{
+            fontSize: '0.3rem', fontWeight: 900, letterSpacing: 0.3, textAlign: 'center',
+            color: name ? '#fff' : `${WILDCARD_PURPLE}99`,
+            cursor: name && onTeamClick ? 'pointer' : 'default',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%',
+          }}
+        >
+          {name || placeholder || `Wildcard Team ${index}`}
+        </span>
+        {sent && (
+          <span style={{ fontSize: '0.2rem', fontWeight: 900, letterSpacing: 0.5, color: `${WILDCARD_PURPLE}bb`, textTransform: 'uppercase' }}>
+            In bracket
+          </span>
+        )}
+      </div>
+      {/* Connector down into the losers-bracket match this box feeds */}
+      <div style={{ width: 1.5, height: 10, background: `${WILDCARD_PURPLE}aa` }} />
+      <div style={{
+        width: 0, height: 0,
+        borderLeft: '3px solid transparent', borderRight: '3px solid transparent',
+        borderTop: `4px solid ${WILDCARD_PURPLE}aa`,
+      }} />
+    </div>
+  )
+}
+
+/** The "Wildcard" heading + both boxes, offset to sit above the round they feed. */
+export function WildcardRow({
+  boxes, leftOffset, gap = CONN_W, onTeamClick,
+}: {
+  boxes: BracketMatch[]
+  leftOffset: number
+  gap?: number
+  onTeamClick?: (name: string) => void
+}) {
+  if (boxes.length === 0) return null
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', paddingLeft: leftOffset, marginBottom: 2 }}>
+      <span style={{
+        fontSize: '0.32rem', fontWeight: 900, letterSpacing: 2,
+        color: WILDCARD_PURPLE, textTransform: 'uppercase', marginBottom: 2,
+      }}>
+        Wildcard
+      </span>
+      <div style={{ display: 'flex', gap }}>
+        {boxes.map((b, i) => (
+          <WildcardBox key={b.id} match={b} index={i + 1} onTeamClick={onTeamClick} />
+        ))}
+      </div>
+    </div>
+  )
+}
 
 export function matchSideLabel(m: BracketMatch): string {
   if (m.side === 'finals-semi')  return `Semi ${m.matchNumber}`

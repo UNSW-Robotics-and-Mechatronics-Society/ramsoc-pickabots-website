@@ -9,7 +9,7 @@ import { useAdminPanels, type PanelId } from "./AdminPanelContext";
 
 // Bump the version suffix if the default layout / storage shape changes, so a
 // layout saved during earlier testing doesn't silently override the new default.
-const STORAGE_KEY = "admin-grid-v4";
+const STORAGE_KEY = "admin-grid-v6";
 const COLUMNS = 12;
 const CELL_HEIGHT = 44;
 // Gap gridstack leaves around each tile. Shared with the drop preview so the
@@ -48,17 +48,36 @@ const MIN_SIZE: Record<PanelId, { minW: number; minH: number }> = {
   settings: { minW: 2, minH: 4 },
 };
 
-// First-run layout (no saved state): Teams and Matches split the top row in
-// half, Bracket spans the full width underneath them. Keep this in step with
-// AdminPanelProvider's initial visiblePanels — a panel positioned here only
-// appears if it's also visible by default.
+/**
+ * First-run layout (no saved state):
+ *
+ *   ┌─────────┬──────────┬─────────┐
+ *   │         │ Players  │         │
+ *   │  Teams  ├──────────┤ Matches │   ← the three columns are the same height
+ *   │         │ Settings │         │
+ *   ├─────────┴──────────┴─────────┤
+ *   │           Bracket            │
+ *   └──────────────────────────────┘
+ *
+ * Players and Settings share the middle column, splitting TOP_H between them,
+ * so the stack ends level with Teams and Matches and Bracket sits flush under
+ * all three. SETTINGS_H is derived rather than written out, so the column can
+ * never drift out of alignment when PLAYERS_H is retuned.
+ *
+ * Keep this in step with AdminPanelProvider's initial visiblePanels: a panel
+ * positioned here only appears if it's also visible by default.
+ */
 const TOP_H = 18;
+const PLAYERS_H = 11;
+const SETTINGS_H = TOP_H - PLAYERS_H;
 const BRACKET_H = 20;
-const HALF = COLUMNS / 2;
+const THIRD = COLUMNS / 3;
 const DEFAULT_LAYOUT: Partial<Record<PanelId, Layout>> = {
-  teams:   { x: 0,    y: 0,     w: HALF,    h: TOP_H },
-  matches: { x: HALF, y: 0,     w: HALF,    h: TOP_H },
-  bracket: { x: 0,    y: TOP_H, w: COLUMNS, h: BRACKET_H },
+  teams:    { x: 0,         y: 0,         w: THIRD,   h: TOP_H },
+  players:  { x: THIRD,     y: 0,         w: THIRD,   h: PLAYERS_H },
+  settings: { x: THIRD,     y: PLAYERS_H, w: THIRD,   h: SETTINGS_H },
+  matches:  { x: THIRD * 2, y: 0,         w: THIRD,   h: TOP_H },
+  bracket:  { x: 0,         y: TOP_H,     w: COLUMNS, h: BRACKET_H },
 };
 
 // Custom drag payload type — narrower than "text/plain" so onDragOver only
@@ -290,7 +309,13 @@ function GridItem({
   return (
     <div ref={ref} className="grid-stack-item">
       <div className="grid-stack-item-content">
-        <div className="flex h-full w-full flex-col overflow-hidden rounded-lg border border-white/10 bg-[#0b0e14]">
+        <div
+          className="flex h-full w-full flex-col overflow-hidden rounded-lg border border-white/10 bg-[#0b0e14]"
+          // Same "sumobots gears" cogs texture the rest of the admin surface uses
+          // (src/app/admin/layout.tsx + the fullscreen bracket). bg-[#0b0e14] stays
+          // as the base colour; the low-opacity pattern tiles over it.
+          style={{ backgroundImage: "url('/background_gears.svg')" }}
+        >
           {/* Title bar — the only drag handle, so interactive panel content
               (match cards, inputs, bracket pan/zoom) never moves the tile. */}
           <div className="flex shrink-0 items-stretch border-b border-white/10 bg-white/3">

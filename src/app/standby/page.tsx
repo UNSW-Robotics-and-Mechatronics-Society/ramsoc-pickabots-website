@@ -1,6 +1,5 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
 
 const CODE        = 'SUMO26'
 const COOKIE_NAME = 'pickabots_access'
@@ -19,12 +18,15 @@ export default function StandbyPage() {
   const [shake,    setShake]    = useState(false)
   const [unlocked, setUnlocked] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
-  const router   = useRouter()
 
   useEffect(() => {
-    if (hasCookie()) { router.replace('/voting'); return }
+    // Hard-navigate (not router.replace) so the proxy re-reads the freshly-set
+    // access cookie. A soft client navigation serves the cached /voting→/standby
+    // redirect, bouncing the user right back here — an infinite spinner loop.
+    // Mirrors OnboardedRedirect's hard-navigate for the same reason.
+    if (hasCookie()) { window.location.replace('/voting'); return }
     inputRef.current?.focus()
-  }, [router])
+  }, [])
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     if (unlocked) return
@@ -35,7 +37,7 @@ export default function StandbyPage() {
     if (raw === CODE) {
       setUnlocked(true)
       setCookie()
-      setTimeout(() => router.replace('/voting'), 700)
+      setTimeout(() => window.location.replace('/voting'), 700)
     } else {
       setShake(true)
       setTimeout(() => { setValue(''); setShake(false) }, 650)

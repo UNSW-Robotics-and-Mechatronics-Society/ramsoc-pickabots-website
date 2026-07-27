@@ -5,7 +5,7 @@ import {
   type BracketMatch, type Division,
   type MatchStatus, type Team, type TeamCount,
   wbRoundsFor, lbRoundsFor,
-  winner, applyStatusChange, isTeamNameTaken,
+  winner, applyStatusChange, isTeamNameTaken, wildcardLbRound, computeSlotDefaults,
 } from "@/lib/mock-data";
 import {
   type MatchSchedule,
@@ -61,18 +61,21 @@ type MatchCardProps = {
   time?: number;
   order?: number;
   onTimeChange?: (matchId: string, minute: number) => void;
+  /** Feeder placeholders for empty slots (e.g. { a: "Winner of R64 M3" }). */
+  defaults?: { a?: string; b?: string };
 };
 function MatchCard({
-  match, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd, dimmed, time, order, onTimeChange,
+  match, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd, dimmed, time, order, onTimeChange, defaults,
 }: MatchCardProps) {
   const w = winner(match);
   const swappable       = match.status === 'todo' || match.status === 'next';
   const isBeingDragged  = draggingId === match.id;
   const isMatchDropTgt  = draggingId !== null && draggingId !== match.id && swappable;
 
-  // Scoring is only allowed when the match is active AND voting is closed.
-  // This ensures votes are locked in before any score is entered.
-  const scoringAllowed = match.status === 'active' && !match.votingOpen;
+  // Non-active matches (todo/next/completed/skipped) can be scored at any time.
+  // For ACTIVE matches we keep the original rule: scoring is only allowed once
+  // voting is closed, so votes are locked in before any score is entered.
+  const scoringAllowed = match.status === 'active' ? !match.votingOpen : true;
 
   function setScore(slot: 'a' | 'b', delta: number) {
     const updated: BracketMatch = {
@@ -165,6 +168,7 @@ function MatchCard({
         datalistId={datalistId} isValid={n => isValidTeamName(match.id, n)}
         onNameCommit={n => setName('a', n)}
         onScoreDelta={scoringAllowed ? d => setScore('a', d) : undefined}
+        placeholder={defaults?.a}
       />
       <div className="border-t border-white/[0.14]" />
       <SlotRow
@@ -172,6 +176,7 @@ function MatchCard({
         datalistId={datalistId} isValid={n => isValidTeamName(match.id, n)}
         onNameCommit={n => setName('b', n)}
         onScoreDelta={scoringAllowed ? d => setScore('b', d) : undefined}
+        placeholder={defaults?.b}
       />
 
       <div className="flex items-center justify-between border-t border-white/[0.14] px-1.5 py-1.5">
@@ -202,6 +207,109 @@ function MatchCard({
             className="w-5 bg-transparent text-center text-foreground outline-none"
           />
         </label>
+      </div>
+    </div>
+  );
+}
+
+// ── WildcardCard ───────────────────────────────────────────────────────────────
+// A holding box that lives OUTSIDE the bracket tree. The admin types a
+// knocked-out team into it (the duplicate-name guard is lifted for wildcard
+// boxes — see isTeamNameTaken), then "Send in" marks it completed, which
+// applyStatusChange turns into slot B of the losers-bracket match it feeds.
+function WildcardCard({
+  match, index, target, onChange, datalistId, isValidTeamName,
+}: {
+  match: BracketMatch;
+  index: number;
+  target: string;
+  onChange: (m: BracketMatch) => void;
+  datalistId: string;
+  isValidTeamName: (matchId: string, name: string) => boolean;
+}) {
+  const sent = match.status === 'completed';
+  const name = match.slotA.teamName;
+
+  return (
+    <div
+      style={{ width: ROUND_W }}
+      className={cn(
+        "flex flex-col rounded-md border bg-[#1e0e30] text-foreground transition-all",
+        "border-[#D8B4FE] shadow-[0_0_10px_#D8B4FE55]",
+        sent && "opacity-60",
+      )}
+    >
+      <div className="flex items-center justify-between border-b border-white/[0.14] px-1.5 py-1">
+        <span className="text-[0.55rem] font-semibold uppercase tracking-widest text-[#D8B4FE]">
+          Wildcard {index}
+        </span>
+        <span className="text-[0.5rem] text-foreground/40">→ {target}</span>
+      </div>
+
+      <SlotRow
+        slotData={match.slotA}
+        won={false}
+        lost={false}
+        datalistId={datalistId}
+        isValid={n => isValidTeamName(match.id, n)}
+        onNameCommit={n => onChange({ ...match, slotA: { ...match.slotA, teamName: n } })}
+        placeholder={`Wildcard Team ${index}`}
+      />
+
+      <div className="flex items-center justify-between border-t border-white/[0.14] px-1.5 py-1">
+        <span className="text-[0.5rem] text-foreground/50">
+          {sent ? 'In bracket' : name ? 'Ready' : 'Empty'}
+        </span>
+        <button
+          type="button"
+          disabled={!name}
+          onClick={() => onChange({ ...match, status: sent ? 'todo' : 'completed' })}
+          className={cn(
+            "rounded border px-1.5 py-0.5 text-[0.6rem] font-medium transition-colors",
+            !name
+              ? "cursor-not-allowed border-white/10 text-foreground/25"
+              : sent
+                ? "border-white/25 text-foreground/60 hover:text-foreground"
+                : "border-[#D8B4FE]/60 bg-[#D8B4FE]/15 text-[#D8B4FE] hover:bg-[#D8B4FE]/25",
+          )}
+        >
+          {sent ? 'Pull back' : 'Send in'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** The "Wildcard" heading + both boxes, offset to sit above the round they feed. */
+function WildcardRow({
+  boxes, leftOffset, gap, targetLabel, onChange, datalistId, isValidTeamName,
+}: {
+  boxes: BracketMatch[];
+  leftOffset: number;
+  gap: number;
+  targetLabel: (matchNumber: number) => string;
+  onChange: (m: BracketMatch) => void;
+  datalistId: string;
+  isValidTeamName: (matchId: string, name: string) => boolean;
+}) {
+  if (boxes.length === 0) return null;
+  return (
+    <div className="flex shrink-0 flex-col pb-2" style={{ paddingLeft: leftOffset }}>
+      <span className="pb-1 text-[0.55rem] font-semibold uppercase tracking-widest text-[#D8B4FE]">
+        Wildcard
+      </span>
+      <div className="flex" style={{ gap }}>
+        {boxes.map((b, i) => (
+          <WildcardCard
+            key={b.id}
+            match={b}
+            index={i + 1}
+            target={targetLabel(b.matchNumber)}
+            onChange={onChange}
+            datalistId={datalistId}
+            isValidTeamName={isValidTeamName}
+          />
+        ))}
       </div>
     </div>
   );
@@ -256,10 +364,11 @@ type RoundColumnProps = {
   filterSet?: Set<string>;
   getTime: (matchId: string) => number | undefined;
   getOrder: (matchId: string) => number | undefined;
+  getDefaults: (matchId: string) => { a?: string; b?: string } | undefined;
   onTimeChange: (matchId: string, minute: number) => void;
 };
 function RoundColumn({
-  matches, height, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd, filterSet, getTime, getOrder, onTimeChange,
+  matches, height, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd, filterSet, getTime, getOrder, getDefaults, onTimeChange,
 }: RoundColumnProps) {
   return (
     <div style={{ width: ROUND_W, height }} className="flex shrink-0 flex-col justify-around">
@@ -277,6 +386,7 @@ function RoundColumn({
           dimmed={!!filterSet && isMatchDimmed(m, filterSet)}
           time={getTime(m.id)}
           order={getOrder(m.id)}
+          defaults={getDefaults(m.id)}
           onTimeChange={onTimeChange}
         />
       ))}
@@ -301,10 +411,11 @@ type BracketStripProps = {
   filterSet?: Set<string>;
   getTime: (matchId: string) => number | undefined;
   getOrder: (matchId: string) => number | undefined;
+  getDefaults: (matchId: string) => { a?: string; b?: string } | undefined;
   onTimeChange: (matchId: string, minute: number) => void;
 };
 function BracketStrip({
-  rounds, matchesByRound, height, connW, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd, filterSet, getTime, getOrder, onTimeChange,
+  rounds, matchesByRound, height, connW, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd, filterSet, getTime, getOrder, getDefaults, onTimeChange,
 }: BracketStripProps) {
   return (
     <div className="flex items-stretch" style={{ height }}>
@@ -323,6 +434,7 @@ function BracketStrip({
             filterSet={filterSet}
             getTime={getTime}
             getOrder={getOrder}
+            getDefaults={getDefaults}
             onTimeChange={onTimeChange}
           />
           {i < rounds.length - 1 && matchesByRound[i].length >= 2 && (
@@ -460,6 +572,11 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
 
   // Group matches for rendering
   const divMatches = matches.filter(m => m.division === division);
+  // Feeder placeholder text for empty slots ("Winner of R64 M3", "Wildcard
+  // Team 1", …) — the same map the public bracket and match list already use,
+  // so an empty slot reads the same in the admin as it does publicly.
+  const slotDefaults = computeSlotDefaults(matches, division, teamCount);
+  const getDefaults = (matchId: string) => slotDefaults.get(matchId);
 
   const {
     teamFilters, teamInput, setTeamInput, showSuggestions, setShowSuggestions,
@@ -469,6 +586,12 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
   const wbByRound = Array.from({ length: wbRounds }, (_, i) =>
     divMatches.filter(m => m.side === 'winners' && m.round === i + 1).sort((a, b) => a.matchNumber - b.matchNumber)
   );
+  // Wildcard holding boxes — side 'wildcard', so they're in neither strip and
+  // have to be rendered separately (this is why they were invisible here).
+  const wildcardRound = wildcardLbRound(teamCount);
+  const wildcardBoxes = divMatches
+    .filter(m => m.side === 'wildcard')
+    .sort((a, b) => a.matchNumber - b.matchNumber);
   const lbByRound = Array.from({ length: lbRounds }, (_, i) =>
     divMatches.filter(m => m.side === 'losers' && m.round === i + 1).sort((a, b) => a.matchNumber - b.matchNumber)
   );
@@ -501,6 +624,7 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
     onDragEnd:   () => setDragging(null),
     getTime,
     getOrder,
+    getDefaults,
     onTimeChange: handleTimeChange,
   };
 
@@ -618,6 +742,19 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
                           <span className="text-[0.55rem] uppercase tracking-widest text-foreground/40">Losers Bracket</span>
                         </div>
                       )}
+                      {/* Wildcard boxes — outside the bracket tree, offset to
+                          sit above the losers round they feed into. */}
+                      {wildcardRound !== null && (
+                        <WildcardRow
+                          boxes={wildcardBoxes}
+                          leftOffset={(wildcardRound - 1) * (ROUND_W + effectiveConnW)}
+                          gap={effectiveConnW}
+                          targetLabel={n => `LB R${wildcardRound}·M${n}`}
+                          onChange={handleChange}
+                          datalistId={sharedCardProps.datalistId}
+                          isValidTeamName={sharedCardProps.isValidTeamName}
+                        />
+                      )}
                       <BracketStrip
                         side="losers"
                         rounds={Array.from({ length: lbRounds }, (_, i) => i + 1)}
@@ -660,7 +797,7 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
                       {/* Semis column */}
                       <div style={{ width: ROUND_W, height: NATURAL_H }} className="flex shrink-0 flex-col justify-around">
                         {finalsSemis.map(m => (
-                          <MatchCard key={m.id} match={m} onChange={handleChange} dimmed={isMatchDimmed(m, filterSet)} time={getTime(m.id)} order={getOrder(m.id)} {...sharedCardProps} />
+                          <MatchCard key={m.id} match={m} onChange={handleChange} dimmed={isMatchDimmed(m, filterSet)} time={getTime(m.id)} order={getOrder(m.id)} defaults={getDefaults(m.id)} {...sharedCardProps} />
                         ))}
                       </div>
 
@@ -678,13 +815,13 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
                         {finalsFinal && (
                           <div className="flex flex-col gap-1">
                             <span className="text-center text-[0.5rem] uppercase tracking-widest text-amber-200/70">Grand Final</span>
-                            <MatchCard match={finalsFinal} onChange={handleChange} dimmed={isMatchDimmed(finalsFinal, filterSet)} time={getTime(finalsFinal.id)} order={getOrder(finalsFinal.id)} {...sharedCardProps} />
+                            <MatchCard match={finalsFinal} onChange={handleChange} dimmed={isMatchDimmed(finalsFinal, filterSet)} time={getTime(finalsFinal.id)} order={getOrder(finalsFinal.id)} defaults={getDefaults(finalsFinal.id)} {...sharedCardProps} />
                           </div>
                         )}
                         {finalsThird && (
                           <div className="flex flex-col gap-1">
                             <span className="text-center text-[0.5rem] uppercase tracking-widest text-foreground/40">3rd Place</span>
-                            <MatchCard match={finalsThird} onChange={handleChange} dimmed={isMatchDimmed(finalsThird, filterSet)} time={getTime(finalsThird.id)} order={getOrder(finalsThird.id)} {...sharedCardProps} />
+                            <MatchCard match={finalsThird} onChange={handleChange} dimmed={isMatchDimmed(finalsThird, filterSet)} time={getTime(finalsThird.id)} order={getOrder(finalsThird.id)} defaults={getDefaults(finalsThird.id)} {...sharedCardProps} />
                           </div>
                         )}
                       </div>

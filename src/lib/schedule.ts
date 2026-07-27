@@ -77,7 +77,10 @@ export function applyScheduleStatus(
     // field is still a real (if vestigial) Division value, so without this
     // check they'd match `m.division === division` and get force-reset to
     // 'todo' below simply because they don't appear in this ring set.
-    if (m.division !== division || m.side === 'exhibition') return m;
+    // Wildcard boxes are exempt for the same reason as exhibition matches:
+    // they never occupy a ring (schedulable() also rejects them — slot B is
+    // always empty), so ring position must not drive their status.
+    if (m.division !== division || m.side === 'exhibition' || m.side === 'wildcard') return m;
     if (m.status === 'completed' || m.status === 'skipped') return m;
 
     const newStatus: MatchStatus =

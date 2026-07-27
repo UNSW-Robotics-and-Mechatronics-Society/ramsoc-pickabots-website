@@ -16,9 +16,10 @@ type Ctx = {
 const AdminPanelContext = createContext<Ctx | null>(null);
 
 export function AdminPanelProvider({ children }: { children: ReactNode }) {
-  // Keep in step with PanelGrid's DEFAULT_LAYOUT, which positions exactly these
-  // three: Teams left, Matches right, Bracket full-width underneath.
-  const [visiblePanels, setVisible] = useState<PanelId[]>(['teams', 'bracket', 'matches']);
+  // Keep in step with PanelGrid's DEFAULT_LAYOUT, which positions all five:
+  // Teams / Players / Matches across the top, Settings under Players, and
+  // Bracket full-width underneath. Listed in ORDER, same as togglePanel keeps it.
+  const [visiblePanels, setVisible] = useState<PanelId[]>(['teams', 'bracket', 'matches', 'players', 'settings']);
   const [bracketFullscreen, setBracketFullscreen] = useState(false);
 
   function togglePanel(id: PanelId) {

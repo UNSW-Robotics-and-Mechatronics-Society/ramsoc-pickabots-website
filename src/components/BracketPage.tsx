@@ -3,14 +3,14 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   type BracketMatch, type Division, type TeamCount,
-  wbRoundsFor, lbRoundsFor, lbRoundLabel, winner, findTeamTargetMatch, computeSlotDefaults,
+  wbRoundsFor, lbRoundsFor, lbRoundLabel, winner, findTeamTargetMatch, computeSlotDefaults, wildcardLbRound,
 } from '@/lib/mock-data'
 import { type MatchSchedule, formatTime, applyScheduleStatus, scheduleOrder } from '@/lib/schedule'
 import { useTeamFilter, isMatchDimmed, isMatchSelected } from '@/lib/teamFilter'
 import { useAdminPanels } from '@/components/admin/AdminPanelContext'
 import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh'
 import BracketZoomPan, { type BracketZoomPanHandle, type FocusTarget } from './BracketZoomPan'
-import { ROUND_W, CONN_W, SLOT_H, MatchCard } from './BracketMatchCard'
+import { ROUND_W, CONN_W, SLOT_H, MatchCard, WildcardRow } from './BracketMatchCard'
 import TeamFilterBar from './TeamFilterBar'
 import TeamLedgerModal from './TeamLedgerModal'
 
@@ -280,6 +280,15 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
   const wbDefaultRound = computeDefaultRound(wbByRound, wbRounds)
   const lbDefaultRound = computeDefaultRound(lbByRound, lbRounds)
 
+  // Wildcard holding boxes for this division, in box order.
+  const wildcardRound = wildcardLbRound(teamCount)
+  const wildcardBoxes = useMemo(
+    () => matches
+      .filter(m => m.division === division && m.side === 'wildcard')
+      .sort((a, b) => a.matchNumber - b.matchNumber),
+    [matches, division],
+  )
+
   function currentRoundFor(v: BracketView): RoundSelection {
     if (v === 'losers') return roundOverride.losers ?? lbDefaultRound
     return roundOverride[v] ?? wbDefaultRound
@@ -315,6 +324,9 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
             <div style={{ width: CONN_W, flexShrink: 0 }} />
           )}
 
+          {/* Grand Final + 3rd place, stacked — mirrors the admin bracket's
+              finals column. Height is left unset so it grows to fit both
+              cards rather than clipping the lower one. */}
           <div style={{ width: ROUND_W, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 14, alignSelf: 'center', flexShrink: 0 }}>
             {finalsFinal && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -323,6 +335,16 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
                 </span>
                 <div ref={el => registerMatchRef(finalsFinal.id, el)}>
                   <MatchCard match={finalsFinal} time={timeFor(finalsFinal.id)} order={orderByMatchId.get(finalsFinal.id)} dimmed={isDimmed(finalsFinal)} selected={isSelected(finalsFinal)} defaults={slotDefaults.get(finalsFinal.id)} onTeamClick={handleTeamClick} />
+                </div>
+              </div>
+            )}
+            {finalsThird && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={{ textAlign: 'center', fontSize: '0.5rem', fontWeight: 900, letterSpacing: 2, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase' }}>
+                  3rd Place
+                </span>
+                <div ref={el => registerMatchRef(finalsThird.id, el)}>
+                  <MatchCard match={finalsThird} time={timeFor(finalsThird.id)} order={orderByMatchId.get(finalsThird.id)} dimmed={isDimmed(finalsThird)} selected={isSelected(finalsThird)} defaults={slotDefaults.get(finalsThird.id)} onTeamClick={handleTeamClick} />
                 </div>
               </div>
             )}
@@ -338,6 +360,8 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
         {[
           { medal: '🥇', name: first,  bg: 'rgba(255,215,0,0.22)',  color: '#FFD700' },
           { medal: '🥈', name: second, bg: 'rgba(200,200,200,0.16)', color: '#e5e5e5' },
+          // Bronze comes from the 3rd-place match, same as the admin podium.
+          { medal: '🥉', name: third,  bg: 'rgba(249,115,22,0.16)',  color: '#fdba74' },
         ].map(p => (
           <div key={p.medal} style={{
             width: '100%', display: 'flex', alignItems: 'center', gap: 8,
@@ -382,6 +406,16 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
               {isWinners ? 'Winners Bracket' : 'Losers Bracket'}
             </span>
           </div>
+          {/* Wildcard boxes sit ABOVE the losers strip, offset to line up over
+              the round they feed, so they read as teams arriving from outside
+              the bracket rather than advancing through it. */}
+          {!isWinners && wildcardRound !== null && (
+            <WildcardRow
+              boxes={wildcardBoxes}
+              leftOffset={(wildcardRound - 1) * (ROUND_W + CONN_W)}
+              onTeamClick={handleTeamClick}
+            />
+          )}
           <BracketStrip
             rounds={Array.from({ length: isWinners ? wbRounds : lbRounds }, (_, i) => i + 1)}
             matchesByRound={isWinners ? wbByRound : lbByRound}
