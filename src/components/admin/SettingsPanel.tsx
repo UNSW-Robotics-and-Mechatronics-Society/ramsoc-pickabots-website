@@ -86,6 +86,8 @@ function parseSeedCsv(text: string): { valid: SeedImportRow[]; invalid: { line: 
 
 type BroadcastCountsResponse = { total: number; withPhone: number };
 
+type AccountBalanceResponse = { balance: number; currency: string } | { error: string };
+
 type BroadcastResultRow = {
   to: string;
   ok: boolean;
@@ -133,6 +135,9 @@ export default function SettingsPanel({
   // Broadcast
   const [broadcastCounts, setBroadcastCounts] = useState<BroadcastCountsResponse | null>(null);
   const [broadcastCountsError, setBroadcastCountsError] = useState<string | null>(null);
+  const [accountBalance, setAccountBalance] = useState<{ balance: number; currency: string } | null>(null);
+  const [accountBalanceError, setAccountBalanceError] = useState<string | null>(null);
+  const [accountBalanceLoading, setAccountBalanceLoading] = useState(true);
   const [broadcastBody, setBroadcastBody] = useState("");
   const [broadcastConfirmOpen, setBroadcastConfirmOpen] = useState(false);
   const [broadcastSending, setBroadcastSending] = useState(false);
@@ -185,12 +190,28 @@ export default function SettingsPanel({
     }
   }
 
+  async function loadAccountBalance() {
+    setAccountBalanceLoading(true);
+    setAccountBalanceError(null);
+    try {
+      const res = await fetch("/api/admin/account-balance");
+      const data = (await res.json()) as AccountBalanceResponse;
+      if (!res.ok || "error" in data) throw new Error("error" in data ? data.error : `Failed to load balance (${res.status})`);
+      setAccountBalance(data);
+    } catch (err) {
+      setAccountBalanceError(err instanceof Error ? err.message : "Failed to load balance");
+    } finally {
+      setAccountBalanceLoading(false);
+    }
+  }
+
   useEffect(() => {
     // Fetch-on-mount; load() sets loading state internally (same idiom as the
     // other admin panels in this repo).
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
     loadBroadcastCounts();
+    loadAccountBalance();
     return () => { if (flashTimer.current) clearTimeout(flashTimer.current); };
   }, []);
 
@@ -659,9 +680,25 @@ export default function SettingsPanel({
             </div>
 
             <div className="rounded-2xl border border-white/22 bg-[#0d1018] p-3">
-              <h3 className="mb-1.5 text-xs font-medium text-foreground">
-                Broadcast to all captains
-              </h3>
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <h3 className="text-xs font-medium text-foreground">
+                  Broadcast to all captains
+                </h3>
+                <div className="flex items-center gap-1 text-[0.65rem]">
+                  <Coins size={11} className="text-foreground/40" />
+                  {accountBalanceLoading && <span className="text-foreground/40">Loading balance…</span>}
+                  {!accountBalanceLoading && accountBalanceError && (
+                    <button onClick={loadAccountBalance} className="text-red-300/80 underline decoration-dotted">
+                      {accountBalanceError}
+                    </button>
+                  )}
+                  {!accountBalanceLoading && !accountBalanceError && accountBalance && (
+                    <span className="text-foreground/60">
+                      ClickSend balance: <span className="font-medium text-foreground">{accountBalance.balance.toFixed(2)} {accountBalance.currency}</span>
+                    </span>
+                  )}
+                </div>
+              </div>
 
               {broadcastCountsError && (
                 <p className="mb-2 text-[0.65rem] text-red-300">{broadcastCountsError}</p>
