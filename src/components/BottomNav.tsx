@@ -33,7 +33,12 @@ export default function BottomNav() {
     pathname.startsWith("/standby") ||
     pathname.startsWith("/onboarding") ||
     pathname.startsWith("/dev") ||
-    pathname.startsWith("/admin")
+    pathname.startsWith("/admin") ||
+    // Stream control wants every pixel for tap targets; overlays are OBS
+    // browser sources composited onto the stream — site chrome would be
+    // broadcast to the audience.
+    pathname.startsWith("/control") ||
+    pathname.startsWith("/overlay")
   ) {
     return null;
   }

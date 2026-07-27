@@ -17,7 +17,7 @@ import { MATCH_DRAG_TYPE, SlotRow, TimeCell } from "./MatchTeamSlot";
 import { useTeamFilter, TeamFilterBar, isMatchDimmed } from "./TeamFilterBar";
 import VotingToggle from "./VotingToggle";
 
-const RING_OPTIONS: ConcurrentRings[] = [1, 2, 3, 4];
+const RING_OPTIONS: ConcurrentRings[] = [1, 2, 3, 4, 5, 6];
 const AUTO_COMPLETE_FROM: MatchStatus[] = ['todo', 'next', 'active'];
 
 const STATUS_LABEL: Record<MatchStatus, string> = {

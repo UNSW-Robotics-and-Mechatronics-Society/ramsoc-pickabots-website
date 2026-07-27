@@ -1,0 +1,28 @@
+# MediaMTX config for the Main OBS PC — RTMP ingest for the remote rooms.
+# Copy next to the mediamtx binary (it loads ./mediamtx.yml by default).
+#
+# Remote encoders push to these over the tailnet (MagicDNS name of this PC):
+#   Mac Mini (Room 2):  rtmp://main-obs-pc.<tailnet>.ts.net:1935/room2
+#   Laptop  (Room 3):   rtmp://main-obs-pc.<tailnet>.ts.net:1935/room3
+#   Phone   (Room 3):   rtmp://main-obs-pc.<tailnet>.ts.net:1935/phone
+# OBS on THIS machine reads them locally:
+#   rtmp://localhost:1935/room2  (etc.) as Media Sources.
+
+# Control API — the pickabots relay agent polls this to show per-feed
+# connected/disconnected lights on the stream control panel. Local only.
+api: yes
+apiAddress: 127.0.0.1:9997
+
+# RTMP on the default port. MediaMTX listens on all interfaces; the tailnet
+# is the only practical way in (university wifi client isolation blocks LAN
+# peers, and there's no port forwarding at the venue).
+rtmp: yes
+rtmpAddress: :1935
+
+# One named path per incoming feed. Declared explicitly (not a catch-all) so
+# the control panel's feed lights show room2/room3/phone each as present-but-
+# offline before their encoders start, rather than the paths not existing.
+paths:
+  room2:
+  room3:
+  phone:

@@ -1,6 +1,11 @@
 import { type BracketMatch, type Division, type MatchStatus } from "@/lib/mock-data";
 
-export type ConcurrentRings = 1 | 2 | 3 | 4;
+// Widened from 4 to 6 for the live-streamed format — one OBS scene per ring
+// (see /control and /overlay/*), with up to six rings running concurrently.
+export type ConcurrentRings = 1 | 2 | 3 | 4 | 5 | 6;
+
+/** Highest ring count the admin UI and OBS companion expose. */
+export const MAX_RINGS = 6;
 
 export const DEFAULT_MATCH_MINUTES = 5;
 export const DEFAULT_GAP_MINUTES   = 5;
@@ -96,6 +101,30 @@ export function applyScheduleStatus(
     }
 
     return m.status === newStatus ? m : { ...m, status: newStatus };
+  });
+}
+
+/**
+ * Per-ring live view: which match is currently ON each ring and which is up
+ * next — the same first/second-ready-pending rule as applyScheduleStatus (and
+ * kept next to it so the two can't drift), but returned BY RING rather than
+ * folded into match statuses. The OBS overlays need the ring→match direction:
+ * a "Now Battling" lower-third sits on one ring's camera scene and must ask
+ * "what's on ring 3?", which the flat status list can't answer (ring position
+ * lives only here in the schedule).
+ */
+export function ringLiveView(
+  matches: BracketMatch[],
+  schedule: MatchSchedule,
+): { active: BracketMatch | null; next: BracketMatch | null }[] {
+  const byId = new Map(matches.map(m => [m.id, m]));
+  return schedule.rings.map(ring => {
+    const readyPending = ring
+      .map(e => byId.get(e.matchId))
+      .filter((m): m is BracketMatch =>
+        !!m && m.status !== 'completed' && m.status !== 'skipped'
+          && !!m.slotA.teamName && !!m.slotB.teamName);
+    return { active: readyPending[0] ?? null, next: readyPending[1] ?? null };
   });
 }
 
