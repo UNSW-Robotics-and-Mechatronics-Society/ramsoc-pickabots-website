@@ -35,13 +35,18 @@ export default async function AdminPage({ searchParams }: Props) {
   return (
     <div className="fixed inset-0 z-20 flex flex-col">
       {/* Header row — aligns with the AdminSidePanel's division toggle (top-6).
-          pr reserves room for that fixed-position panel (Standards/Open toggle
-          + ADMIN shield, ~right-4) so the KPI bar's flex-1 never runs under it. */}
-      <header className="shrink-0 flex items-center gap-4 px-6 pt-6 pb-2 pr-[17rem]">
-        <span className="text-lg font-semibold uppercase tracking-widest text-foreground/80">
-          Admin
-        </span>
-        <AdminNavBar />
+          Wraps below `lg`: the KPI bar drops to its own full-width row rather
+          than squeezing next to the nav pills on narrow/mobile screens. The
+          large lg:pr reserves room for the fixed-position side panel
+          (Standards/Open toggle + ADMIN shield, ~right-4) so the KPI bar's
+          flex-1 never runs under it once everything shares one row. */}
+      <header className="shrink-0 flex flex-wrap items-center gap-x-4 gap-y-2 px-4 pt-6 pb-2 sm:px-6 lg:flex-nowrap lg:pr-[17rem]">
+        <div className="flex shrink-0 items-center gap-4">
+          <span className="text-lg font-semibold uppercase tracking-widest text-foreground/80">
+            Admin
+          </span>
+          <AdminNavBar />
+        </div>
         <AdminKpiBar />
       </header>
 
