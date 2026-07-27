@@ -1,4 +1,5 @@
 import "server-only";
+import { unstable_cache } from "next/cache";
 import supabase from "@/lib/supabase";
 import {
   type BracketMatch, type BracketSide, type Division, type MatchStatus, type TeamCount,
@@ -101,7 +102,7 @@ function extractExhibitionSchedule(scheduleRows: { schedule: unknown }[]): Exhib
   return { rings: legacyRingLists.flat(), matchMinutes: DEFAULT_MATCH_MINUTES, gapMinutes: DEFAULT_GAP_MINUTES };
 }
 
-export async function getBracketState(): Promise<BracketState> {
+async function computeBracketState(): Promise<BracketState> {
   const [{ data: matchRows, error: mErr }, { data: configRows, error: cErr }, { data: scheduleRows, error: sErr }] =
     await Promise.all([
       supabase.from("bracket_matches").select("*"),
@@ -140,6 +141,22 @@ export async function getBracketState(): Promise<BracketState> {
 
   return { matches, teamCount, schedules, exhibitionSchedule };
 }
+
+// Public reads — the competition/matches pages and the team-ledger modal — go
+// through the cache so a crowd loading them shares one computation (and one run
+// of the per-request bracket generation/schedule-roll CPU) instead of each
+// triggering three queries. Invalidated by revalidateTag('bracket') on save
+// (see app/api/admin/bracket/route.ts). The revalidate keeps the read-time
+// schedule roll (rollSchedule) fresh; 30s is well finer than its minute-level
+// granularity.
+export const getBracketState = unstable_cache(computeBracketState, ["bracket-state"], {
+  revalidate: 30,
+  tags: ["bracket"],
+});
+
+// Uncached: the admin editor must always load the authoritative current state,
+// never a cached snapshot it might then overwrite.
+export { computeBracketState as getBracketStateFresh };
 
 /**
  * Marks a vote row's outcome once its bracket match resolves. Only

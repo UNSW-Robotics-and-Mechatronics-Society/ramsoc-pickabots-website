@@ -18,6 +18,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if ("phone" in body) patch.phone = body.phone;
   if ("notes" in body) patch.notes = body.notes;
   if ("present" in body) patch.present = body.present;
+  if ("inBracket" in body) patch.in_bracket = body.inBracket;
   if ("category" in body && CATEGORIES.includes(body.category)) patch.category = body.category;
 
   try {

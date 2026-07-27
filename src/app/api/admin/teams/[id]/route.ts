@@ -13,7 +13,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if ("seed" in body) patch.seed = body.seed;
   if ("comment" in body) patch.comment = body.comment;
   if ("present" in body) patch.present = body.present;
-  if ("wildcard" in body) patch.wildcard = body.wildcard;
+  if ("inBracket" in body) patch.in_bracket = body.inBracket;
   if ("points" in body) patch.points = body.points;
 
   try {

@@ -1,47 +1,47 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth, currentUser } from '@clerk/nextjs/server'
 import supabase from '@/lib/supabase'
+import { getAllIn } from '@/lib/db/config'
 
 export async function GET() {
   const { userId } = await auth()
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+  // ALL IN mode (admin toggle) lifts the 50%-of-balance vote cap. The client
+  // uses this to size the vote slider; place_vote enforces it authoritatively.
+  const allIn = await getAllIn()
+
   // Try to fetch existing user (limit(1) tolerates duplicate rows)
   const { data: userRows, error: selectErr } = await supabase
     .from('users').select('tokens').eq('id', userId).limit(1)
   const user = userRows?.[0] ?? null
-  console.log('[GET /api/user] select userId:', userId, 'rows:', userRows, 'err:', selectErr)
 
   if (selectErr) {
     console.error('[GET /api/user] select failed:', selectErr)
-    return NextResponse.json({ tokens: 100, _supabaseError: selectErr.message })
+    return NextResponse.json({ tokens: 100, allIn, _supabaseError: selectErr.message })
   }
 
   if (!user) {
     const clerkUser = await currentUser()
-    const displayName = clerkUser?.fullName || clerkUser?.username || 'Anonymous Pilot'
-    console.log('[GET /api/user] no row found, inserting userId:', userId)
-
+    const displayName = clerkUser?.fullName || clerkUser?.username || 'Anonymous Player'
     // Try with display_name first; fall back without it if column doesn't exist yet.
     // Upsert with ignoreDuplicates so a concurrent request (or place_vote, which
     // now provisions this row itself) racing us to create the same id is a no-op
     // instead of a duplicate-key error.
     let { error: insertErr } = await supabase
       .from('users').upsert({ id: userId, tokens: 100, display_name: displayName }, { onConflict: 'id', ignoreDuplicates: true })
-    console.log('[GET /api/user] insert w/ display_name result:', insertErr ?? 'ok')
     if (insertErr?.message?.includes('display_name')) {
       ;({ error: insertErr } = await supabase
         .from('users').upsert({ id: userId, tokens: 100 }, { onConflict: 'id', ignoreDuplicates: true }))
-      console.log('[GET /api/user] insert without display_name result:', insertErr ?? 'ok')
     }
     if (insertErr) {
       console.error('[GET /api/user] insert failed:', insertErr)
-      return NextResponse.json({ tokens: 100, _supabaseError: insertErr.message })
+      return NextResponse.json({ tokens: 100, allIn, _supabaseError: insertErr.message })
     }
-    return NextResponse.json({ tokens: 100 })
+    return NextResponse.json({ tokens: 100, allIn })
   }
 
-  return NextResponse.json({ tokens: user.tokens })
+  return NextResponse.json({ tokens: user.tokens, allIn })
 }
 
 export async function PATCH(req: NextRequest) {

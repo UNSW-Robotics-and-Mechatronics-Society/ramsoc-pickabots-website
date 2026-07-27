@@ -20,7 +20,7 @@ type FilterMode = 'all' | 'present' | 'absent' | 'eliminated' | 'special';
 type SpecialTeamCategory = 'std' | 'open' | 'boss' | 'other';
 type SpecialTeam = {
   id: string; name: string; email: string; phone: string; notes: string;
-  category: SpecialTeamCategory; present: boolean;
+  category: SpecialTeamCategory; present: boolean; inBracket: boolean;
 };
 type SpecialTeamInput = { name: string; email: string; phone: string; notes: string; category: SpecialTeamCategory };
 type SpecialTeamPatch = Partial<Omit<SpecialTeam, 'id'>>;
@@ -101,7 +101,7 @@ export default function TeamList({
 
   function update(
     id: string,
-    field: "seed" | "comment" | "present" | "wildcard",
+    field: "seed" | "comment" | "present" | "inBracket",
     value: string | number | boolean | null,
   ) {
     onTeamUpdate(id, { [field]: value } as Partial<Team>);
@@ -229,12 +229,23 @@ export default function TeamList({
               style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${BASE_CARD_W * scale}px, 1fr))` }}
             >
               {specialFiltered.map(t => {
-                const ringClass = t.present ? "ring-1 ring-green-400/70" : "ring-1 ring-red-400/50";
+                // Special teams have no seed, so this is a plain flag (default
+                // off). Auto Fill doesn't place special teams yet — for now it
+                // just marks them, mirroring the regular-team highlight.
+                const inBracket = t.inBracket ?? false;
+                // Present/absent is the card's ONLY overlay — see the regular
+                // team cards below for the same rule.
+                const ringClass = t.present
+                  ? "ring-1 ring-green-400/70"
+                  : "ring-1 ring-red-400/50";
 
                 return (
                   <div
                     key={t.id}
-                    className={cn("relative flex flex-col gap-2 rounded-2xl border border-white/22 bg-[#0d1018] p-3", ringClass)}
+                    className={cn(
+                      "relative flex flex-col gap-2 rounded-2xl border border-white/22 bg-[#0d1018] p-3",
+                      ringClass,
+                    )}
                   >
                     <button
                       type="button"
@@ -291,6 +302,21 @@ export default function TeamList({
                             {t.present ? "Present" : "Absent"}
                           </label>
 
+                          {/* In-bracket toggle — off by default for special
+                              teams; the admin turns it on to add them. */}
+                          <button
+                            type="button"
+                            onClick={() => updateSpecial(t.id, "inBracket", !inBracket)}
+                            className={cn(
+                              "rounded-lg border px-2 py-0.5 text-[0.65rem] transition-colors",
+                              inBracket
+                                ? "border-purple-400/50 bg-purple-400/20 text-purple-300"
+                                : "border-white/10 bg-white/5 text-foreground/40 hover:text-foreground/70",
+                            )}
+                          >
+                            In Bracket
+                          </button>
+
                           {detailTier === 'full' && t.phone && (
                             <a
                               href={`tel:${t.phone}`}
@@ -331,27 +357,24 @@ export default function TeamList({
           {sorted.map(team => {
             const isElim    = eliminatedTeams.has(team.name);
             const isPresent = team.present ?? false;
-            const isWild    = team.wildcard ?? false;
+            // Tri-state: an explicit override wins; otherwise a seed puts the
+            // team in the bracket automatically. Auto Fill uses this same rule.
+            const inBracket = team.inBracket ?? (team.seed != null);
 
-            const ringClass = isWild
-              ? "ring-1 ring-purple-400/70"
-              : isPresent
-                ? "ring-1 ring-green-400/70"
-                : "ring-1 ring-red-400/50";
-
-            const bgClass = isWild
-              ? "bg-purple-400/8"
-              : isPresent
-                ? "bg-[#0d1018]"
-                : "bg-[#0d1018]";
+            // Present/absent is the card's ONLY overlay. In-bracket has its own
+            // toggle in the row below — it doesn't also tint the card, so the
+            // ring always answers the one question a card should: is this team
+            // here or not?
+            const ringClass = isPresent
+              ? "ring-1 ring-green-400/70"
+              : "ring-1 ring-red-400/50";
 
             return (
               <div
                 key={team.id}
                 className={cn(
-                  "relative flex flex-col gap-2 rounded-2xl border border-white/22 p-3",
+                  "relative flex flex-col gap-2 rounded-2xl border border-white/22 bg-[#0d1018] p-3",
                   ringClass,
-                  bgClass,
                   isElim && "opacity-60",
                 )}
               >
@@ -364,7 +387,6 @@ export default function TeamList({
                   <div className="flex items-center gap-2">
                     <span className={cn(
                       "flex-1 truncate text-sm font-medium leading-tight",
-                      isWild && "text-purple-300",
                       isElim && "text-foreground/40 line-through decoration-red-400/50",
                     )}>
                       {team.name}
@@ -377,7 +399,6 @@ export default function TeamList({
                   /* Scaled down far enough that only the name still fits */
                   <span className={cn(
                     "truncate text-sm font-medium leading-tight",
-                    isWild && "text-purple-300",
                     isElim && "text-foreground/40 line-through decoration-red-400/50",
                   )}>
                     {team.name}
@@ -388,14 +409,13 @@ export default function TeamList({
                     <div className="flex items-center gap-2">
                       <span className={cn(
                         "flex-1 text-sm font-medium leading-tight",
-                        isWild    && "text-purple-300",
-                        isElim    && "text-foreground/40 line-through decoration-red-400/50",
+                        isElim && "text-foreground/40 line-through decoration-red-400/50",
                       )}>
                         {team.name}
                       </span>
                     </div>
 
-                    {/* Row 2: present + wildcard (+ division/call once there's room) */}
+                    {/* Row 2: present + in-bracket (+ division/call once there's room) */}
                     <div className="flex items-center gap-1.5">
                       {detailTier === 'full' && (
                         <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 text-[0.65rem] text-foreground/50">
@@ -419,18 +439,25 @@ export default function TeamList({
                         {isPresent ? "Present" : "Absent"}
                       </label>
 
-                      {/* Wildcard toggle — separate from present */}
+                      {/* In-bracket toggle — controls whether Auto Fill places
+                          this team. Clicking writes an explicit override, so an
+                          off you set sticks even when the team keeps its seed. */}
                       <button
                         type="button"
-                        onClick={() => update(team.id, "wildcard", !isWild)}
+                        onClick={() => update(team.id, "inBracket", !inBracket)}
+                        title={
+                          team.inBracket == null && team.seed != null
+                            ? "In the bracket automatically (has a seed) — click to keep it out"
+                            : undefined
+                        }
                         className={cn(
                           "rounded-lg border px-2 py-0.5 text-[0.65rem] transition-colors",
-                          isWild
+                          inBracket
                             ? "border-purple-400/50 bg-purple-400/20 text-purple-300"
                             : "border-white/10 bg-white/5 text-foreground/40 hover:text-foreground/70",
                         )}
                       >
-                        Wildcard
+                        In Bracket
                       </button>
 
                       {detailTier === 'full' && (

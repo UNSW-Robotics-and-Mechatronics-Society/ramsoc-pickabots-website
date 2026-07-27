@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import AdminUserButton from './AdminUserButton'
-import RamCoin from './RamCoin'
+import SpinningRamCoin from './SpinningRamCoin'
 import CoinModal from './CoinModal'
 
 export default function Header({ tokens, loading }: { tokens: number; loading: boolean }) {
@@ -45,9 +45,7 @@ export default function Header({ tokens, loading }: { tokens: number; loading: b
           boxShadow: '0 0 14px rgba(255,180,0,0.12)',
           backdropFilter: 'blur(8px)',
         }}>
-          <span style={{ display: 'inline-block', animation: 'orbitSpin 6s linear infinite' }}>
-            <RamCoin size={22} onClick={() => setCoinOpen(true)} title="View your RAMSoc coin" />
-          </span>
+          <SpinningRamCoin size={22} onClick={() => setCoinOpen(true)} title="View your RAMSoc coin" />
           <span style={{
             fontSize: '1.1rem', fontWeight: 900, color: '#FFD700', letterSpacing: 2,
             textShadow: '0 0 10px rgba(255,215,0,0.5)', minWidth: 32, textAlign: 'center',
@@ -62,14 +60,6 @@ export default function Header({ tokens, loading }: { tokens: number; loading: b
       </div>
 
       <CoinModal open={coinOpen} onClose={() => setCoinOpen(false)} />
-
-      <style>{`
-        @keyframes orbitSpin {
-          0%   { transform: rotateY(0deg) scale(1); }
-          50%  { transform: rotateY(180deg) scale(0.85); }
-          100% { transform: rotateY(360deg) scale(1); }
-        }
-      `}</style>
     </header>
   )
 }

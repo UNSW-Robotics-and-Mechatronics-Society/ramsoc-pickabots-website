@@ -36,42 +36,26 @@ export async function rewardWinners(matchId: string, winnerSide: "left" | "right
   }));
   const result = resolveRound(entries, winnerSide === "left" ? "A" : "B");
 
-  console.log(
-    `[rewardWinners] match ${matchId}: ${entries.length} votes, ` +
-    `pool=${result.totalPool}, outcome=${result.winner === "REFUND" ? "REFUND (nobody backed winner)" : `winner=${winnerSide}`}`
-  );
-
-  // resolveRound assigns every entry its payout (0 for a losing vote, the
-  // parimutuel share for a winner, the stake back on a full refund). Record
-  // that payout on each vote row so the coin ledger reads gain/loss straight
-  // off `votes`, and credit tokens for anyone who gained.
+  // resolveRound is the single source of payout truth (0 for a losing vote, the
+  // parimutuel share for a winner, the stake back on a full refund). Apply every
+  // payout in ONE transaction via apply_payouts (see 0018_atomic_payout.sql), so
+  // all balances move together — everyone is paid at the same instant, not one
+  // user at a time — and each credit is an atomic increment that can't clobber a
+  // concurrent vote on another match.
   const voteIdByUser = new Map(rows.map(r => [r.user_id as string, r.id as string]));
+  const payouts = result.rewards
+    .map(r => ({ vote_id: voteIdByUser.get(r.userId), user_id: r.userId, payout: r.reward }))
+    .filter((p): p is { vote_id: string; user_id: string; payout: number } => !!p.vote_id);
 
-  for (const r of result.rewards) {
-    const voteId = voteIdByUser.get(r.userId);
-    if (voteId) {
-      await supabase.from("votes").update({ payout: r.reward }).eq("id", voteId);
-    }
-    if (r.reward <= 0) continue;
-
-    const { data: userRows, error: userErr } = await supabase
-      .from("users").select("tokens").eq("id", r.userId).limit(1);
-    if (userErr) {
-      console.error("[rewardWinners] failed to read tokens for user", r.userId, userErr.message);
-      continue;
-    }
-
-    const current = userRows?.[0]?.tokens ?? 0;
-    const { error: updateErr } = await supabase
-      .from("users").update({ tokens: current + r.reward }).eq("id", r.userId);
-
-    if (updateErr) {
-      console.error("[rewardWinners] failed to update tokens for user", r.userId, updateErr.message);
-    } else {
-      console.log(
-        `[rewardWinners] ${r.refunded ? "refunded" : "paid"} user ${r.userId}: ` +
-        `+${r.reward} tokens (${current} → ${current + r.reward})`
-      );
-    }
+  const { error: payoutErr } = await supabase.rpc("apply_payouts", { p_payouts: payouts });
+  if (payoutErr) {
+    console.error("[rewardWinners] apply_payouts failed for match", matchId, payoutErr.message);
+    throw new Error(`Failed to apply payouts: ${payoutErr.message}`);
   }
+
+  console.log(
+    `[rewardWinners] match ${matchId}: ${entries.length} votes, pool=${result.totalPool}, ` +
+    `outcome=${result.winner === "REFUND" ? "REFUND (nobody backed winner)" : `winner=${winnerSide}`}, ` +
+    `paid ${payouts.filter(p => p.payout > 0).length} in one transaction`
+  );
 }

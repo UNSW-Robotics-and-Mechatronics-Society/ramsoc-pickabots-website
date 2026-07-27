@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { auth } from "@clerk/nextjs/server";
 import supabase from "@/lib/supabase";
 import { rewardWinners } from "@/lib/db/rewards";
@@ -33,6 +34,11 @@ export async function POST(
     payoutError = err instanceof Error ? err.message : String(err);
     console.error("[resolve] reward failed for match", matchId, payoutError);
   }
+
+  // Resolving a match changes W/L (winner_side above) and token payouts, both of
+  // which the leaderboard ranks by — drop its cache so the post-game refresh
+  // reads fresh standings (same as the bracket-save path).
+  revalidateTag("leaderboard", { expire: 0 });
 
   return NextResponse.json({ ok: true, payoutError });
 }

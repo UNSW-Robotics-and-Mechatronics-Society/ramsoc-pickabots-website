@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { auth } from "@clerk/nextjs/server";
 import { getBegState, attemptBeg } from "@/lib/db/beg";
+import { bumpLeaderboardSignal } from "@/lib/db/leaderboard";
 
 // GET → current beg eligibility/state for the signed-in player.
 export async function GET() {
@@ -34,6 +36,10 @@ export async function POST(req: NextRequest) {
       // 409 = rules not satisfied (not broke / no begs left / cooldown).
       return NextResponse.json({ error: result.error, state: result.state }, { status: 409 });
     }
+    // A successful beg credits the player's balance — surface it on open
+    // leaderboards right away (nudge) and make that refresh read fresh data.
+    await bumpLeaderboardSignal();
+    revalidateTag("leaderboard", { expire: 0 });
     return NextResponse.json(result);
   } catch (err) {
     return NextResponse.json(

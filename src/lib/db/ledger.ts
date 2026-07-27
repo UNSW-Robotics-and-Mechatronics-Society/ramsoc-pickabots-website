@@ -99,7 +99,7 @@ export async function getUserLedger(userId: string): Promise<UserLedger | null> 
 
   return {
     id: user.id as string,
-    name: (user.display_name as string | null) ?? "Anonymous Pilot",
+    name: (user.display_name as string | null) ?? "Anonymous Player",
     tokens: user.tokens as number,
     wins,
     losses,

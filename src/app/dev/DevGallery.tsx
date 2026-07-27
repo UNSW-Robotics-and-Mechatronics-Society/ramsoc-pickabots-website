@@ -14,6 +14,7 @@ import BegDial from "@/components/BegDial";
 import TeamDetailsModal from "@/components/admin/TeamDetailsModal";
 import PlayersPanel from "@/components/admin/PlayersPanel";
 import SettingsPanel from "@/components/admin/SettingsPanel";
+import type { TeamCount } from "@/lib/mock-data";
 import Ring from "@/components/Ring";
 import type { Match, Vote, VoteStandings } from "@/lib/types";
 import { DEFAULT_SMS_UP_NEXT } from "@/lib/sms-template";
@@ -700,7 +701,18 @@ function SettingsSection() {
         description="Admin editor for the 'up next' SMS template — live preview, placeholder chips, save/reset. Fully self-contained — no external state to wire up."
       />
       <div className="glass h-[500px] overflow-hidden rounded-2xl border border-white/10">
-        <SettingsPanel />
+        {/* Dev preview only — team/reset actions are wired to no-ops here. */}
+        <SettingsPanel
+          division="standards"
+          teamCount={16}
+          teamCounts={[4, 8, 16, 32, 64] as TeamCount[]}
+          onTeamCountChange={() => {}}
+          onSetAllPresent={async () => {}}
+          onSetAllInBracket={async () => {}}
+          onImportSeeds={async () => ({ imported: 0, unmatched: [] })}
+          onAutoFill={() => {}}
+          onResetAll={() => {}}
+        />
       </div>
     </section>
   );

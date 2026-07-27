@@ -1,6 +1,7 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import RamCoin from './RamCoin'
 
 const GRAIN = `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)' opacity='1'/%3E%3C/svg%3E")`
 
@@ -40,13 +41,17 @@ type Props = {
 
 const MEDAL = ['🥇', '🥈', '🥉']
 
+// The voter modal is themed blue.
+const VOTER_BLUE = '#5A9FFF'
+const tint = (color: string, pct: number) => `color-mix(in srgb, ${color} ${pct}%, transparent)`
+
 const STATUS_STYLE: Record<LedgerEntry['status'], { label: string; color: string; bg: string }> = {
   won:     { label: 'WON',     color: '#4ADE80', bg: 'rgba(76,222,128,0.12)' },
   lost:    { label: 'LOST',    color: '#ff6666', bg: 'rgba(255,60,60,0.1)' },
   pending: { label: 'PENDING', color: '#FFD700', bg: 'rgba(255,215,0,0.1)' },
 }
 
-function StatTile({ label, value, color }: { label: string; value: string; color: string }) {
+function StatTile({ label, value, color }: { label: string; value: ReactNode; color: string }) {
   return (
     <div style={{
       flex: 1, minWidth: 0, padding: '10px 8px', borderRadius: 10,
@@ -64,7 +69,7 @@ function StatTile({ label, value, color }: { label: string; value: string; color
 }
 
 // Fetches and renders one user's ledger. Keyed by userId from the parent
-// (see below) — switching to a different pilot mounts a fresh instance
+// (see below) — switching to a different player mounts a fresh instance
 // instead of resetting state inside an effect, so `ledger`/`error` start
 // clean for free and the effect only ever calls setState from its fetch
 // callbacks, never synchronously in the effect body.
@@ -113,7 +118,11 @@ function LedgerBody({ userId }: { userId: string }) {
           <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
             <StatTile label="Win Rate" value={`${ledger.winRate}%`} color="#fff" />
             <StatTile label="Record" value={`${ledger.wins}W / ${ledger.losses}L`} color="#fff" />
-            <StatTile label="Balance" value={`🪙 ${ledger.tokens.toLocaleString()}`} color="#FFD700" />
+            <StatTile
+              label="RamCoins to Play"
+              value={<><RamCoin size={12} style={{ marginRight: 4 }}/>{ledger.tokens.toLocaleString()}</>}
+              color="#FFD700"
+            />
           </div>
           <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
             <StatTile label="Coins Gained" value={`+${ledger.totalGained.toLocaleString()}`} color="#4ADE80" />
@@ -153,7 +162,7 @@ function LedgerBody({ userId }: { userId: string }) {
                       {e.pickedName} <span style={{ color: 'rgba(255,255,255,0.3)' }}>vs</span> {e.opponentName}
                     </div>
                     <div style={{ fontSize: '0.5rem', color: 'rgba(255,255,255,0.35)', marginTop: 2 }}>
-                      🪙 {e.amount} wagered
+                      <RamCoin size={10} style={{ marginRight: 4 }}/>{e.amount} wagered
                     </div>
                   </div>
 
@@ -214,13 +223,13 @@ export default function UserLedgerModal({ target, onClose }: Props) {
         background: 'rgba(4,2,12,0.88)',
         backdropFilter: 'blur(20px)',
         WebkitBackdropFilter: 'blur(20px)',
-        backgroundImage: 'radial-gradient(ellipse at 20% 0%, rgba(255,107,0,0.07) 0%, transparent 55%), radial-gradient(ellipse at 80% 100%, rgba(155,48,255,0.05) 0%, transparent 55%)',
-        border: '1px solid rgba(255,107,0,0.3)',
+        backgroundImage: `radial-gradient(ellipse at 20% 0%, ${tint(VOTER_BLUE, 10)} 0%, transparent 55%), radial-gradient(ellipse at 80% 100%, rgba(26,108,255,0.05) 0%, transparent 55%)`,
+        border: `1px solid ${tint(VOTER_BLUE, 34)}`,
         borderBottom: 'none',
         borderRadius: '18px 18px 0 0',
         width: '100%', maxWidth: 480,
         animation: 'slideUp 0.3s cubic-bezier(0.34,1.56,0.64,1) forwards',
-        boxShadow: '0 -8px 48px rgba(255,85,0,0.12)',
+        boxShadow: `0 -8px 48px ${tint(VOTER_BLUE, 16)}`,
       }}>
         <div style={{
           position: 'absolute', inset: 0, pointerEvents: 'none',
@@ -235,12 +244,19 @@ export default function UserLedgerModal({ target, onClose }: Props) {
           padding: '22px 20px 0',
         }}>
           <div>
-            <div style={{ fontSize: '0.5rem', fontWeight: 900, letterSpacing: 3, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', marginBottom: 4 }}>
-              {isTop3 ? MEDAL[target.rank - 1] : `Rank #${target.rank}`}
+            <div style={{ fontSize: '0.5rem', fontWeight: 900, letterSpacing: 3, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', marginBottom: 5 }}>
+              Voter
             </div>
-            <div style={{ fontSize: '0.95rem', fontWeight: 900, color: '#FF6B00', textTransform: 'uppercase', letterSpacing: 3,
-              textShadow: '0 0 16px rgba(255,107,0,0.5)' }}>
+            <div style={{ fontSize: '0.95rem', fontWeight: 900, color: VOTER_BLUE, textTransform: 'uppercase', letterSpacing: 3,
+              textShadow: `0 0 16px ${tint(VOTER_BLUE, 50)}` }}>
               {target.name}
+            </div>
+            <div style={{
+              display: 'inline-block', marginTop: 7, padding: '3px 9px', borderRadius: 999,
+              fontSize: '0.44rem', fontWeight: 900, letterSpacing: 2, textTransform: 'uppercase',
+              color: VOTER_BLUE, background: tint(VOTER_BLUE, 14), border: `1px solid ${tint(VOTER_BLUE, 32)}`,
+            }}>
+              {isTop3 ? `${MEDAL[target.rank - 1]} ` : ''}Rank #{target.rank}
             </div>
           </div>
           <button onClick={onClose} style={{

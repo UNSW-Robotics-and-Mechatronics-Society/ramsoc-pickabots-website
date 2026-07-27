@@ -13,7 +13,10 @@ export type Team = {
   seed: number | null;
   comment: string;
   present?: boolean;
-  wildcard?: boolean;
+  // Whether the team is in the bracket (i.e. Auto Fill will place it).
+  // Tri-state: undefined/null = "auto" → in-bracket iff it has a seed;
+  // true/false = an explicit admin override that sticks regardless of seed.
+  inBracket?: boolean | null;
 };
 
 export type MatchStatus = 'todo' | 'next' | 'active' | 'completed' | 'skipped';

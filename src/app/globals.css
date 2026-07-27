@@ -76,3 +76,53 @@
     letter-spacing: 0.01em;
   }
 }
+
+/* ----------------------------------------
+   gridstack — admin dashboard panel grid
+   Overrides scoped to .admin-panel-grid so gridstack's stylesheet never
+   leaks to the rest of the app. Each tile draws its own chrome (border,
+   rounded corners, title bar) inside the item-content; the panel it hosts
+   keeps its own container-query layout + internal scroll, so resizing a tile
+   only changes its box — font sizes stay constant (no scale transform).
+---------------------------------------- */
+.admin-panel-grid .grid-stack {
+  min-height: 100%;
+}
+
+.admin-panel-grid .grid-stack-item-content {
+  /* Panels manage their own scrolling; strip gridstack's default scroll/bg. */
+  overflow: hidden;
+  background: transparent;
+}
+
+/* Drag/resize placeholder shown while moving or dropping a tile. */
+.admin-panel-grid .grid-stack-placeholder > .placeholder-content {
+  border: 1px dashed rgba(255, 255, 255, 0.28);
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* Corner resize grips — tint for visibility on the dark theme. */
+.admin-panel-grid .grid-stack-item > .ui-resizable-nw,
+.admin-panel-grid .grid-stack-item > .ui-resizable-ne,
+.admin-panel-grid .grid-stack-item > .ui-resizable-sw,
+.admin-panel-grid .grid-stack-item > .ui-resizable-se {
+  filter: brightness(0) invert(1);
+  opacity: 0.3;
+  transition: opacity 0.15s;
+}
+.admin-panel-grid .grid-stack-item:hover > .ui-resizable-nw,
+.admin-panel-grid .grid-stack-item:hover > .ui-resizable-ne,
+.admin-panel-grid .grid-stack-item:hover > .ui-resizable-sw,
+.admin-panel-grid .grid-stack-item:hover > .ui-resizable-se {
+  opacity: 0.6;
+}
+
+/* Edge handles are transparent strips (resize cursor only) — hint them on hover
+   so it's discoverable that you can resize from any side. */
+.admin-panel-grid .grid-stack-item:hover > .ui-resizable-n,
+.admin-panel-grid .grid-stack-item:hover > .ui-resizable-e,
+.admin-panel-grid .grid-stack-item:hover > .ui-resizable-s,
+.admin-panel-grid .grid-stack-item:hover > .ui-resizable-w {
+  background: rgba(255, 255, 255, 0.08);
+}

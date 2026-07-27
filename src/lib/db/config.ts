@@ -7,6 +7,7 @@ import { DEFAULT_SMS_UP_NEXT } from "@/lib/sms-template";
 
 const SMS_UP_NEXT_KEY = "sms_up_next_template";
 const NOTIFY_LEAD_KEY = "sms_notify_lead";
+const ALL_IN_KEY = "all_in";
 
 /** Default: text captains when their team is this many matches from playing. */
 export const DEFAULT_NOTIFY_LEAD = 2;
@@ -58,4 +59,24 @@ export async function getNotifyLead(): Promise<number> {
 export async function setNotifyLead(value: number): Promise<void> {
   const n = Math.max(1, Math.min(16, Math.trunc(value)));
   await setConfig(NOTIFY_LEAD_KEY, String(n));
+}
+
+/**
+ * "ALL IN" mode: when on, the 50%-of-balance-per-vote cap is lifted (players
+ * can stake up to their whole balance). Enforced server-side in the place_vote
+ * RPC (see migration 0020); this getter mirrors the flag for the UI.
+ */
+export async function getAllIn(): Promise<boolean> {
+  try {
+    return (await getConfig(ALL_IN_KEY)) === "true";
+  } catch (err) {
+    // Never let a config read failure break the voting page — default to the
+    // safe (capped) behaviour.
+    console.error("[config] getAllIn failed, defaulting to off:", err);
+    return false;
+  }
+}
+
+export async function setAllIn(value: boolean): Promise<void> {
+  await setConfig(ALL_IN_KEY, value ? "true" : "false");
 }
