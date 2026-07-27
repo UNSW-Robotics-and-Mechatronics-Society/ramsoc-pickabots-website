@@ -31,7 +31,7 @@ export function ringSceneName(ring: number): string {
  * internet (and with it every overlay) is down. Cut to it whenever anything
  * breaks on camera.
  */
-export const SCREEN_SCENES = ["Intermission", "Bracket", "Standings", "Leaderboard", "Standby"] as const;
+export const SCREEN_SCENES = ["Sumobots", "Intermission", "Bracket", "Standings", "Leaderboard", "Standby"] as const;
 export const INTERMISSION_SCENE = SCREEN_SCENES[0];
 
 /**

@@ -27,6 +27,24 @@ export type OverlayOdds = {
  * Returns null when the match has no live voting row (not reconciled yet, or
  * already resolved) — the overlay simply omits the odds strip then.
  */
+/**
+ * Event-wide betting totals for the KPI banner: every coin ever wagered
+ * (sum of vote amounts across all matches, resolved and live) and how many
+ * distinct players have placed at least one bet. One indexed-column scan of
+ * `votes` per overlay refresh — same budget reasoning as the odds read above.
+ */
+export async function getWagerTotals(): Promise<{ totalWagered: number; bettors: number }> {
+  const { data, error } = await supabase.from("votes").select("user_id, amount");
+  if (error) return { totalWagered: 0, bettors: 0 };
+  let totalWagered = 0;
+  const users = new Set<string>();
+  for (const v of data ?? []) {
+    totalWagered += (v.amount as number) ?? 0;
+    users.add(v.user_id as string);
+  }
+  return { totalWagered, bettors: users.size };
+}
+
 export async function getOddsForBracketMatch(bracketMatchId: string): Promise<OverlayOdds | null> {
   const { data: rows, error } = await supabase
     .from("matches")

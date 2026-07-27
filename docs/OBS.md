@@ -109,10 +109,11 @@ Create one scene per ring, named **exactly** `Ring 1` … `Ring 6` (the control
 panel targets scenes by these names — see `ringSceneName` in `src/lib/obs.ts`),
 and put each ring's camera source in its scene.
 
-Then create the "screen" scenes — full-frame info boards to cut to between
-matches, one browser source each (URLs in §4): `Intermission`, `Bracket`,
-`Standings`, `Leaderboard`. The panel has a button for each; any you don't
-create simply fail the switch (logged by the relay) and can be ignored.
+Then create the "screen" scenes — full-frame boards to cut to between
+matches, one browser source each (URLs in §4): `Sumobots` (title card),
+`Intermission`, `Bracket`, `Standings`, `Leaderboard`, plus the local-image
+`Standby` (see §6b). The panel has a button for each; any you don't create
+simply fail the switch (logged by the relay) and can be ignored.
 
 ## 4. Browser sources (the overlays)
 
@@ -127,6 +128,8 @@ deployed site, e.g. `https://pickabots.ramsocunsw.org`.
 | Bracket | `BASE/overlay/bracket` / `?division=open` | `Bracket` | 1920×1080 | full canvas |
 | Team standings / day stats | `BASE/overlay/stats?top=8` | `Standings` | 1920×1080 | full canvas (renders centered) |
 | Player leaderboard (RAM coins) | `BASE/overlay/leaderboard?top=10` | `Leaderboard` | 1920×1080 | full canvas (renders centered) |
+| Title card (logo + SUMOBOTS 2026) | `BASE/overlay/title` (`?year=` to change) | `Sumobots` | 1920×1080 | full canvas (paints its own background) |
+| KPI side banner (played / remaining / est. finish / coins wagered / bettors) | `BASE/overlay/kpi` (`?side=left`) | any camera scene | 1920×1080 | full canvas (renders mid-right edge) |
 
 The lower-third's odds strip appears automatically while its match has a live
 voting row — pool split, percentages, and payout multipliers move in realtime
