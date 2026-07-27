@@ -3,7 +3,11 @@ export type TeamCount  = 4 | 8 | 16 | 32 | 64;
 // 'exhibition' = an ad-hoc extra match the admin inserts into a ring's schedule
 // (e.g. an unplanned/filler match). It is NOT part of the bracket tree, has no
 // advancement, and never appears in the winners/losers/finals renderers.
-export type BracketSide = 'winners' | 'losers' | 'finals-semi' | 'finals-final' | 'finals-third' | 'exhibition';
+// 'wildcard' is not a played match — it's a holding box outside the bracket
+// tree where a knocked-out team waits before being fed into the losers bracket
+// at the 8-team stage. Modelled as a match so it persists and edits through the
+// same path as everything else; slotB is always unused.
+export type BracketSide = 'winners' | 'losers' | 'finals-semi' | 'finals-final' | 'finals-third' | 'exhibition' | 'wildcard';
 
 export type Team = {
   id: string;
@@ -42,11 +46,68 @@ export type BracketMatch = {
 // ── round count helpers ────────────────────────────────────────────────────────
 
 export function wbRoundsFor(n: TeamCount): number { return Math.log2(n); }
-export function lbRoundsFor(n: TeamCount): number { return 2 * Math.log2(n) - 2; }
 
-function lbMatchCountForRound(lbRound: number, teamCount: TeamCount): number {
-  // LB R1,R2: N/4 matches; R3,R4: N/8; R5,R6: N/16 …
+/** Deep enough for an 8-team stage to exist, and so for wildcards. */
+function supportsWildcards(n: TeamCount): boolean { return n >= 16; }
+
+export function lbRoundsFor(n: TeamCount): number {
+  // Two adjustments to the textbook 2·log2(n) − 2:
+  //
+  //  −1  A textbook losers bracket ends with a drop-in round for the WB
+  //      Final's loser. Finals Day takes BOTH winners-bracket finalists
+  //      directly (see applyStatusChange), so that round would be left with a
+  //      single entrant and nobody to play. Dropping it makes the last
+  //      consolidation round the LB Final — a real two-team match whose
+  //      winner and loser both go up, giving Finals Day 2 from the losers
+  //      bracket to match its 2 from the winners bracket.
+  //
+  //  +1  The wildcard round, inserted at the 8-team stage (wildcardLbRound).
+  return 2 * Math.log2(n) - 3 + (supportsWildcards(n) ? 1 : 0);
+}
+
+/**
+ * The losers-bracket round the two WILDCARD teams feed into.
+ *
+ * It's the 8-team stage: four unbeaten teams in the winners bracket plus four
+ * in the losers bracket. Under the wildcard format only two of those four are
+ * bracket qualifiers — the other two places are slot B of this round's two
+ * matches, fed from the wildcard boxes outside the tree. So the stage reads
+ * 6 teams from the original bracket + 2 wildcards.
+ *
+ * It is INSERTED directly after the losers round that consolidates four
+ * survivors into two, rather than carved out of an existing round. That keeps
+ * the tournament true double elimination: nobody loses a seat to make room, so
+ * every team still needs two losses to go out — while the two wildcards, who
+ * already have two, get a third life. Null below 16 teams, where the bracket
+ * is too shallow for the stage to exist at all.
+ */
+export function wildcardLbRound(teamCount: TeamCount): number | null {
+  if (!supportsWildcards(teamCount)) return null;
+  // Straight after the losers round that consolidates four survivors into two.
+  return 2 * Math.log2(teamCount / 8) + 2;
+}
+
+/** How many wildcard boxes a bracket has (one per place at the stage). */
+export function wildcardCountFor(teamCount: TeamCount): number {
+  return wildcardLbRound(teamCount) === null ? 0 : 2;
+}
+
+/** Match count in a textbook losers bracket — R1,R2: N/4; R3,R4: N/8; R5,R6: N/16 … */
+function baseLbMatchCount(lbRound: number, teamCount: TeamCount): number {
   return Math.max(1, (teamCount / 4) / Math.pow(2, Math.floor((lbRound - 1) / 2)));
+}
+
+/**
+ * Rounds before the wildcard round are the textbook bracket untouched; the
+ * wildcard round itself is two matches (two LB survivors vs two wildcards);
+ * everything after it is the textbook round one place earlier, shifted down by
+ * the insertion. Nothing is narrowed, so every team keeps its seat.
+ */
+function lbMatchCountForRound(lbRound: number, teamCount: TeamCount): number {
+  const wc = wildcardLbRound(teamCount);
+  if (wc === null) return baseLbMatchCount(lbRound, teamCount);
+  if (lbRound === wc) return wildcardCountFor(teamCount);
+  return baseLbMatchCount(lbRound > wc ? lbRound - 1 : lbRound, teamCount);
 }
 
 // ── round label helpers ────────────────────────────────────────────────────────
@@ -67,35 +128,80 @@ export function lbRoundLabel(round: number, total: number): string {
 
 // ── advancement mappings ───────────────────────────────────────────────────────
 
-/** Returns where a WB match's LOSER drops into the losers bracket. */
-export function wbLossToLBEntry(wbRound: number, wbMatchNum: number): { round: number; match: number; slot: 'a' | 'b' } {
-  if (wbRound === 1) {
-    return {
-      round: 1,
-      match: Math.ceil(wbMatchNum / 2),
-      slot: wbMatchNum % 2 === 1 ? 'a' : 'b',
-    };
-  }
-  return { round: 2 * (wbRound - 1), match: wbMatchNum, slot: 'b' };
+type LBSeat = { round: number; match: number; slot: 'a' | 'b' };
+
+/**
+ * Where a WB match's LOSER drops into the losers bracket. Always a real seat —
+ * the wildcard round is inserted, not carved out of an existing round, so no
+ * loser is ever turned away. (The WB Final's loser goes to Finals Day instead
+ * and never reaches here — see applyStatusChange.)
+ */
+export function wbLossToLBEntry(wbRound: number, wbMatchNum: number, teamCount: TeamCount): LBSeat {
+  const seat: LBSeat = wbRound === 1
+    ? { round: 1, match: Math.ceil(wbMatchNum / 2), slot: wbMatchNum % 2 === 1 ? 'a' : 'b' }
+    : { round: 2 * (wbRound - 1), match: wbMatchNum, slot: 'b' };
+  // Everything at or past the inserted wildcard round moves down one.
+  const wc = wildcardLbRound(teamCount);
+  if (wc !== null && seat.round >= wc) seat.round += 1;
+  return seat;
 }
 
-/** Returns where a LB match's WINNER advances. Returns null if it's the LB Final (→ GF). */
-export function lbWinnerNext(
-  lbRound: number,
-  lbMatchNum: number,
-  totalLbRounds: number,
-): { round: number; match: number; slot: 'a' | 'b' } | null {
-  if (lbRound === totalLbRounds) return null; // LB Final → GF slot B
-  if (lbRound % 2 === 1) {
+/**
+ * Where a LB match's WINNER advances. Null only at the LB Final (→ Finals Day).
+ *
+ * Rounds are mapped back into the textbook numbering, the ordinary rule is
+ * applied, and the target is shifted for the inserted wildcard round. The two
+ * feeds touching that round are both one-to-one into slot A: the round before
+ * it has already consolidated 4 → 2, and the wildcard round's own slot B holds
+ * the brought-back team.
+ */
+export function lbWinnerNext(lbRound: number, lbMatchNum: number, teamCount: TeamCount): LBSeat | null {
+  if (lbRound === lbRoundsFor(teamCount)) return null; // LB Final → Finals Day
+  const wc = wildcardLbRound(teamCount);
+
+  if (wc !== null && lbRound === wc) return { round: wc + 1, match: lbMatchNum, slot: 'a' };
+
+  const past = wc !== null && lbRound > wc;
+  const o = past ? lbRound - 1 : lbRound; // textbook round number
+  const seat: LBSeat = o % 2 === 1
     // odd round → even (drop-in): same match number, slot A
-    return { round: lbRound + 1, match: lbMatchNum, slot: 'a' };
+    ? { round: o + 1, match: lbMatchNum, slot: 'a' }
+    // even round → odd (consolidation): half the match count
+    : { round: o + 1, match: Math.ceil(lbMatchNum / 2), slot: lbMatchNum % 2 === 1 ? 'a' : 'b' };
+  return { ...seat, round: past ? seat.round + 1 : seat.round };
+}
+
+/**
+ * Where wildcard box `n` feeds: slot B of losers-bracket match `n` at the
+ * 8-team stage. One box per match, so the two wildcards always land in
+ * DIFFERENT matches and each faces a different losers-bracket qualifier —
+ * never each other.
+ */
+export function wildcardTarget(matchNumber: number, teamCount: TeamCount): LBSeat | null {
+  const round = wildcardLbRound(teamCount);
+  if (round === null || matchNumber > wildcardCountFor(teamCount)) return null;
+  return { round, match: matchNumber, slot: 'b' };
+}
+
+/** True when this match is a wildcard holding box rather than a played match. */
+export function isWildcardBox(m: BracketMatch): boolean {
+  return m.side === 'wildcard';
+}
+
+/** Light purple — marks everything to do with a wildcard, across every surface. */
+export const WILDCARD_PURPLE = '#D8B4FE';
+
+/**
+ * Names of every team in a wildcard box, per division. Read from the boxes
+ * rather than the losers bracket so the badge appears as soon as a team is
+ * placed, and stays with it after it's fed in — the box keeps the name.
+ */
+export function wildcardTeamNames(matches: BracketMatch[]): Set<string> {
+  const names = new Set<string>();
+  for (const m of matches) {
+    if (m.side === 'wildcard' && m.slotA.teamName) names.add(m.slotA.teamName);
   }
-  // even round → odd (consolidation): half the match count
-  return {
-    round: lbRound + 1,
-    match: Math.ceil(lbMatchNum / 2),
-    slot: lbMatchNum % 2 === 1 ? 'a' : 'b',
-  };
+  return names;
 }
 
 // ── generator ──────────────────────────────────────────────────────────────────
@@ -185,6 +291,25 @@ export function generateDoubleElimBracket(teamCount: TeamCount, division: Divisi
     votingOpen: false,
   });
 
+  // Wildcard holding boxes — outside the bracket tree. The admin drops a
+  // knocked-out team into slotA; marking the box completed feeds that team
+  // into slot B of the matching losers-bracket match at the 8-team stage
+  // (see applyStatusChange). targetScore 0 because nothing is played here.
+  for (let m = 1; m <= wildcardCountFor(teamCount); m++) {
+    matches.push({
+      id: `${division}-wildcard-m${m}`,
+      division,
+      side: 'wildcard',
+      round: 1,
+      matchNumber: m,
+      slotA: { teamName: '', score: 0 },
+      slotB: { teamName: '', score: 0 },
+      targetScore: 0,
+      status: 'todo',
+      votingOpen: false,
+    });
+  }
+
   // Seed first two WB R1 matches as active / next
   const wbR1 = matches.filter(m => m.side === 'winners' && m.round === 1);
   if (wbR1[0]) wbR1[0].status = 'active';
@@ -248,6 +373,9 @@ export function winner(m: BracketMatch): 'a' | 'b' | null {
 // Winners round of the same number (a team only reaches LB round N once
 // it's dropped out of WB).
 export function stageRank(m: BracketMatch): number {
+  // A wildcard box resolves just before the round it feeds, so it sorts
+  // immediately ahead of that losers round.
+  if (m.side === 'wildcard') return 4_999;
   if (m.side === 'finals-final') return 10_000;
   if (m.side === 'finals-third') return 9_999;
   if (m.side === 'finals-semi')  return 9_998;
@@ -272,13 +400,22 @@ export function findTeamTargetMatch(pool: BracketMatch[], teamName: string): Bra
   return teamMatches[0];
 }
 
-/** True if `name` is already placed in some other match in this division. */
+/**
+ * True if `name` is already placed in some other match in this division.
+ *
+ * Wildcard boxes are exempt: the team you put in one is by definition already
+ * in the bracket (in the matches it was knocked out of), so the usual duplicate
+ * guard would make picking anyone impossible. The exemption covers the box
+ * itself and the losers-bracket slot it feeds.
+ */
 export function isTeamNameTaken(
   matches: BracketMatch[],
   division: Division,
   excludeMatchId: string,
   name: string,
 ): boolean {
+  const target = matches.find(m => m.id === excludeMatchId);
+  if (target && target.side === 'wildcard') return false;
   return matches.some(m =>
     m.id !== excludeMatchId &&
     m.division === division &&
@@ -292,8 +429,8 @@ export function applyStatusChange(
   newStatus: MatchStatus,
   teamCount: TeamCount,
 ): BracketMatch[] {
+  // lbRounds is no longer needed here — lbWinnerNext derives it from teamCount.
   const wbRounds = wbRoundsFor(teamCount);
-  const lbRounds = lbRoundsFor(teamCount);
 
   let next = all.map(m => m.id === changed.id ? { ...changed, status: newStatus } : m);
 
@@ -304,6 +441,17 @@ export function applyStatusChange(
         ? { ...m, slotA: { ...m.slotA, teamName: name, score: 0 } }
         : { ...m, slotB: { ...m.slotB, teamName: name, score: 0 } };
     });
+  }
+
+  // A wildcard box isn't played — completing it just sends whoever is sitting
+  // in it into the losers bracket, so it's handled before the winner() check
+  // (there's no second slot for winner() to decide between).
+  if (newStatus === 'completed' && changed.side === 'wildcard') {
+    const target = wildcardTarget(changed.matchNumber, teamCount);
+    if (target && changed.slotA.teamName) {
+      setSlot('losers', target.round, target.match, target.slot, changed.slotA.teamName);
+    }
+    return next;
   }
 
   if (newStatus === 'completed') {
@@ -325,12 +473,12 @@ export function applyStatusChange(
           const ns = changed.matchNumber % 2 === 1 ? 'a' : 'b' as 'a' | 'b';
           setSlot('winners', nr, nm, ns, winnerName);
           if (loserName) {
-            const lb = wbLossToLBEntry(changed.round, changed.matchNumber);
+            const lb = wbLossToLBEntry(changed.round, changed.matchNumber, teamCount);
             setSlot('losers', lb.round, lb.match, lb.slot, loserName);
           }
         }
       } else if (changed.side === 'losers') {
-        const adv = lbWinnerNext(changed.round, changed.matchNumber, lbRounds);
+        const adv = lbWinnerNext(changed.round, changed.matchNumber, teamCount);
         if (adv) {
           setSlot('losers', adv.round, adv.match, adv.slot, winnerName);
         } else {
@@ -361,6 +509,43 @@ export function applyStatusChange(
       if (upcoming && m.id === upcoming.id && m.status === 'todo')                          return { ...m, status: 'next' };
       return m;
     });
+  }
+
+  return next;
+}
+
+/**
+ * Auto-completes WB Round 1 byes: any R1 match with exactly one team present
+ * (no opponent) is marked completed and that team advances to WB Round 2 —
+ * no match is ever played. Byes are then excluded from the schedule / match
+ * list (see isByeMatch in lib/schedule) so they never appear as a playable
+ * match. A bye has no loser, so nothing drops into the losers bracket. Matches
+ * with both slots filled (a real match) or both empty (an unused slot) are left
+ * untouched. Returns a new array; the input is not mutated.
+ */
+export function completeRound1Byes(matches: BracketMatch[], division: Division): BracketMatch[] {
+  const next = matches.map(m => ({ ...m, slotA: { ...m.slotA }, slotB: { ...m.slotB } }));
+
+  for (const m of next) {
+    if (m.division !== division || m.side !== 'winners' || m.round !== 1) continue;
+    const aEmpty = !m.slotA.teamName;
+    const bEmpty = !m.slotB.teamName;
+    if (aEmpty === bEmpty) continue; // both filled → real match; both empty → unused slot
+
+    const winnerName = aEmpty ? m.slotB.teamName : m.slotA.teamName;
+    m.status = 'completed';
+
+    // Advance the bye team into WB Round 2 — the same winner mapping
+    // applyStatusChange uses (R1 match M → R2 match ceil(M/2), slot a if M odd).
+    const nm = Math.ceil(m.matchNumber / 2);
+    const ns: 'a' | 'b' = m.matchNumber % 2 === 1 ? 'a' : 'b';
+    const target = next.find(
+      x => x.division === division && x.side === 'winners' && x.round === m.round + 1 && x.matchNumber === nm,
+    );
+    if (target) {
+      if (ns === 'a') target.slotA = { teamName: winnerName, score: 0 };
+      else            target.slotB = { teamName: winnerName, score: 0 };
+    }
   }
 
   return next;
@@ -404,6 +589,17 @@ export function computeSlotDefaults(
     return '';
   }
 
+  // The wildcard places: the losers-bracket slot reads "Wildcard Team n" until
+  // the matching box is sent in, and the box itself reads the same until the
+  // admin picks a knocked-out team for it.
+  for (let m = 1; m <= wildcardCountFor(teamCount); m++) {
+    const target = wildcardTarget(m, teamCount);
+    if (target) setDefault('losers', target.round, target.match, target.slot, `Wildcard Team ${m}`);
+    const boxId = `${division}-wildcard-m${m}`;
+    out.set(boxId, { ...(out.get(boxId) ?? {}), a: `Wildcard Team ${m}` });
+  }
+
+
   for (const m of matches) {
     if (m.division !== division) continue;
     const w = `Winner of ${feeder(m)}`;
@@ -416,7 +612,7 @@ export function computeSlotDefaults(
       } else {
         const ns: 'a' | 'b' = m.matchNumber % 2 === 1 ? 'a' : 'b';
         setDefault('winners', m.round + 1, Math.ceil(m.matchNumber / 2), ns, w);
-        const lb = wbLossToLBEntry(m.round, m.matchNumber);
+        const lb = wbLossToLBEntry(m.round, m.matchNumber, teamCount);
         setDefault('losers', lb.round, lb.match, lb.slot, l);
       }
     } else if (m.side === 'losers') {
@@ -424,7 +620,7 @@ export function computeSlotDefaults(
         setDefault('finals-semi', 1, 2, 'b', w);
         setDefault('finals-semi', 1, 1, 'b', l);
       } else {
-        const adv = lbWinnerNext(m.round, m.matchNumber, lbRounds);
+        const adv = lbWinnerNext(m.round, m.matchNumber, teamCount);
         if (adv) setDefault('losers', adv.round, adv.match, adv.slot, w);
       }
     } else if (m.side === 'finals-semi') {

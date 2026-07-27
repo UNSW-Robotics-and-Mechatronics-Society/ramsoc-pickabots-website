@@ -4,7 +4,7 @@ import supabase from "@/lib/supabase";
 import { getBracketState } from "./bracket";
 import { fromDbCategory } from "./division";
 import { getTokensByName, roundLabel } from "./teamLedger";
-import { type BracketMatch, type Division, winner, stageRank } from "@/lib/mock-data";
+import { type BracketMatch, type Division, winner, stageRank, wildcardLbRound, wildcardTeamNames } from "@/lib/mock-data";
 import type { TeamLeaderboardEntry, TeamStatusKind } from "@/lib/types";
 
 export type { TeamLeaderboardEntry, TeamStatusKind };
@@ -19,9 +19,17 @@ type EntryInput = {
   category: string | null;
   tokens: number;
   teamMatches: BracketMatch[];
+  // Brought back through a wildcard box. Such a team has 2+ losses on record,
+  // so without this it would read as knocked out while it's actually playing.
+  wildcard: boolean;
+  // stageRank of the round the wildcard feeds — a loss at or after it means the
+  // second life is over and the team goes back to the knocked-out list.
+  wildcardRank: number;
 };
 
-function buildEntry({ id, name, kind, division, category, tokens, teamMatches }: EntryInput): TeamLeaderboardEntry {
+function buildEntry({
+  id, name, kind, division, category, tokens, teamMatches, wildcard, wildcardRank,
+}: EntryInput): TeamLeaderboardEntry {
   let wins = 0;
   let losses = 0;
   // Bracket losses only, each with its chronological position, so a knocked-out
@@ -35,6 +43,10 @@ function buildEntry({ id, name, kind, division, category, tokens, teamMatches }:
   let finalResult: "won" | "lost" | null = null;
 
   for (const m of teamMatches) {
+    // A wildcard box is a holding slot, not a played match — it has
+    // targetScore 0, so winner() would score it as a free win. Skip entirely:
+    // it contributes no W/L and doesn't count as being drawn into the bracket.
+    if (m.side === "wildcard") continue;
     const isExhibition = m.side === "exhibition";
     if (!isExhibition) bracketMatchCount++;
     if (m.status !== "completed") continue;
@@ -68,6 +80,17 @@ function buildEntry({ id, name, kind, division, category, tokens, teamMatches }:
     // another knocked-out team.
     status = finalResult === "won" ? "champion" : "runner-up";
     statusLabel = finalResult === "won" ? "Champion" : "Runner-up";
+  } else if (wildcard) {
+    // A wildcard's pre-wildcard losses don't count against it any more — only a
+    // loss from the round it re-entered at onward ends the second life.
+    const since = bracketLosses.filter(l => l.rank >= wildcardRank).sort((a, b) => a.rank - b.rank);
+    if (since.length > 0) {
+      status = "knocked-out";
+      statusLabel = since[0].label;
+    } else {
+      status = "wildcard";
+      statusLabel = "Wildcard";
+    }
   } else if (bracketLosses.length >= 2) {
     bracketLosses.sort((a, b) => a.rank - b.rank);
     status = "knocked-out";
@@ -88,7 +111,7 @@ function buildEntry({ id, name, kind, division, category, tokens, teamMatches }:
 }
 
 async function computeTeamsLeaderboard(): Promise<TeamLeaderboardEntry[]> {
-  const [{ data: teamRows, error: tErr }, { data: specialRows, error: sErr }, tokensByName, { matches }] =
+  const [{ data: teamRows, error: tErr }, { data: specialRows, error: sErr }, tokensByName, { matches, teamCount }] =
     await Promise.all([
       supabase.from("teams").select("id, name, category"),
       supabase.from("special_teams").select("id, name, category"),
@@ -97,6 +120,15 @@ async function computeTeamsLeaderboard(): Promise<TeamLeaderboardEntry[]> {
     ]);
   if (tErr) throw new Error(`Failed to load teams: ${tErr.message}`);
   if (sErr) throw new Error(`Failed to load special teams: ${sErr.message}`);
+
+  // Wildcard boxes are per-division, so the two brackets are read separately.
+  const wildcardByDivision = new Map<Division, Set<string>>();
+  for (const division of ["standards", "open"] as Division[]) {
+    wildcardByDivision.set(division, wildcardTeamNames(matches.filter(m => m.division === division)));
+  }
+  const wildcardRound = wildcardLbRound(teamCount);
+  // Matches the stageRank a losers-bracket match of that round scores.
+  const wildcardRank = wildcardRound === null ? Infinity : 5_000 + wildcardRound;
 
   const entries: TeamLeaderboardEntry[] = [];
 
@@ -114,6 +146,8 @@ async function computeTeamsLeaderboard(): Promise<TeamLeaderboardEntry[]> {
       // brackets doesn't pick up the other one's results.
       teamMatches: matches.filter(m =>
         m.division === division && (m.slotA.teamName === name || m.slotB.teamName === name)),
+      wildcard: wildcardByDivision.get(division)?.has(name) ?? false,
+      wildcardRank,
     }));
   }
 
@@ -128,6 +162,8 @@ async function computeTeamsLeaderboard(): Promise<TeamLeaderboardEntry[]> {
       category,
       tokens: tokensByName.get(name) ?? 0,
       teamMatches: matches.filter(m => m.slotA.teamName === name || m.slotB.teamName === name),
+      wildcard: false, // special teams never enter the bracket, so never a wildcard
+      wildcardRank,
     }));
   }
 

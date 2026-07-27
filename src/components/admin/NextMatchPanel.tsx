@@ -26,12 +26,13 @@ type Props = {
 
 export default function NextMatchPanel({ matches, division, teamCount }: Props) {
   const relevant = matches
-    .filter(m => m.division === division && (m.status === 'active' || m.status === 'next'))
+    // Wildcard boxes aren't played, so they never belong in "what's on next".
+    .filter(m => m.division === division && m.side !== 'wildcard' && (m.status === 'active' || m.status === 'next'))
     .sort((a, b) => {
       // active before next
       if (a.status !== b.status) return a.status === 'active' ? -1 : 1;
       // winners before losers before finals day
-      const sideOrder = { winners: 0, losers: 1, 'finals-semi': 2, 'finals-third': 3, 'finals-final': 4, exhibition: 5 };
+      const sideOrder = { winners: 0, losers: 1, 'finals-semi': 2, 'finals-third': 3, 'finals-final': 4, exhibition: 5, wildcard: 6 };
       if (a.side !== b.side) return sideOrder[a.side] - sideOrder[b.side];
       if (a.round !== b.round) return a.round - b.round;
       return a.matchNumber - b.matchNumber;

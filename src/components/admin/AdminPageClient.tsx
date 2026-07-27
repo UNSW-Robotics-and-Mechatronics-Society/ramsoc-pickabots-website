@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  type BracketMatch, type Division, type MatchStatus, type Team, type TeamCount,
-  generateDoubleElimBracket, transferBracket,
+  type BracketMatch, type Division, type Team, type TeamCount,
+  generateDoubleElimBracket, transferBracket, completeRound1Byes,
 } from "@/lib/mock-data";
 import {
   type ConcurrentRings, type MatchSchedule, type ExhibitionSchedule,
@@ -276,7 +276,12 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
       };
     });
 
-    setMatches(seeded);
+    // Any R1 match left with a single team (fewer in-bracket teams than slots)
+    // is a bye: auto-complete it and advance that team to R2 so it never shows
+    // up as a playable match. rollSchedule then excludes it from the list.
+    const resolved = completeRound1Byes(seeded, div);
+
+    setMatches(resolved);
     setSchedules(prev => ({
       ...prev,
       [div]: rollSchedule(
@@ -287,7 +292,7 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
           prev[div].matchMinutes,
           prev[div].gapMinutes,
         ),
-        seeded,
+        resolved,
         div,
       ),
     }));
@@ -349,25 +354,31 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
   // teams/special_teams rows themselves untouched (special teams especially —
   // only their bracket placement, which they never had, would be affected).
   async function handleResetAll() {
-    const cleared = matches
-      .filter(m => m.side !== 'exhibition')
-      .map(m => ({ ...m, slotA: { teamName: '', score: 0 }, slotB: { teamName: '', score: 0 }, status: 'todo' as MatchStatus }));
+    // Regenerate both divisions from scratch rather than blanking the matches
+    // already loaded. Clearing in place froze the bracket's SHAPE at whatever
+    // was in the table, so a change to the generator (the wildcard boxes, say)
+    // could never be picked up by a reset — the only way out was deleting the
+    // rows by hand. saveBracketState's stale-row cleanup deletes whatever the
+    // new set no longer contains, so the shape genuinely follows the generator.
+    // Exhibition matches are dropped, same as before: the generator emits none.
+    const regenerated = (['standards', 'open'] as Division[])
+      .flatMap(d => generateDoubleElimBracket(teamCount, d));
 
     const rebuildSchedule = (d: Division, s: MatchSchedule): MatchSchedule => {
       const safeRings = Math.min(4, Math.max(1, s.concurrentRings)) as ConcurrentRings;
       return rollSchedule(
         generateSchedule([], safeRings, s.rings[0]?.[0]?.startMinute ?? START_MINUTE, s.matchMinutes, s.gapMinutes),
-        cleared,
+        regenerated,
         d,
       );
     };
 
-    setMatches(cleared);
+    setMatches(regenerated);
     setSchedules({ standards: rebuildSchedule('standards', schedules.standards), open: rebuildSchedule('open', schedules.open) });
-    // cleared has no exhibition matches left (filtered out above), so this
+    // regenerated has no exhibition matches (the generator emits none), so this
     // empties every exhibition ring's contents while keeping the ring
     // columns themselves — same as the per-division behavior this replaced.
-    setExhibitionSchedule(prev => rollExhibitionSchedule(prev, cleared));
+    setExhibitionSchedule(prev => rollExhibitionSchedule(prev, regenerated));
 
     try {
       const res = await fetch('/api/admin/reset-all', { method: 'POST' });

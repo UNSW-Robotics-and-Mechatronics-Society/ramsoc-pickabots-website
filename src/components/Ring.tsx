@@ -84,12 +84,14 @@ export default function Ring({ match, vote, standings, votingOpen = true, onVote
       {/* Inner row */}
       <div style={{ display: 'flex', minHeight: 140, position: 'relative', zIndex: 1 }}>
         <Side bot={{ name: match.left_name, color: match.left_color, shape: match.left_shape }}
+              wildcard={match.left_wildcard}
               side="left"  isBossbot={match.is_bossbot} ringColor={meta.color}
               impactWord={lWord} disabled={locked}
               mult={standings && !standings.noData ? standings.multiplierIfLeftWins : null}
               onClick={() => !locked && onVote('left')}
               onInfoClick={() => onTeamClick?.(match.left_name)} />
         <Side bot={{ name: match.right_name, color: match.right_color, shape: match.right_shape }}
+              wildcard={match.right_wildcard}
               side="right" isBossbot={match.is_bossbot} ringColor={meta.color}
               impactWord={rWord} disabled={locked}
               mult={standings && !standings.noData ? standings.multiplierIfRightWins : null}
@@ -245,7 +247,11 @@ export default function Ring({ match, vote, standings, votingOpen = true, onVote
         </div>
       </div>
 
-      <style>{`@keyframes fadeIn { from{opacity:0} to{opacity:1} }`}</style>
+      <style>{`@keyframes fadeIn { from{opacity:0} to{opacity:1} }
+        @keyframes wildcardHalo {
+          0%,100% { opacity: 0.75; transform: rotateX(62deg) translateY(0); }
+          50%     { opacity: 1;    transform: rotateX(62deg) translateY(-2px); }
+        }`}</style>
     </div>
   )
 }
@@ -264,9 +270,15 @@ interface SideProps {
    * (which becomes unclickable, descendants included, once `disabled`), so
    * the ledger stays reachable even after voting or once voting closes. */
   onInfoClick: () => void
+  /** Brought back from elimination as a wildcard — gets a halo. */
+  wildcard?: boolean
 }
 
-function Side({ bot, side, isBossbot, ringColor, impactWord, disabled, mult, onClick, onInfoClick }: SideProps) {
+// Light purple marks a revived team everywhere — this halo, and the team's
+// name on the leaderboard (see TeamBoard's WILDCARD_PURPLE).
+const WILDCARD_PURPLE = '#D8B4FE'
+
+function Side({ bot, side, isBossbot, ringColor, impactWord, disabled, mult, onClick, onInfoClick, wildcard = false }: SideProps) {
   const [hovered, setHovered] = useState(false)
   const isRight = side === 'right'
 
@@ -338,6 +350,23 @@ function Side({ bot, side, isBossbot, ringColor, impactWord, disabled, mult, onC
         transform: hovered ? 'translateY(-5px) scale(1.08)' : 'none',
         filter: hovered ? `drop-shadow(0 0 8px color-mix(in srgb, ${bot.color} 70%, transparent))` : 'none',
       }}>
+        {/* Wildcard halo — a tilted glowing ring floating above the bot, so a
+            brought-back team reads as one at a glance on the bidding screen. */}
+        {wildcard && (
+          <div
+            aria-hidden
+            style={{
+              position: 'absolute', left: '50%', top: -11,
+              width: 42, height: 13, marginLeft: -21,
+              borderRadius: '50%',
+              border: `2.5px solid ${WILDCARD_PURPLE}`,
+              transform: 'rotateX(62deg)',
+              boxShadow: `0 0 10px ${WILDCARD_PURPLE}, inset 0 0 6px ${WILDCARD_PURPLE}`,
+              pointerEvents: 'none',
+              animation: 'wildcardHalo 2.2s ease-in-out infinite',
+            }}
+          />
+        )}
         <BotSvg shape={bot.shape} color={bot.color} />
       </div>
 

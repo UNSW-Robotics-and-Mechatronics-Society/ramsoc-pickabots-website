@@ -16,9 +16,14 @@ const STATUS_STYLE: Record<TeamStatusKind, { color: string; bg: string }> = {
   winners:       { color: '#4ADE80',              bg: 'rgba(76,222,128,0.12)' },
   losers:        { color: '#FFB020',              bg: 'rgba(255,176,32,0.12)' },
   'knocked-out': { color: 'rgba(255,255,255,0.4)', bg: 'rgba(255,255,255,0.05)' },
+  wildcard:      { color: '#D8B4FE',              bg: 'rgba(216,180,254,0.16)' },
   special:       { color: '#C08BFF',              bg: 'rgba(155,48,255,0.14)' },
   unentered:     { color: 'rgba(255,255,255,0.3)', bg: 'rgba(255,255,255,0.04)' },
 }
+
+// Light purple marks a wildcard team everywhere it appears — the row name here,
+// and the halo over its robot on the bidding screen.
+const WILDCARD_PURPLE = '#D8B4FE'
 
 // 'all' is the only view special/boss teams appear in — they're in no bracket,
 // so they belong to neither division.
@@ -183,7 +188,9 @@ export default function TeamBoard({ teams }: { teams: TeamLeaderboardEntry[] }) 
                 <div style={{ flex: 1, minWidth: 0, position: 'relative', paddingRight: 8 }}>
                   <div style={{
                     fontSize: '0.7rem', fontWeight: 900, letterSpacing: 2,
-                    color: isTop3 ? '#fff' : 'rgba(210,210,210,0.9)',
+                    color: t.status === 'wildcard'
+                      ? WILDCARD_PURPLE
+                      : isTop3 ? '#fff' : 'rgba(210,210,210,0.9)',
                     textTransform: 'uppercase', marginBottom: 5,
                     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   }}>

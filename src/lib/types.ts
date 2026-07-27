@@ -18,6 +18,10 @@ export interface Match {
   is_exhibition: boolean
   winner_side: 'left' | 'right' | null
   created_at: string
+  // Set by /api/matches from the bracket's wildcard boxes — a team brought back
+  // from elimination. Drives the halo over its robot on the bidding screen.
+  left_wildcard?: boolean
+  right_wildcard?: boolean
 }
 
 export interface Vote {
@@ -61,6 +65,7 @@ export interface UserData {
  *  losers   — one loss, alive in the losers bracket
  *  champion / runner-up — decided by the Grand Final
  *  knocked-out — the second loss ended them; the label is that round
+ *  wildcard — was knocked out, brought back through a wildcard box, still alive
  *  special  — never enters a bracket, so it has no run to be in
  *  unentered — a team row that hasn't been drawn into the bracket yet
  */
@@ -70,6 +75,7 @@ export type TeamStatusKind =
   | 'winners'
   | 'losers'
   | 'knocked-out'
+  | 'wildcard'
   | 'special'
   | 'unentered'
 
