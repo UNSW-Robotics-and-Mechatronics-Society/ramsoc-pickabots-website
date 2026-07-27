@@ -48,6 +48,24 @@ const WATCH_TEXT_CLASS: Record<WatchStatus, string> = {
   crit: "text-red-300",
 };
 
+/** Mini bar chart for a KPI tile — one bar per hour so far today (last 8), current hour highlighted. */
+function MiniBars({ hours, colorClass, unitLabel }: { hours: number[]; colorClass: string; unitLabel: string }) {
+  const last = hours.slice(-8);
+  const max = Math.max(1, ...last);
+  return (
+    <div className="mt-1.5 flex h-6 items-end gap-[3px]">
+      {last.map((v, i) => (
+        <div
+          key={i}
+          title={`${v} ${unitLabel}`}
+          className={cn("flex-1 rounded-t-sm", colorClass, i === last.length - 1 ? "opacity-100" : "opacity-45")}
+          style={{ height: `${Math.max(8, (v / max) * 100)}%` }}
+        />
+      ))}
+    </div>
+  );
+}
+
 // One parsed row of the seed-import CSV. Structurally matches AdminPageClient's
 // SeedImportRow/SeedImportResult (the callback contract), kept local so this
 // panel doesn't import from its own parent.
@@ -122,17 +140,16 @@ type BroadcastCountsResponse = { total: number; withPhone: number };
 
 type AccountBalanceResponse = { balance: number; currency: string } | { error: string };
 
-type PhaseProgress = { label: string; done: number; total: number };
-
 type KpisResponse =
   | {
       onboardedPlayers: number;
+      onboardedByHour: number[];
       ramCoinCirculated: number;
+      ramCoinByHour: number[];
       votesToday: number;
       votesByHour: number[];
       matchesDone: number;
       matchesTotal: number;
-      matchesByPhase: PhaseProgress[];
       estimatedFinishTime: string | null;
       dbLatencyMs: number;
     }
@@ -191,12 +208,13 @@ export default function SettingsPanel({
   const [kpis, setKpis] = useState<
     | {
         onboardedPlayers: number;
+        onboardedByHour: number[];
         ramCoinCirculated: number;
+        ramCoinByHour: number[];
         votesToday: number;
         votesByHour: number[];
         matchesDone: number;
         matchesTotal: number;
-        matchesByPhase: PhaseProgress[];
         estimatedFinishTime: string | null;
         dbLatencyMs: number;
       }
@@ -539,125 +557,93 @@ export default function SettingsPanel({
                   <button onClick={loadKpis} className="underline decoration-dotted">Retry</button>
                 </div>
               )}
-              {!kpisLoading && !kpisError && kpis && (
-                <div className="grid grid-cols-2 gap-2 @sm:grid-cols-4">
-                  <div className="rounded-lg border border-white/10 bg-white/5 p-2">
-                    <div className="flex items-center gap-1 text-[0.6rem] uppercase tracking-wider text-foreground/40">
-                      <Users size={11} /> Onboarded Players
-                    </div>
-                    <p className="mt-0.5 text-lg font-semibold text-foreground">{kpis.onboardedPlayers}</p>
-                  </div>
 
-                  <div className="rounded-lg border border-white/10 bg-white/5 p-2">
-                    <div className="flex items-center gap-1 text-[0.6rem] uppercase tracking-wider text-foreground/40">
-                      <RamCoin size={11} /> RamCoin Circulated
+              <div className="flex flex-col gap-3 @lg:flex-row">
+                {!kpisLoading && !kpisError && kpis && (
+                  <div className="grid flex-1 grid-cols-2 gap-2">
+                    <div className="rounded-lg border border-white/10 bg-white/5 p-2">
+                      <div className="flex items-center gap-1 text-[0.6rem] uppercase tracking-wider text-foreground/40">
+                        <Users size={11} /> Onboarded Players
+                      </div>
+                      <p className="mt-0.5 text-lg font-semibold text-foreground">{kpis.onboardedPlayers}</p>
+                      <MiniBars hours={kpis.onboardedByHour} colorClass="bg-[#3B82F6]" unitLabel="new" />
                     </div>
-                    <p className="mt-0.5 text-lg font-semibold text-foreground">{kpis.ramCoinCirculated.toLocaleString()}</p>
-                    <p className="text-[0.55rem] text-foreground/35">lifetime staked, all matches</p>
-                  </div>
 
-                  {/* Votes today — mini bar chart, one bar per hour so far (last 8) */}
-                  <div className="rounded-lg border border-white/10 bg-white/5 p-2">
-                    <div className="flex items-center gap-1 text-[0.6rem] uppercase tracking-wider text-foreground/40">
-                      <Vote size={11} /> Votes Today
+                    <div className="rounded-lg border border-white/10 bg-white/5 p-2">
+                      <div className="flex items-center gap-1 text-[0.6rem] uppercase tracking-wider text-foreground/40">
+                        <RamCoin size={11} /> RamCoin Circulated
+                      </div>
+                      <p className="mt-0.5 text-lg font-semibold text-foreground">{kpis.ramCoinCirculated.toLocaleString()}</p>
+                      <MiniBars hours={kpis.ramCoinByHour} colorClass="bg-[#3B82F6]" unitLabel="RC staked" />
                     </div>
-                    <p className="mt-0.5 text-lg font-semibold text-foreground">{kpis.votesToday}</p>
-                    {(() => {
-                      const hours = kpis.votesByHour.slice(-8);
-                      const max = Math.max(1, ...hours);
-                      return (
-                        <div className="mt-1.5 flex h-6 items-end gap-[3px]">
-                          {hours.map((v, i) => (
-                            <div
-                              key={i}
-                              title={`${v} vote${v === 1 ? "" : "s"}`}
-                              className={cn(
-                                "flex-1 rounded-t-sm bg-[#FF6B00]",
-                                i === hours.length - 1 ? "opacity-100" : "opacity-45",
-                              )}
-                              style={{ height: `${Math.max(8, (v / max) * 100)}%` }}
-                            />
-                          ))}
-                        </div>
-                      );
-                    })()}
-                  </div>
 
-                  {/* Matches done — mini bar chart per phase, so knockouts vs
-                      finals progress reads at a glance instead of one blended total */}
-                  <div className="rounded-lg border border-white/10 bg-white/5 p-2">
-                    <div className="flex items-center gap-1 text-[0.6rem] uppercase tracking-wider text-foreground/40">
-                      <Trophy size={11} /> Matches Done
+                    <div className="rounded-lg border border-white/10 bg-white/5 p-2">
+                      <div className="flex items-center gap-1 text-[0.6rem] uppercase tracking-wider text-foreground/40">
+                        <Vote size={11} /> Votes Today
+                      </div>
+                      <p className="mt-0.5 text-lg font-semibold text-foreground">{kpis.votesToday}</p>
+                      <MiniBars hours={kpis.votesByHour} colorClass="bg-[#FF6B00]" unitLabel="votes" />
                     </div>
-                    <p className="mt-0.5 text-lg font-semibold text-foreground">
-                      {kpis.matchesDone}<span className="text-foreground/40">/{kpis.matchesTotal}</span>
-                    </p>
-                    <div className="mt-1.5 flex h-6 items-stretch gap-1.5">
-                      {kpis.matchesByPhase.map(p => {
-                        const pct = p.total > 0 ? (p.done / p.total) * 100 : 0;
-                        return (
-                          <div
-                            key={p.label}
-                            title={`${p.label}: ${p.done}/${p.total}`}
-                            className="relative flex-1 overflow-hidden rounded-sm bg-white/10"
-                          >
-                            <div className="absolute inset-x-0 bottom-0 bg-[#FF6B00]" style={{ height: `${pct}%` }} />
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div className="mt-0.5 flex gap-1.5 text-[0.55rem] text-foreground/35">
-                      {kpis.matchesByPhase.map(p => (
-                        <span key={p.label} className="flex-1 text-center">{p.label[0]}</span>
-                      ))}
-                    </div>
-                  </div>
 
-                  <div className="col-span-2 rounded-lg border border-white/10 bg-white/5 p-2 @sm:col-span-4">
-                    <div className="flex items-center gap-1 text-[0.6rem] uppercase tracking-wider text-foreground/40">
-                      <Clock size={11} /> Estimated Finish
+                    {/* Static — a double-elim bracket naturally ends up with
+                        roughly as many winners-bracket as losers-bracket
+                        matches, so a per-phase bar chart here doesn't read as
+                        meaningful progress the way it does for votes/RamCoin. */}
+                    <div className="rounded-lg border border-white/10 bg-white/5 p-2">
+                      <div className="flex items-center gap-1 text-[0.6rem] uppercase tracking-wider text-foreground/40">
+                        <Trophy size={11} /> Matches Done
+                      </div>
+                      <p className="mt-0.5 text-lg font-semibold text-foreground">
+                        {kpis.matchesDone}<span className="text-foreground/40">/{kpis.matchesTotal}</span>
+                      </p>
                     </div>
-                    <p className="mt-0.5 text-lg font-semibold text-foreground">
-                      {kpis.estimatedFinishTime ?? "—"}
-                    </p>
+
+                    <div className="col-span-2 rounded-lg border border-white/10 bg-white/5 p-2">
+                      <div className="flex items-center gap-1 text-[0.6rem] uppercase tracking-wider text-foreground/40">
+                        <Clock size={11} /> Estimated Finish
+                      </div>
+                      <p className="mt-0.5 text-lg font-semibold text-foreground">
+                        {kpis.estimatedFinishTime ?? "—"}
+                      </p>
+                    </div>
                   </div>
+                )}
+
+                {/* ── System watch — small side chips, flagged rather than bare numbers ── */}
+                <div className="flex shrink-0 flex-row gap-3 border-t border-white/10 pt-2 @lg:w-32 @lg:flex-col @lg:justify-center @lg:border-l @lg:border-t-0 @lg:pl-3 @lg:pt-0">
+                  {(() => {
+                    const status: WatchStatus | null =
+                      accountBalance ? watchStatus(accountBalance.balance, CLICKSEND_WARN_AUD, CLICKSEND_CRIT_AUD, "low") : null;
+                    return (
+                      <div className="flex items-center gap-1.5 text-[0.65rem]">
+                        <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", status ? WATCH_DOT_CLASS[status] : "bg-white/20")} />
+                        <span className="text-foreground/40">ClickSend</span>
+                        {accountBalanceLoading && <span className="text-foreground/40">loading…</span>}
+                        {!accountBalanceLoading && accountBalanceError && (
+                          <button onClick={loadAccountBalance} className="text-red-300/80 underline decoration-dotted">
+                            {accountBalanceError}
+                          </button>
+                        )}
+                        {!accountBalanceLoading && !accountBalanceError && accountBalance && (
+                          <span className={cn("font-medium", status ? WATCH_TEXT_CLASS[status] : "text-foreground")}>
+                            {accountBalance.balance.toFixed(2)} {accountBalance.currency}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {!kpisLoading && !kpisError && kpis && (() => {
+                    const status = watchStatus(kpis.dbLatencyMs, DB_LATENCY_WARN_MS, DB_LATENCY_CRIT_MS, "high");
+                    return (
+                      <div className="flex items-center gap-1.5 text-[0.65rem]">
+                        <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", WATCH_DOT_CLASS[status])} />
+                        <span className="text-foreground/40">DB response</span>
+                        <span className={cn("font-medium", WATCH_TEXT_CLASS[status])}>{kpis.dbLatencyMs} ms</span>
+                      </div>
+                    );
+                  })()}
                 </div>
-              )}
-
-              {/* ── System watch — small side chips, flagged rather than bare numbers ── */}
-              <div className="mt-2 flex flex-wrap items-center gap-3 border-t border-white/10 pt-2">
-                {(() => {
-                  const status: WatchStatus | null =
-                    accountBalance ? watchStatus(accountBalance.balance, CLICKSEND_WARN_AUD, CLICKSEND_CRIT_AUD, "low") : null;
-                  return (
-                    <div className="flex items-center gap-1.5 text-[0.65rem]">
-                      <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", status ? WATCH_DOT_CLASS[status] : "bg-white/20")} />
-                      <span className="text-foreground/40">ClickSend</span>
-                      {accountBalanceLoading && <span className="text-foreground/40">loading…</span>}
-                      {!accountBalanceLoading && accountBalanceError && (
-                        <button onClick={loadAccountBalance} className="text-red-300/80 underline decoration-dotted">
-                          {accountBalanceError}
-                        </button>
-                      )}
-                      {!accountBalanceLoading && !accountBalanceError && accountBalance && (
-                        <span className={cn("font-medium", status ? WATCH_TEXT_CLASS[status] : "text-foreground")}>
-                          {accountBalance.balance.toFixed(2)} {accountBalance.currency}
-                        </span>
-                      )}
-                    </div>
-                  );
-                })()}
-
-                {!kpisLoading && !kpisError && kpis && (() => {
-                  const status = watchStatus(kpis.dbLatencyMs, DB_LATENCY_WARN_MS, DB_LATENCY_CRIT_MS, "high");
-                  return (
-                    <div className="flex items-center gap-1.5 text-[0.65rem]">
-                      <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", WATCH_DOT_CLASS[status])} />
-                      <span className="text-foreground/40">DB response</span>
-                      <span className={cn("font-medium", WATCH_TEXT_CLASS[status])}>{kpis.dbLatencyMs} ms</span>
-                    </div>
-                  );
-                })()}
               </div>
             </div>
 
