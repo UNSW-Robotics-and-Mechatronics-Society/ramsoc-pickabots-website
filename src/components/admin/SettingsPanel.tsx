@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { RotateCcw, Save, Send, Upload, AlertTriangle, Coins } from "lucide-react";
+import { RotateCcw, Save, Send, Upload, AlertTriangle, Coins, Users, Vote, Clock, Trophy } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { type Division, type TeamCount } from "@/lib/mock-data";
 import {
@@ -88,6 +88,17 @@ type BroadcastCountsResponse = { total: number; withPhone: number };
 
 type AccountBalanceResponse = { balance: number; currency: string } | { error: string };
 
+type KpisResponse =
+  | {
+      onboardedPlayers: number;
+      ramCoinCirculating: number;
+      votesToday: number;
+      matchesDone: number;
+      matchesTotal: number;
+      estimatedFinishTime: string | null;
+    }
+  | { error: string };
+
 type BroadcastResultRow = {
   to: string;
   ok: boolean;
@@ -138,6 +149,12 @@ export default function SettingsPanel({
   const [accountBalance, setAccountBalance] = useState<{ balance: number; currency: string } | null>(null);
   const [accountBalanceError, setAccountBalanceError] = useState<string | null>(null);
   const [accountBalanceLoading, setAccountBalanceLoading] = useState(true);
+
+  const [kpis, setKpis] = useState<
+    { onboardedPlayers: number; ramCoinCirculating: number; votesToday: number; matchesDone: number; matchesTotal: number; estimatedFinishTime: string | null } | null
+  >(null);
+  const [kpisError, setKpisError] = useState<string | null>(null);
+  const [kpisLoading, setKpisLoading] = useState(true);
   const [broadcastBody, setBroadcastBody] = useState("");
   const [broadcastConfirmOpen, setBroadcastConfirmOpen] = useState(false);
   const [broadcastSending, setBroadcastSending] = useState(false);
@@ -205,6 +222,20 @@ export default function SettingsPanel({
     }
   }
 
+  async function loadKpis() {
+    setKpisError(null);
+    try {
+      const res = await fetch("/api/admin/kpis");
+      const data = (await res.json()) as KpisResponse;
+      if (!res.ok || "error" in data) throw new Error("error" in data ? data.error : `Failed to load stats (${res.status})`);
+      setKpis(data);
+    } catch (err) {
+      setKpisError(err instanceof Error ? err.message : "Failed to load stats");
+    } finally {
+      setKpisLoading(false);
+    }
+  }
+
   useEffect(() => {
     // Fetch-on-mount; load() sets loading state internally (same idiom as the
     // other admin panels in this repo).
@@ -212,7 +243,11 @@ export default function SettingsPanel({
     load();
     loadBroadcastCounts();
     loadAccountBalance();
-    return () => { if (flashTimer.current) clearTimeout(flashTimer.current); };
+    loadKpis();
+    // KPIs (votes/matches/finish estimate) move through the day — refresh on a
+    // timer so the header doesn't go stale while the panel sits open.
+    const kpiTimer = setInterval(loadKpis, 60_000);
+    return () => { if (flashTimer.current) clearTimeout(flashTimer.current); clearInterval(kpiTimer); };
   }, []);
 
   const charCount = template.length;
@@ -442,6 +477,55 @@ export default function SettingsPanel({
 
         {!loading && !error && (
           <div className="flex flex-col gap-3">
+            {/* ── KPI header ─────────────────────────────────────────────── */}
+            <div className="rounded-2xl border border-white/22 bg-[#0d1018] p-3">
+              {kpisLoading && <p className="text-xs text-foreground/50">Loading stats…</p>}
+              {!kpisLoading && kpisError && (
+                <div className="flex items-center gap-2 text-xs text-red-300">
+                  {kpisError}
+                  <button onClick={loadKpis} className="underline decoration-dotted">Retry</button>
+                </div>
+              )}
+              {!kpisLoading && !kpisError && kpis && (
+                <div className="grid grid-cols-2 gap-2 @sm:grid-cols-4">
+                  <div className="rounded-lg border border-white/10 bg-white/5 p-2">
+                    <div className="flex items-center gap-1 text-[0.6rem] uppercase tracking-wider text-foreground/40">
+                      <Users size={11} /> Onboarded Players
+                    </div>
+                    <p className="mt-0.5 text-lg font-semibold text-foreground">{kpis.onboardedPlayers}</p>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-white/5 p-2">
+                    <div className="flex items-center gap-1 text-[0.6rem] uppercase tracking-wider text-foreground/40">
+                      <Coins size={11} /> RamCoin Circulating
+                    </div>
+                    <p className="mt-0.5 text-lg font-semibold text-foreground">{kpis.ramCoinCirculating.toLocaleString()}</p>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-white/5 p-2">
+                    <div className="flex items-center gap-1 text-[0.6rem] uppercase tracking-wider text-foreground/40">
+                      <Vote size={11} /> Votes Today
+                    </div>
+                    <p className="mt-0.5 text-lg font-semibold text-foreground">{kpis.votesToday}</p>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-white/5 p-2">
+                    <div className="flex items-center gap-1 text-[0.6rem] uppercase tracking-wider text-foreground/40">
+                      <Trophy size={11} /> Matches Done
+                    </div>
+                    <p className="mt-0.5 text-lg font-semibold text-foreground">
+                      {kpis.matchesDone}<span className="text-foreground/40">/{kpis.matchesTotal}</span>
+                    </p>
+                  </div>
+                  <div className="col-span-2 rounded-lg border border-white/10 bg-white/5 p-2 @sm:col-span-4">
+                    <div className="flex items-center gap-1 text-[0.6rem] uppercase tracking-wider text-foreground/40">
+                      <Clock size={11} /> Estimated Finish
+                    </div>
+                    <p className="mt-0.5 text-lg font-semibold text-foreground">
+                      {kpis.estimatedFinishTime ?? "—"}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* ── Team Settings ──────────────────────────────────────────── */}
             <div className="rounded-2xl border border-white/22 bg-[#0d1018] p-3">
               <h3 className="mb-2 text-xs font-medium text-foreground">Team Settings</h3>
