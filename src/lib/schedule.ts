@@ -97,6 +97,26 @@ export function applyScheduleStatus(
 }
 
 /**
+ * Global play-order for a division's schedule: every scheduled match numbered
+ * 1..N by start time (ties — concurrent matches on different rings — broken by
+ * ring index, then queue position), so each bracket card can show where it sits
+ * in the running order. Matches not in the schedule (feeders undecided) aren't
+ * in the map, exactly like the per-match start-time lookup.
+ */
+export function scheduleOrder(schedule: MatchSchedule): Map<string, number> {
+  const entries: { matchId: string; startMinute: number; ring: number; pos: number }[] = [];
+  schedule.rings.forEach((ring, ringIdx) => {
+    ring.forEach((e, pos) => entries.push({ matchId: e.matchId, startMinute: e.startMinute, ring: ringIdx, pos }));
+  });
+  entries.sort((a, b) =>
+    a.startMinute - b.startMinute || a.ring - b.ring || a.pos - b.pos,
+  );
+  const out = new Map<string, number>();
+  entries.forEach((e, i) => { if (!out.has(e.matchId)) out.set(e.matchId, i + 1); });
+  return out;
+}
+
+/**
  * Match IDs whose team is within `leadMatches` of playing, per ring — i.e. at
  * position 0 (active), 1 (next), … leadMatches in their ring's ready-pending
  * queue. Used to text captains ahead of time so they're at the arena before

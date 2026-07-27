@@ -9,7 +9,7 @@ import {
 } from "@/lib/mock-data";
 import {
   type MatchSchedule,
-  editMatchTime,
+  editMatchTime, scheduleOrder,
 } from "@/lib/schedule";
 import { cn } from "@/lib/cn";
 import { MATCH_DRAG_TYPE, SlotRow, TimeCell } from "./MatchTeamSlot";
@@ -59,10 +59,11 @@ type MatchCardProps = {
   onDragEnd: () => void;
   dimmed?: boolean;
   time?: number;
+  order?: number;
   onTimeChange?: (matchId: string, minute: number) => void;
 };
 function MatchCard({
-  match, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd, dimmed, time, onTimeChange,
+  match, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd, dimmed, time, order, onTimeChange,
 }: MatchCardProps) {
   const w = winner(match);
   const swappable       = match.status === 'todo' || match.status === 'next';
@@ -126,12 +127,29 @@ function MatchCard({
         dimmed          && "opacity-30 grayscale-70",
       )}
     >
-      {match.status === 'active' && (
-        <div className="absolute right-1 top-1 z-20">
-          <VotingToggle
-            open={match.votingOpen}
-            onToggle={() => onChange({ ...match, votingOpen: !match.votingOpen })}
-          />
+      {(order !== undefined || match.status === 'active') && (
+        <div className="absolute right-1 top-1 z-20 flex items-center gap-1">
+          {/* Play order — where this match sits in the running order. Subtle
+              tint (orange for Standards, green for Open) so it's not obtrusive. */}
+          {order !== undefined && (
+            <span
+              title="Play order"
+              className={cn(
+                "rounded px-1 text-[0.6rem] font-bold leading-normal",
+                match.division === 'open'
+                  ? "bg-[#4ADE80]/15 text-[#4ADE80]"
+                  : "bg-[#FF6B00]/15 text-[#FF6B00]",
+              )}
+            >
+              {order}
+            </span>
+          )}
+          {match.status === 'active' && (
+            <VotingToggle
+              open={match.votingOpen}
+              onToggle={() => onChange({ ...match, votingOpen: !match.votingOpen })}
+            />
+          )}
         </div>
       )}
       {time !== undefined && (
@@ -237,10 +255,11 @@ type RoundColumnProps = {
   onDragEnd: () => void;
   filterSet?: Set<string>;
   getTime: (matchId: string) => number | undefined;
+  getOrder: (matchId: string) => number | undefined;
   onTimeChange: (matchId: string, minute: number) => void;
 };
 function RoundColumn({
-  matches, height, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd, filterSet, getTime, onTimeChange,
+  matches, height, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd, filterSet, getTime, getOrder, onTimeChange,
 }: RoundColumnProps) {
   return (
     <div style={{ width: ROUND_W, height }} className="flex shrink-0 flex-col justify-around">
@@ -257,6 +276,7 @@ function RoundColumn({
           onDragEnd={onDragEnd}
           dimmed={!!filterSet && isMatchDimmed(m, filterSet)}
           time={getTime(m.id)}
+          order={getOrder(m.id)}
           onTimeChange={onTimeChange}
         />
       ))}
@@ -280,10 +300,11 @@ type BracketStripProps = {
   onDragEnd: () => void;
   filterSet?: Set<string>;
   getTime: (matchId: string) => number | undefined;
+  getOrder: (matchId: string) => number | undefined;
   onTimeChange: (matchId: string, minute: number) => void;
 };
 function BracketStrip({
-  rounds, matchesByRound, height, connW, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd, filterSet, getTime, onTimeChange,
+  rounds, matchesByRound, height, connW, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd, filterSet, getTime, getOrder, onTimeChange,
 }: BracketStripProps) {
   return (
     <div className="flex items-stretch" style={{ height }}>
@@ -301,6 +322,7 @@ function BracketStrip({
             onDragEnd={onDragEnd}
             filterSet={filterSet}
             getTime={getTime}
+            getOrder={getOrder}
             onTimeChange={onTimeChange}
           />
           {i < rounds.length - 1 && matchesByRound[i].length >= 2 && (
@@ -464,6 +486,8 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
 
   const timeByMatchId = new Map(schedule.rings.flat().map(e => [e.matchId, e.startMinute]));
   function getTime(matchId: string): number | undefined { return timeByMatchId.get(matchId); }
+  const orderByMatchId = scheduleOrder(schedule);
+  function getOrder(matchId: string): number | undefined { return orderByMatchId.get(matchId); }
   function handleTimeChange(matchId: string, minute: number) {
     onScheduleChange(editMatchTime(schedule, matchId, minute));
   }
@@ -476,6 +500,7 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
     onMatchDrop: handleMatchDrop,
     onDragEnd:   () => setDragging(null),
     getTime,
+    getOrder,
     onTimeChange: handleTimeChange,
   };
 
@@ -635,7 +660,7 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
                       {/* Semis column */}
                       <div style={{ width: ROUND_W, height: NATURAL_H }} className="flex shrink-0 flex-col justify-around">
                         {finalsSemis.map(m => (
-                          <MatchCard key={m.id} match={m} onChange={handleChange} dimmed={isMatchDimmed(m, filterSet)} time={getTime(m.id)} {...sharedCardProps} />
+                          <MatchCard key={m.id} match={m} onChange={handleChange} dimmed={isMatchDimmed(m, filterSet)} time={getTime(m.id)} order={getOrder(m.id)} {...sharedCardProps} />
                         ))}
                       </div>
 
@@ -653,13 +678,13 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
                         {finalsFinal && (
                           <div className="flex flex-col gap-1">
                             <span className="text-center text-[0.5rem] uppercase tracking-widest text-amber-200/70">Grand Final</span>
-                            <MatchCard match={finalsFinal} onChange={handleChange} dimmed={isMatchDimmed(finalsFinal, filterSet)} time={getTime(finalsFinal.id)} {...sharedCardProps} />
+                            <MatchCard match={finalsFinal} onChange={handleChange} dimmed={isMatchDimmed(finalsFinal, filterSet)} time={getTime(finalsFinal.id)} order={getOrder(finalsFinal.id)} {...sharedCardProps} />
                           </div>
                         )}
                         {finalsThird && (
                           <div className="flex flex-col gap-1">
                             <span className="text-center text-[0.5rem] uppercase tracking-widest text-foreground/40">3rd Place</span>
-                            <MatchCard match={finalsThird} onChange={handleChange} dimmed={isMatchDimmed(finalsThird, filterSet)} time={getTime(finalsThird.id)} {...sharedCardProps} />
+                            <MatchCard match={finalsThird} onChange={handleChange} dimmed={isMatchDimmed(finalsThird, filterSet)} time={getTime(finalsThird.id)} order={getOrder(finalsThird.id)} {...sharedCardProps} />
                           </div>
                         )}
                       </div>
