@@ -32,6 +32,13 @@ type Props = {
   onResetAll: () => void;
 };
 
+// ClickSend AU SMS pricing — used only to estimate spend before a bulk send;
+// each multi-part message (>160 chars) is billed per part.
+const SMS_COST_AUD = 0.08;
+function estimateCostAud(recipients: number, parts: number): number {
+  return recipients * Math.max(parts, 1) * SMS_COST_AUD;
+}
+
 type ConfigResponse = {
   smsUpNextTemplate: string;
   smsUpNextDefault: string;
@@ -133,8 +140,10 @@ export default function SettingsPanel({
   const [broadcastResult, setBroadcastResult] = useState<
     { sent: number; total: number; results: BroadcastResultRow[] } | { note: string } | null
   >(null);
-  // Test send (to manually-entered numbers).
+  // Custom number list (to manually-entered numbers — a past-competitor list,
+  // your own phone for a test, etc.). Same send path, gated the same way.
   const [testNumbersInput, setTestNumbersInput] = useState("");
+  const [testConfirmOpen, setTestConfirmOpen] = useState(false);
   const [testSending, setTestSending] = useState(false);
   const [testResult, setTestResult] = useState<
     { sent: number; total: number; results: BroadcastResultRow[] } | { error: string } | null
@@ -191,6 +200,9 @@ export default function SettingsPanel({
 
   const broadcastCharCount = broadcastBody.length;
   const broadcastParts = broadcastCharCount === 0 ? 0 : Math.ceil(broadcastCharCount / 160);
+
+  const testNumbersCount = useMemo(() => parseTestNumbers(testNumbersInput).length, [testNumbersInput]);
+  const testCostAud = estimateCostAud(testNumbersCount, broadcastParts);
 
   const preview = useMemo(
     () => renderSmsTemplate(template, { team: "Iron Fist", division: "standards" }),
@@ -361,6 +373,7 @@ export default function SettingsPanel({
   }
 
   async function handleSendTest() {
+    setTestConfirmOpen(false);
     const numbers = parseTestNumbers(testNumbersInput);
     if (numbers.length === 0 || broadcastBody.trim().length === 0) return;
     setTestSending(true);
@@ -730,32 +743,41 @@ export default function SettingsPanel({
                 </div>
               )}
 
-              {/* Test send — fire the message above to your own number(s) first */}
+              {/* Custom number list — for a personal test, or any list you already
+                  have (e.g. past competitors) that isn't in the captain roster. */}
               <div className="mt-3 rounded-lg border border-white/10 bg-white/[0.03] p-2.5">
-                <span className="text-[0.6rem] uppercase tracking-wider text-foreground/40">Test send</span>
+                <span className="text-[0.6rem] uppercase tracking-wider text-foreground/40">Send to custom number list</span>
                 <p className="mt-0.5 text-[0.6rem] text-foreground/35">
-                  Send the message above to specific number(s) first. Comma or newline separated.
+                  Send the message above to any number(s) — your own for a test, or a list
+                  you already have (e.g. past competitors). Comma or newline separated.
                 </p>
-                <input
-                  type="text"
+                <textarea
                   value={testNumbersInput}
                   onChange={e => setTestNumbersInput(e.target.value)}
                   placeholder="0412 345 678, 0498 765 432"
-                  className="mt-1.5 w-full rounded-lg border border-white/10 bg-white/8 px-2 py-1.5 text-xs text-foreground placeholder:text-foreground/30 outline-none focus:border-white/30"
+                  rows={2}
+                  className="mt-1.5 w-full resize-none rounded-lg border border-white/10 bg-white/8 px-2 py-1.5 text-xs text-foreground placeholder:text-foreground/30 outline-none focus:border-white/30"
                 />
+                {testNumbersCount > 0 && (
+                  <p className="mt-1 text-[0.6rem] text-foreground/40">
+                    {testNumbersCount} number{testNumbersCount === 1 ? "" : "s"} · est.{" "}
+                    <span className="text-foreground/60">${testCostAud.toFixed(2)} AUD</span>
+                    {broadcastParts > 1 ? ` (${broadcastParts} SMS parts each)` : ""}
+                  </p>
+                )}
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <button
-                    onClick={handleSendTest}
-                    disabled={testSending || broadcastBody.trim().length === 0 || parseTestNumbers(testNumbersInput).length === 0}
+                    onClick={() => setTestConfirmOpen(true)}
+                    disabled={testSending || broadcastBody.trim().length === 0 || testNumbersCount === 0}
                     className="rounded-lg border border-white/20 bg-white/5 px-3 py-1.5 text-xs text-foreground/80 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    {testSending ? "Sending…" : "Send test"}
+                    {testSending ? "Sending…" : "Send"}
                   </button>
                   {testResult && "error" in testResult && (
                     <span className="text-[0.65rem] text-red-300">{testResult.error}</span>
                   )}
                   {testResult && "sent" in testResult && (
-                    <span className="text-[0.65rem] text-green-300">Test sent {testResult.sent}/{testResult.total}</span>
+                    <span className="text-[0.65rem] text-green-300">Sent {testResult.sent}/{testResult.total}</span>
                   )}
                 </div>
               </div>
@@ -769,6 +791,11 @@ export default function SettingsPanel({
                   <Send size={12} />
                   {broadcastSending ? "Sending…" : "Send to all captains"}
                 </button>
+                {broadcastCounts && broadcastCounts.withPhone > 0 && (
+                  <span className="ml-2 text-[0.6rem] text-foreground/40">
+                    est. ${estimateCostAud(broadcastCounts.withPhone, broadcastParts).toFixed(2)} AUD
+                  </span>
+                )}
               </div>
             </div>
 
@@ -834,7 +861,7 @@ export default function SettingsPanel({
       {broadcastConfirmOpen && (
         <ConfirmDialog
           title="Send broadcast?"
-          message={`Send this message to all ${broadcastCounts?.withPhone ?? 0} captains? This can't be undone.`}
+          message={`Send this message to all ${broadcastCounts?.withPhone ?? 0} captains for an estimated $${estimateCostAud(broadcastCounts?.withPhone ?? 0, broadcastParts).toFixed(2)} AUD? This can't be undone.`}
           confirmLabel="Send"
           onConfirm={handleBroadcastSend}
           onCancel={() => setBroadcastConfirmOpen(false)}
@@ -869,6 +896,16 @@ export default function SettingsPanel({
           confirmLabel="Reset All"
           onConfirm={() => { onResetAll(); setConfirmResetAll(false); }}
           onCancel={() => setConfirmResetAll(false)}
+        />
+      )}
+
+      {testConfirmOpen && (
+        <ConfirmDialog
+          title="Send to this number list?"
+          message={`Send this message to ${testNumbersCount} number${testNumbersCount === 1 ? "" : "s"} for an estimated $${testCostAud.toFixed(2)} AUD? This can't be undone.`}
+          confirmLabel="Send"
+          onConfirm={handleSendTest}
+          onCancel={() => setTestConfirmOpen(false)}
         />
       )}
     </div>
