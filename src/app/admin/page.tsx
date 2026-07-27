@@ -7,6 +7,7 @@ import { listSpecialTeams } from "@/lib/db/specialTeams";
 import { getBracketStateFresh } from "@/lib/db/bracket";
 import AdminPageClient from "@/components/admin/AdminPageClient";
 import AdminNavBar from "@/components/admin/AdminNavBar";
+import AdminKpiBar from "@/components/admin/AdminKpiBar";
 import AdminKeyForm from "@/components/admin/AdminKeyForm";
 
 type Props = {
@@ -33,12 +34,15 @@ export default async function AdminPage({ searchParams }: Props) {
 
   return (
     <div className="fixed inset-0 z-20 flex flex-col">
-      {/* Header row — aligns with the AdminSidePanel's division toggle (top-6) */}
-      <header className="shrink-0 flex items-center gap-4 px-6 pt-6 pb-2">
+      {/* Header row — aligns with the AdminSidePanel's division toggle (top-6).
+          pr reserves room for that fixed-position panel (Standards/Open toggle
+          + ADMIN shield, ~right-4) so the KPI bar's flex-1 never runs under it. */}
+      <header className="shrink-0 flex items-center gap-4 px-6 pt-6 pb-2 pr-[17rem]">
         <span className="text-lg font-semibold uppercase tracking-widest text-foreground/80">
           Admin
         </span>
         <AdminNavBar />
+        <AdminKpiBar />
       </header>
 
       {/*
