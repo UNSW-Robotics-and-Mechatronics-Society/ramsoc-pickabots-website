@@ -153,3 +153,33 @@ export async function sendSms(to: string, body: string): Promise<SmsResult> {
   const [result] = await sendManySms([{ to, body }]);
   return result;
 }
+
+type ClickSendAccountResponse = {
+  response_code?: string;
+  response_msg?: string;
+  data?: { balance?: number; currency?: string };
+};
+
+export type AccountBalance = { balance: number; currency: string };
+
+/** Current ClickSend account balance. Throws if unconfigured or the API call fails. */
+export async function getAccountBalance(): Promise<AccountBalance> {
+  if (!smsConfigured()) {
+    throw new Error("SMS provider not configured (set CLICKSEND_USERNAME / CLICKSEND_API_KEY)");
+  }
+
+  const auth = Buffer.from(
+    `${process.env.CLICKSEND_USERNAME}:${process.env.CLICKSEND_API_KEY}`,
+  ).toString("base64");
+
+  const res = await fetch("https://rest.clicksend.com/v3/account", {
+    headers: { Authorization: `Basic ${auth}` },
+  });
+  const json = (await res.json().catch(() => ({}))) as ClickSendAccountResponse;
+
+  if (!res.ok || json.response_code !== "SUCCESS" || json.data?.balance === undefined) {
+    throw new Error(json.response_msg || `ClickSend error (HTTP ${res.status})`);
+  }
+
+  return { balance: json.data.balance, currency: json.data.currency ?? "AUD" };
+}
