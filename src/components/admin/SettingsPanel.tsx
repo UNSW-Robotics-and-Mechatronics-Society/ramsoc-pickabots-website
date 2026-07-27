@@ -8,6 +8,7 @@ import {
   SMS_TEMPLATE_PLACEHOLDERS,
   BROADCAST_PLACEHOLDERS,
   renderBroadcastTemplate,
+  ensureCompliantBody,
 } from "@/lib/sms-template";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
 
@@ -119,18 +120,13 @@ export default function SettingsPanel() {
     return () => { if (flashTimer.current) clearTimeout(flashTimer.current); };
   }, []);
 
-  const charCount = template.length;
-  const parts = charCount === 0 ? 0 : Math.ceil(charCount / 160);
   const dirty = template !== savedTemplate || notifyLead !== savedNotifyLead;
 
-  const broadcastCharCount = broadcastBody.length;
-  const broadcastParts = broadcastCharCount === 0 ? 0 : Math.ceil(broadcastCharCount / 160);
-
-  const testNumbersCount = useMemo(() => parseTestNumbers(testNumbersInput).length, [testNumbersInput]);
-  const testCostAud = estimateCostAud(testNumbersCount, broadcastParts);
-
+  // Rendered previews reflect exactly what goes out over the wire — including
+  // the business-name/opt-out compliance text sendManySms adds automatically
+  // (src/lib/sms.ts) — so the char/part/cost counts below are the real ones.
   const preview = useMemo(
-    () => renderSmsTemplate(template, { team: "Iron Fist", division: "standards" }),
+    () => ensureCompliantBody(renderSmsTemplate(template, { team: "Iron Fist", division: "standards" })),
     [template],
   );
 
@@ -138,15 +134,26 @@ export default function SettingsPanel() {
   const broadcastPreview = useMemo(
     () =>
       broadcastBody
-        ? renderBroadcastTemplate(broadcastBody, {
-            first: "Alex",
-            captain: "Alex Chen",
-            team: "Iron Fist",
-            division: "standards",
-          })
+        ? ensureCompliantBody(
+            renderBroadcastTemplate(broadcastBody, {
+              first: "Alex",
+              captain: "Alex Chen",
+              team: "Iron Fist",
+              division: "standards",
+            }),
+          )
         : "",
     [broadcastBody],
   );
+
+  const charCount = preview.length;
+  const parts = charCount === 0 ? 0 : Math.ceil(charCount / 160);
+
+  const broadcastCharCount = broadcastPreview.length;
+  const broadcastParts = broadcastCharCount === 0 ? 0 : Math.ceil(broadcastCharCount / 160);
+
+  const testNumbersCount = useMemo(() => parseTestNumbers(testNumbersInput).length, [testNumbersInput]);
+  const testCostAud = estimateCostAud(testNumbersCount, broadcastParts);
 
   function insertPlaceholder(placeholder: string) {
     setTemplate(prev => prev + placeholder);
@@ -291,7 +298,8 @@ export default function SettingsPanel() {
               />
 
               <p className="mt-1 text-[0.6rem] text-foreground/35">
-                {charCount} chars{parts > 1 ? ` · ${parts} SMS parts` : parts === 1 ? " · 1 SMS part" : ""}
+                {charCount} chars as sent{parts > 1 ? ` · ${parts} SMS parts` : parts === 1 ? " · 1 SMS part" : ""}
+                {" "}(business name + opt-out added automatically if missing)
               </p>
 
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -401,12 +409,13 @@ export default function SettingsPanel() {
               />
 
               <p className="mt-1 text-[0.6rem] text-foreground/35">
-                {broadcastCharCount} chars
+                {broadcastCharCount} chars as sent
                 {broadcastParts > 1
                   ? ` · ${broadcastParts} SMS parts`
                   : broadcastParts === 1
                   ? " · 1 SMS part"
                   : ""}
+                {" "}(business name + opt-out added automatically if missing)
               </p>
 
               {/* Per-captain placeholders */}

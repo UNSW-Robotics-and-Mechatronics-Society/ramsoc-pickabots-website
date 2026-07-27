@@ -1,4 +1,5 @@
 import "server-only";
+import { ensureCompliantBody } from "@/lib/sms-template";
 
 // ─────────────────────────────────────────────────────────────────────────
 //  SMS adapter — provider-agnostic seam.
@@ -108,7 +109,7 @@ export async function sendManySms(messages: SmsMessage[]): Promise<SmsResult[]> 
           source: "pickabots",
           from,
           to: m.to,
-          body: m.raw.body,
+          body: ensureCompliantBody(m.raw.body),
           custom_string: String(i),
         })),
       }),

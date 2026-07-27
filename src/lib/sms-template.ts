@@ -43,3 +43,19 @@ export function renderBroadcastTemplate(template: string, vars: BroadcastVars): 
 export function firstNameOf(fullName: string): string {
   return (fullName.trim().split(/\s+/)[0] || fullName).trim();
 }
+
+// ── Carrier/ClickSend policy compliance ────────────────────────────────────
+// Every outbound SMS must identify the sender and offer an opt-out, or the
+// account risks penalties (per ClickSend's compliance notice). Applied here,
+// at render time, so the admin's live preview always matches what actually
+// goes out over sendManySms (src/lib/sms.ts), regardless of what's typed.
+export const BUSINESS_NAME_PREFIX = "RAMSOC Pickabots: ";
+export const OPT_OUT_SUFFIX = " Reply STOP to opt out.";
+
+/** Adds a sender-identifying prefix and opt-out suffix if the message doesn't already have one. */
+export function ensureCompliantBody(body: string): string {
+  let out = body;
+  if (!/ramsoc/i.test(out)) out = BUSINESS_NAME_PREFIX + out;
+  if (!/\bstop\b/i.test(out)) out = out + OPT_OUT_SUFFIX;
+  return out;
+}
