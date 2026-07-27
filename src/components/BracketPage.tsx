@@ -5,7 +5,7 @@ import {
   type BracketMatch, type Division, type TeamCount,
   wbRoundsFor, lbRoundsFor, lbRoundLabel, winner, findTeamTargetMatch, computeSlotDefaults,
 } from '@/lib/mock-data'
-import { type MatchSchedule, formatTime, applyScheduleStatus } from '@/lib/schedule'
+import { type MatchSchedule, formatTime, applyScheduleStatus, scheduleOrder } from '@/lib/schedule'
 import { useTeamFilter, isMatchDimmed, isMatchSelected } from '@/lib/teamFilter'
 import { useAdminPanels } from '@/components/admin/AdminPanelContext'
 import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh'
@@ -72,10 +72,10 @@ function ConnectorSVG({ fromMatches, height }: { fromMatches: BracketMatch[]; he
 type RegisterMatchRef = (id: string, el: HTMLDivElement | null) => void
 
 function RoundColumn({
-  matches, height, registerRef, filterSet, times, slotDefaults, onTeamClick,
+  matches, height, registerRef, filterSet, times, orders, slotDefaults, onTeamClick,
 }: {
   matches: BracketMatch[]; height: number; registerRef?: RegisterMatchRef
-  filterSet?: Set<string>; times: Map<string, number>; slotDefaults?: Map<string, { a?: string; b?: string }>
+  filterSet?: Set<string>; times: Map<string, number>; orders: Map<string, number>; slotDefaults?: Map<string, { a?: string; b?: string }>
   onTeamClick?: (name: string) => void
 }) {
   return (
@@ -90,6 +90,7 @@ function RoundColumn({
           <MatchCard
             match={m}
             time={times.has(m.id) ? formatTime(times.get(m.id)!) : undefined}
+            order={orders.get(m.id)}
             dimmed={!!filterSet?.size && !filterSet.has(m.slotA.teamName) && !filterSet.has(m.slotB.teamName)}
             selected={!!filterSet?.size && (filterSet.has(m.slotA.teamName) || filterSet.has(m.slotB.teamName))}
             defaults={slotDefaults?.get(m.id)}
@@ -102,17 +103,17 @@ function RoundColumn({
 }
 
 function BracketStrip({
-  rounds, matchesByRound, height, registerRef, filterSet, times, slotDefaults, onTeamClick,
+  rounds, matchesByRound, height, registerRef, filterSet, times, orders, slotDefaults, onTeamClick,
 }: {
   rounds: number[]; matchesByRound: BracketMatch[][]; height: number; registerRef?: RegisterMatchRef
-  filterSet?: Set<string>; times: Map<string, number>; slotDefaults?: Map<string, { a?: string; b?: string }>
+  filterSet?: Set<string>; times: Map<string, number>; orders: Map<string, number>; slotDefaults?: Map<string, { a?: string; b?: string }>
   onTeamClick?: (name: string) => void
 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'stretch', height }}>
       {rounds.map((round, i) => (
         <div key={i} style={{ display: 'flex', alignItems: 'stretch' }}>
-          <RoundColumn matches={matchesByRound[i]} height={height} registerRef={registerRef} filterSet={filterSet} times={times} slotDefaults={slotDefaults} onTeamClick={onTeamClick} />
+          <RoundColumn matches={matchesByRound[i]} height={height} registerRef={registerRef} filterSet={filterSet} times={times} orders={orders} slotDefaults={slotDefaults} onTeamClick={onTeamClick} />
           {i < rounds.length - 1 && matchesByRound[i].length >= 2 && (
             <ConnectorSVG fromMatches={matchesByRound[i]} height={height} />
           )}
@@ -192,6 +193,8 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
     () => new Map(schedule.rings.flat().map(e => [e.matchId, e.startMinute])),
     [schedule],
   )
+  // 1-based play order across the schedule, shown as a badge on each card.
+  const orderByMatchId = useMemo(() => scheduleOrder(schedule), [schedule])
   // Feeder placeholders for empty slots ("Winner of R64 M3", etc).
   const slotDefaults = useMemo(() => computeSlotDefaults(matches, division, teamCount), [matches, division, teamCount])
   const wbByRound = Array.from({ length: wbRounds }, (_, i) =>
@@ -301,7 +304,7 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
           <div style={{ width: ROUND_W, height, display: 'flex', flexDirection: 'column', justifyContent: 'space-around', flexShrink: 0 }}>
             {finalsSemis.map(m => (
               <div key={m.id} ref={el => registerMatchRef(m.id, el)}>
-                <MatchCard match={m} time={timeFor(m.id)} dimmed={isDimmed(m)} selected={isSelected(m)} defaults={slotDefaults.get(m.id)} onTeamClick={handleTeamClick} />
+                <MatchCard match={m} time={timeFor(m.id)} order={orderByMatchId.get(m.id)} dimmed={isDimmed(m)} selected={isSelected(m)} defaults={slotDefaults.get(m.id)} onTeamClick={handleTeamClick} />
               </div>
             ))}
           </div>
@@ -319,7 +322,7 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
                   Grand Final
                 </span>
                 <div ref={el => registerMatchRef(finalsFinal.id, el)}>
-                  <MatchCard match={finalsFinal} time={timeFor(finalsFinal.id)} dimmed={isDimmed(finalsFinal)} selected={isSelected(finalsFinal)} defaults={slotDefaults.get(finalsFinal.id)} onTeamClick={handleTeamClick} />
+                  <MatchCard match={finalsFinal} time={timeFor(finalsFinal.id)} order={orderByMatchId.get(finalsFinal.id)} dimmed={isDimmed(finalsFinal)} selected={isSelected(finalsFinal)} defaults={slotDefaults.get(finalsFinal.id)} onTeamClick={handleTeamClick} />
                 </div>
               </div>
             )}
@@ -386,6 +389,7 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
             registerRef={registerMatchRef}
             filterSet={filterSet}
             times={timeByMatchId}
+            orders={orderByMatchId}
             slotDefaults={slotDefaults}
             onTeamClick={handleTeamClick}
           />

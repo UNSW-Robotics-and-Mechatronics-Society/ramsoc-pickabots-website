@@ -68,6 +68,8 @@ type MatchCardProps = {
   match: BracketMatch
   /** Formatted scheduled time (e.g. "1:05 PM"). Omitted → the time row is not rendered at all. */
   time?: string
+  /** 1-based play order across the schedule. Omitted → no order badge. */
+  order?: number
   dimmed?: boolean
   /**
    * Highlighted because one of its teams is in the active team filter. Renders
@@ -81,7 +83,7 @@ type MatchCardProps = {
   onTeamClick?: (name: string) => void
 }
 
-export function MatchCard({ match, time, dimmed, selected, defaults, onTeamClick }: MatchCardProps) {
+export function MatchCard({ match, time, order, dimmed, selected, defaults, onTeamClick }: MatchCardProps) {
   const w = winner(match)
   const isDone = match.status === 'completed'
 
@@ -121,9 +123,24 @@ export function MatchCard({ match, time, dimmed, selected, defaults, onTeamClick
         <span style={{ fontSize: '0.2rem', fontWeight: 900, letterSpacing: 0.5, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase' }}>
           {matchSideLabel(match)}
         </span>
-        <span style={{ fontSize: '0.2rem', fontWeight: 900, letterSpacing: 0.5, color: STATUS_COLOR[match.status] }}>
-          {STATUS_LABEL[match.status]}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+          <span style={{ fontSize: '0.2rem', fontWeight: 900, letterSpacing: 0.5, color: STATUS_COLOR[match.status] }}>
+            {STATUS_LABEL[match.status]}
+          </span>
+          {/* Play order — number in the top-right corner showing where this
+              match sits in the running order (see scheduleOrder). Subtle tint
+              (orange for Standards, green for Open) so it reads without shouting. */}
+          {order !== undefined && (
+            <span style={{
+              fontSize: '0.24rem', fontWeight: 900, lineHeight: 1,
+              color: match.division === 'open' ? '#4ADE80' : '#FF6B00',
+              background: match.division === 'open' ? 'rgba(74,222,128,0.18)' : 'rgba(255,107,0,0.18)',
+              borderRadius: 2, padding: '0.5px 1.5px',
+            }}>
+              {order}
+            </span>
+          )}
+        </div>
       </div>
       {time !== undefined && (
         <div style={{
