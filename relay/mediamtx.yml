@@ -19,6 +19,13 @@ apiAddress: 127.0.0.1:9997
 rtmp: yes
 rtmpAddress: :1935
 
+# Everything else off — RTMP in, local reads out is the whole job. Fewer
+# open ports, fewer Windows Firewall prompts.
+rtsp: no
+hls: no
+webrtc: no
+srt: no
+
 # One named path per incoming feed. Declared explicitly (not a catch-all) so
 # the control panel's feed lights show room2/room3/phone each as present-but-
 # offline before their encoders start, rather than the paths not existing.
