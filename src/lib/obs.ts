@@ -31,7 +31,9 @@ export function ringSceneName(ring: number): string {
  * internet (and with it every overlay) is down. Cut to it whenever anything
  * breaks on camera.
  */
-export const SCREEN_SCENES = ["Sumobots", "Intermission", "Bracket", "Standings", "Leaderboard", "Standby"] as const;
+// "Blank" is an intentionally empty scene — pure black output for a hard
+// visual reset (or as the safest thing to hold on while rearranging).
+export const SCREEN_SCENES = ["Sumobots", "Intermission", "Bracket", "Standings", "Leaderboard", "Standby", "Blank"] as const;
 export const INTERMISSION_SCENE = SCREEN_SCENES[0];
 
 /**
