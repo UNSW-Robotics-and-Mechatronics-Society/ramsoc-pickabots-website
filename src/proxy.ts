@@ -11,7 +11,12 @@ import { NextResponse } from "next/server";
 // 200 to signed-out crawlers — Googlebot is always signed out — so search
 // engines can index the site instead of caching a stale 404. They are exempt
 // from every gate below; none of them expose gated app content.
-const PUBLIC_PATHS       = ["/", "/robots.txt", "/sitemap.xml"];
+// /overlay/* renders inside OBS Browser Sources on the streaming PC — a
+// context that is ALWAYS signed out and holds no cookies, so it must clear
+// every gate (auth, event password, onboarding) or the broadcast shows a
+// Clerk sign-in page instead of a lower-third. Safe to expose: the overlays
+// are literally what gets broadcast on the public livestream.
+const PUBLIC_PATHS       = ["/", "/robots.txt", "/sitemap.xml", "/overlay(.*)"];
 const isPublicRoute      = createRouteMatcher([...PUBLIC_PATHS, "/sign-in(.*)", "/sign-up(.*)", "/dev(.*)"]);
 const isPasswordExempt   = createRouteMatcher([...PUBLIC_PATHS, "/sign-in(.*)", "/sign-up(.*)", "/standby", "/api/(.*)", "/dev(.*)"]);
 const isOnboardingExempt = createRouteMatcher([
