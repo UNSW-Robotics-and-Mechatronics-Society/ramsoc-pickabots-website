@@ -17,6 +17,7 @@ export default function FitToViewport({ children }: { children: ReactNode }) {
   const [fit, setFit] = useState(1)
   const [zoom, setZoom] = useState(1)
   const [offset, setOffset] = useState({ x: 0, y: 0 })
+  const [dragging, setDragging] = useState(false)
   const drag = useRef<{ startX: number; startY: number; baseX: number; baseY: number } | null>(null)
 
   useEffect(() => {
@@ -42,11 +43,12 @@ export default function FitToViewport({ children }: { children: ReactNode }) {
       style={{
         width: '100vw', height: '100vh', overflow: 'hidden',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        cursor: drag.current ? 'grabbing' : 'grab',
+        cursor: dragging ? 'grabbing' : 'grab',
         touchAction: 'none',
       }}
       onPointerDown={e => {
         drag.current = { startX: e.clientX, startY: e.clientY, baseX: offset.x, baseY: offset.y }
+        setDragging(true)
         ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
       }}
       onPointerMove={e => {
@@ -56,8 +58,8 @@ export default function FitToViewport({ children }: { children: ReactNode }) {
           y: drag.current.baseY + (e.clientY - drag.current.startY),
         })
       }}
-      onPointerUp={() => { drag.current = null }}
-      onPointerCancel={() => { drag.current = null }}
+      onPointerUp={() => { drag.current = null; setDragging(false) }}
+      onPointerCancel={() => { drag.current = null; setDragging(false) }}
       onWheel={e => {
         const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15
         setZoom(z => Math.min(5, Math.max(0.5, z * factor)))
