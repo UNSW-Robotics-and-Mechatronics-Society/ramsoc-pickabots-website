@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
 import { currentUser } from "@clerk/nextjs/server";
 import { isAdminUser } from "@/lib/auth";
-import { getBracketStateFresh, saveBracketState, type BracketState } from "@/lib/db/bracket";
+import { getBracketStateFresh, saveBracketState, type BracketSave } from "@/lib/db/bracket";
 
 async function requireAdmin(): Promise<boolean> {
   const user = await currentUser();
@@ -19,9 +19,15 @@ export async function GET() {
   }
 }
 
+/**
+ * Applies one bracket write. The body is a partial save (see BracketSave): an
+ * ordinary edit carries only the match rows that changed, so concurrent admins
+ * don't overwrite each other, while auto-fill / resize / reset-all set
+ * `replaceAll` to replace a whole bracket.
+ */
 export async function PUT(req: NextRequest) {
   if (!(await requireAdmin())) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  const body: BracketState = await req.json();
+  const body: BracketSave = await req.json();
   try {
     await saveBracketState(body);
     // A save is the "a game happened" event: it records results and pays out

@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import RamCoin from './RamCoin'
+import type { VoteStandings } from '@/lib/types'
 
 const MAX_VOTE_FRAC = 0.5  // max 50% of balance per vote
 
@@ -20,11 +21,14 @@ interface VoteModalProps {
   // ALL IN mode (admin toggle): lifts the 50%-of-balance cap so a player can
   // stake their whole balance on one vote. place_vote enforces this too.
   allIn?: boolean
+  // Live pool for this match, so the reward preview quotes the real parimutuel
+  // return instead of a made-up flat multiple. Null until the first poll lands.
+  standings?: VoteStandings | null
   onConfirm: (amount: number) => void
   onClose: () => void
 }
 
-export default function VoteModal({ ctx, tokens, allIn = false, onConfirm, onClose }: VoteModalProps) {
+export default function VoteModal({ ctx, tokens, allIn = false, standings = null, onConfirm, onClose }: VoteModalProps) {
   const [amount, setAmount] = useState(10)
   // Raw text of the amount field — kept separate from `amount` so the user
   // can freely type (clear the field, type digits that momentarily exceed
@@ -37,6 +41,11 @@ export default function VoteModal({ ctx, tokens, allIn = false, onConfirm, onClo
   const [askingAllIn, setAskingAllIn] = useState(false)
   const isOpen = ctx !== null
 
+  // The most this vote may stake. place_vote enforces the same ceiling
+  // server-side (EXCEEDS_MAX), so every amount this component can produce —
+  // including the one it opens with — has to stay inside it.
+  const cap = Math.max(1, allIn ? tokens : Math.floor(tokens * MAX_VOTE_FRAC))
+
   // Resets the default amount whenever a new vote modal opens (or the
   // balance it's capped against changes) — adjusted during render, via a
   // state (not ref) comparison, per React's documented "reset state when a
@@ -44,7 +53,11 @@ export default function VoteModal({ ctx, tokens, allIn = false, onConfirm, onClo
   const [resetKey, setResetKey] = useState<{ ctx: ModalCtx | null; tokens: number } | null>(null)
   if (ctx && (resetKey?.ctx !== ctx || resetKey?.tokens !== tokens)) {
     setResetKey({ ctx, tokens })
-    const initial = Math.min(10, tokens)
+    // Seeded from the CAP, not the balance: on a balance under 20 RC, 50% of it
+    // is less than 10, and opening at 10 put the modal in a state the server
+    // would always reject ("Max vote is 50% of your balance") unless the player
+    // happened to move the slider first.
+    const initial = Math.min(10, cap)
     setAmount(initial)
     setAmountText(String(initial))
     setAskingAllIn(false)
@@ -63,10 +76,20 @@ export default function VoteModal({ ctx, tokens, allIn = false, onConfirm, onClo
 
   if (!ctx) return null
 
-  const cap = Math.max(1, allIn ? tokens : Math.floor(tokens * MAX_VOTE_FRAC))
   // An "all in" bet stakes the entire balance. Only really reachable in the
   // admin's ALL IN mode (where cap === tokens); triggers the confirm step.
   const isAllInBet = tokens > 0 && amount >= tokens
+
+  // Payouts are parimutuel — the winning side splits the entire pool — so the
+  // return depends on how the pool is split, not on any fixed multiple. Project
+  // it WITH this bet included (a bet dilutes its own side), which is exactly
+  // what the player would be paid if voting closed right now. With no pool yet
+  // this comes out at 1× (a lone voter gets their stake back), which is also
+  // correct, and it only improves as others back the other side.
+  const sidePool  = standings && !standings.noData ? (ctx.side === 'left' ? standings.poolLeft : standings.poolRight) : 0
+  const totalPool = standings && !standings.noData ? standings.totalPool : 0
+  const projectedMultiplier = (totalPool + amount) / (sidePool + amount)
+  const projectedReturn = Math.round(amount * projectedMultiplier)
 
   // CONFIRM: interpose an "are you sure?" step for all-in bets; otherwise fire.
   function requestConfirm() {
@@ -229,13 +252,20 @@ export default function VoteModal({ ctx, tokens, allIn = false, onConfirm, onClo
             ))}
           </div>
 
-          {/* Reward preview */}
+          {/* Reward preview — live parimutuel odds, not a flat multiple */}
           <div style={{
             background: 'rgba(0,40,10,0.4)', border: '1px solid rgba(76,255,0,0.15)', borderRadius: 10,
-            padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12,
+            padding: '10px 14px', marginBottom: 12,
           }}>
-            <span style={{ fontSize: '0.5rem', color: '#4caf50', fontWeight: 900, textTransform: 'uppercase', letterSpacing: 4 }}>Reward</span>
-            <span style={{ fontSize: '0.95rem', fontWeight: 900, color: '#69ff4c', letterSpacing: 1, display: 'flex', alignItems: 'center', gap: 5 }}>+{amount} → {amount * 2} <RamCoin size={16}/></span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.5rem', color: '#4caf50', fontWeight: 900, textTransform: 'uppercase', letterSpacing: 4 }}>Reward</span>
+              <span style={{ fontSize: '0.95rem', fontWeight: 900, color: '#69ff4c', letterSpacing: 1, display: 'flex', alignItems: 'center', gap: 5 }}>
+                {amount} → ~{projectedReturn} <RamCoin size={16}/>
+              </span>
+            </div>
+            <div style={{ marginTop: 4, fontSize: '0.45rem', fontWeight: 900, color: 'rgba(105,255,76,0.5)', textTransform: 'uppercase', letterSpacing: 2, textAlign: 'right' }}>
+              ~{projectedMultiplier.toFixed(2)}× at the current pool · odds move until voting closes
+            </div>
           </div>
 
           <div style={{ textAlign: 'center', fontSize: '0.48rem', color: '#fff', fontWeight: 900, textTransform: 'uppercase', letterSpacing: 4, marginBottom: 14 }}>

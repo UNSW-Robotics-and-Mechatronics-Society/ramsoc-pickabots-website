@@ -11,7 +11,11 @@ import Toast, { useToast, WinLossToast, useWinLossToast } from './Toast'
 import BegDial from './BegDial'
 import RamCoin from './RamCoin'
 import { BEG_THRESHOLD } from '@/lib/beg-config'
-import type { Match, Vote, VoteStandings } from '@/lib/types'
+import { hasSeenResult, markResultsSeen } from '@/lib/seenResults'
+import type { Match, Vote, VoteStandings, VoteWithResult } from '@/lib/types'
+
+/** GET /api/matches — the match rows plus each division's ring count. */
+type MatchesResponse = { matches: Match[]; ringCounts: Record<'standard' | 'open', number> }
 
 interface ModalCtx {
   matchId: string
@@ -32,6 +36,9 @@ type BegBannerState = {
 
 export default function VotePage() {
   const [matches, setMatches]   = useState<Match[]>([])
+  // How many rings each division runs — one ring slot is rendered per ring, so
+  // the page shows exactly as many biddable matches as there are live ones.
+  const [ringCounts, setRingCounts] = useState<Record<'standard' | 'open', number> | null>(null)
   const [tokens, setTokens]     = useState<number | null>(null)
   const [allIn, setAllIn]       = useState(false)
   const [votes, setVotes]       = useState<Record<string, Vote>>({})
@@ -61,6 +68,13 @@ export default function VotePage() {
   const prevMatchesRef  = useRef<Match[]>([])
   const votesRef        = useRef<Record<string, Vote>>({})
   const showWinLossRef  = useRef(showWinLoss)
+  // In-flight vote POSTs, keyed by match, each resolving to the real vote id
+  // (or null if the POST failed). "Change Vote" tapped before the POST comes
+  // back waits on this rather than sending the optimistic `pending-…` id, which
+  // isn't a uuid and made undo_vote fail with a raw Postgres error. Entries are
+  // left in place once settled — they're overwritten by the next vote on that
+  // match, and only ever read while the local id is still a placeholder.
+  const pendingVoteRef  = useRef<Record<string, Promise<string | null>>>({})
   useEffect(() => { prevMatchesRef.current = matches },  [matches])
   useEffect(() => { votesRef.current = votes },          [votes])
   useEffect(() => { showWinLossRef.current = showWinLoss }, [showWinLoss])
@@ -89,19 +103,42 @@ export default function VotePage() {
         if (!userRes.ok)  throw new Error('Failed to load user data')
         if (!votesRes.ok) throw new Error('Failed to load votes')
 
-        const [matchData, userData, votesData] = await Promise.all([matchRes.json(), userRes.json(), votesRes.json()])
-        setMatches(matchData)
+        const [matchData, userData, votesData] = await Promise.all([
+          matchRes.json() as Promise<MatchesResponse>,
+          userRes.json(),
+          votesRes.json() as Promise<VoteWithResult[]>,
+        ])
+        setMatches(matchData.matches)
+        setRingCounts(matchData.ringCounts)
         // Pre-seed the ref so refetchMatches doesn't treat already-resolved
         // matches as new resolutions if Realtime fires right after page load.
-        prevMatchesRef.current = matchData
+        prevMatchesRef.current = matchData.matches
         if (userData._supabaseError) console.error('[VotePage] Supabase error:', userData._supabaseError)
         setTokens(userData.tokens)
         setAllIn(!!userData.allIn)
 
         const votesByMatch: Record<string, Vote> = {}
-        for (const v of votesData as Vote[]) votesByMatch[v.match_id] = v
+        for (const v of votesData) {
+          votesByMatch[v.match_id] = {
+            id: v.id, match_id: v.match_id, side: v.side, amount: v.amount,
+            // The server knows the bot's name, so a vote loaded on a fresh page
+            // is as complete as one placed in this session.
+            botName: v.side === 'left' ? v.left_name : v.right_name,
+          }
+        }
         setVotes(votesByMatch)
         votesRef.current = votesByMatch
+
+        // Results the player never saw — the win/loss screen lives only on this
+        // page, so anything decided while they were elsewhere is shown now.
+        const missed = votesData.filter(v => v.winner_side && !hasSeenResult(v.match_id))
+        for (const v of missed) {
+          const name = v.side === 'left' ? v.left_name : v.right_name
+          // allIn isn't persisted, so a replayed win never gets the jackpot
+          // treatment — see the note on Vote.allIn.
+          showWinLossRef.current(v.side === v.winner_side ? 'win' : 'loss', name)
+        }
+        markResultsSeen(missed.map(v => v.match_id))
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : 'Unknown error')
       } finally {
@@ -137,10 +174,12 @@ export default function VotePage() {
     try {
       const matchRes = await fetch('/api/matches')
       if (!matchRes.ok) return
-      const newMatches: Match[] = await matchRes.json()
+      const payload: MatchesResponse = await matchRes.json()
+      const newMatches = payload.matches
 
       // Detect newly-resolved matches the user voted on and show the big toast.
       let wonOrLost = false
+      const shown: string[] = []
       for (const m of newMatches) {
         if (!m.winner_side) continue
         const prev = prevMatchesRef.current.find(p => p.id === m.id)
@@ -152,9 +191,13 @@ export default function VotePage() {
         // Gold + confetti only when an ALL-IN bet actually wins.
         showWinLossRef.current(won ? 'win' : 'loss', name, won && !!vote.allIn)
         wonOrLost = true
+        shown.push(m.id)
       }
+      // Recorded so leaving and coming back doesn't replay what was just shown.
+      markResultsSeen(shown)
 
       setMatches(newMatches)
+      setRingCounts(payload.ringCounts)
 
       // Delay the token balance refresh on a win/loss so the toast is visible
       // before the balance updates (gives the payout a moment to process too).
@@ -214,7 +257,7 @@ export default function VotePage() {
     triggerFlash()
     showToast(<><RamCoin size={13} style={{ marginRight: 5 }}/>{amount} locked on {botName}!</>)
 
-    try {
+    const request = (async () => {
       const res = await fetch('/api/votes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -222,6 +265,15 @@ export default function VotePage() {
       })
       const body = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(body.error ?? 'Vote failed')
+      return body as { vote: { id: string }; tokens: number }
+    })()
+
+    // Published before awaiting, so an undo tapped while this is still in flight
+    // can wait for the real vote id instead of sending the placeholder.
+    pendingVoteRef.current[matchId] = request.then(b => b.vote.id, () => null)
+
+    try {
+      const body = await request
       setVotes(prev => ({ ...prev, [matchId]: { ...optimisticVote, id: body.vote.id } }))
       setTokens(body.tokens)
     } catch (e: unknown) {
@@ -236,13 +288,26 @@ export default function VotePage() {
     const vote = votes[matchId]
     if (!vote) return
 
-    const refunded = (tokens ?? 0) + vote.amount
+    // A vote placed a moment ago may still be in flight, in which case its id is
+    // the optimistic placeholder. Wait for the POST to hand back the real one
+    // rather than asking undo_vote to delete "pending-…".
+    let voteId = vote.id
+    if (voteId.startsWith('pending-')) {
+      const resolved = await pendingVoteRef.current[matchId]
+      // No real id means the vote itself failed — handleConfirm has already
+      // rolled the optimistic state back, so there's nothing left to undo.
+      if (!resolved) { showToast('Vote didn\'t go through — nothing to undo'); return }
+      voteId = resolved
+    }
+
+    // Functional updates (not a value captured before the await above), so the
+    // refund applies to whatever the balance is by the time we get here.
     setVotes(prev => { const next = { ...prev }; delete next[matchId]; return next })
-    setTokens(refunded)
+    setTokens(t => (t ?? 0) + vote.amount)
     showToast('Vote undone ↩️')
 
     try {
-      const res = await fetch(`/api/votes?vote_id=${vote.id}`, { method: 'DELETE' })
+      const res = await fetch(`/api/votes?vote_id=${voteId}`, { method: 'DELETE' })
       const body = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(body.error ?? 'Undo failed')
       setTokens(body.tokens)
@@ -254,21 +319,30 @@ export default function VotePage() {
   }
 
   // ── Match bucketing ───────────────────────────────────────────────────────────
-  // Standard/Open: always show exactly 2 rings, filling with placeholders if
-  // fewer than 2 active matches exist — and never an exhibition match, which
-  // gets its own tab instead of mixing into a division's view. Exhibition:
-  // no fixed slot count, just show every active exhibition match there is.
+  // Every live match is biddable — no cap. The schedule makes at most one match
+  // active per ring, so the count follows the ring count on its own, and the
+  // rings that have no ready match yet get a "TBD" placeholder (see slotCount).
+  // Exhibition matches never mix into a division's view; they have their own tab.
   const activeMatches  = matches.filter(m => m.is_active && m.winner_side === null)
   const activeFiltered = filter === 'exhibition'
     ? activeMatches.filter(m => m.is_exhibition)
-    : activeMatches.filter(m => m.comp_type === filter && !m.is_exhibition).slice(0, 2)
+    : activeMatches.filter(m => m.comp_type === filter && !m.is_exhibition)
   const activeBossbots = activeMatches.filter(m => m.comp_type === 'bossbot' && !m.is_exhibition)
 
-  // Next Matches: at most 2 for the selected division; all of them for Exhibition.
+  // One slot per ring this division is running. Falls back to "just the live
+  // matches" if the ring count hasn't loaded, and never drops below 1 so an
+  // idle division still shows a placeholder rather than nothing at all.
+  const slotCount = Math.max(
+    filter === 'exhibition' ? 0 : (ringCounts?.[filter] ?? 0),
+    activeFiltered.length,
+    1,
+  )
+
+  // Next Matches: all of them — one per ring, same as the active ones.
   const allNext     = matches.filter(m => !m.is_active && m.winner_side === null)
   const nextVisible = filter === 'exhibition'
     ? allNext.filter(m => m.is_exhibition)
-    : allNext.filter(m => m.comp_type === filter && !m.is_exhibition).slice(0, 2)
+    : allNext.filter(m => m.comp_type === filter && !m.is_exhibition)
 
   return (
     <>
@@ -382,8 +456,8 @@ export default function VotePage() {
             )
         )}
 
-        {/* Standard/Open: 2 rings for the active tab, placeholders fill any empty slots */}
-        {!loading && !error && filter !== 'exhibition' && [0, 1].map(i => {
+        {/* Standard/Open: one ring per ring in the schedule, placeholders fill any empty slots */}
+        {!loading && !error && filter !== 'exhibition' && Array.from({ length: slotCount }, (_, i) => {
           const match = activeFiltered[i] ?? null
           return match
             ? <Ring
@@ -413,7 +487,7 @@ export default function VotePage() {
           />
         ))}
 
-        {/* Next Matches — max 2 per division (standard + open) = 4 total */}
+        {/* Next Matches — one per ring, whatever the schedule has queued up */}
         {!loading && !error && nextVisible.length > 0 && (
           <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
             <span style={{ fontSize: '0.65rem', fontWeight: 900, color: 'rgba(255,255,255,0.55)', textTransform: 'uppercase', letterSpacing: 4 }}>
@@ -430,7 +504,14 @@ export default function VotePage() {
         )}
       </main>
 
-      <VoteModal ctx={modalCtx} tokens={tokens ?? 0} allIn={allIn} onConfirm={handleConfirm} onClose={() => setModalCtx(null)} />
+      <VoteModal
+        ctx={modalCtx}
+        tokens={tokens ?? 0}
+        allIn={allIn}
+        standings={modalCtx ? standings[modalCtx.matchId] ?? null : null}
+        onConfirm={handleConfirm}
+        onClose={() => setModalCtx(null)}
+      />
       <TeamLedgerModal target={selectedTeam} onClose={() => setSelectedTeam(null)} />
       <ComicFlash state={flash} />
       <Toast toast={toast} />

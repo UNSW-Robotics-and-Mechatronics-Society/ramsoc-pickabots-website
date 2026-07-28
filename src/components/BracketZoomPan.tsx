@@ -438,7 +438,7 @@ const BracketZoomPan = forwardRef<BracketZoomPanHandle, Props>(function BracketZ
     }
   }
 
-  function onWheel(e: React.WheelEvent) {
+  function onWheel(e: WheelEvent) {
     interacted.current = true
     stopMomentum()
     e.preventDefault()
@@ -454,6 +454,23 @@ const BracketZoomPan = forwardRef<BracketZoomPanHandle, Props>(function BracketZ
     })
   }
 
+  // Wheel-zoom is attached natively rather than through React's `onWheel`:
+  // React registers wheel listeners as PASSIVE at the root, so the
+  // preventDefault() above would be ignored (and log "Unable to preventDefault
+  // inside passive event listener" on every scroll over the canvas), letting the
+  // page move underneath while zooming. `{ passive: false }` is the only way to
+  // actually claim the gesture. The handler is reached through a ref so the
+  // listener can be attached once while still seeing current props/state.
+  const onWheelRef = useRef(onWheel)
+  onWheelRef.current = onWheel
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    const handler = (e: WheelEvent) => onWheelRef.current(e)
+    container.addEventListener('wheel', handler, { passive: false })
+    return () => container.removeEventListener('wheel', handler)
+  }, [])
+
   return (
     <div
       ref={containerRef}
@@ -461,7 +478,6 @@ const BracketZoomPan = forwardRef<BracketZoomPanHandle, Props>(function BracketZ
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
-      onWheel={onWheel}
       style={{
         touchAction: 'none', overflow: 'hidden', position: 'relative',
         width: '100%', height: '100%', cursor: 'grab',

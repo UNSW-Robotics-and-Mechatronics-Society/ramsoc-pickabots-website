@@ -37,6 +37,18 @@ export interface Vote {
   allIn?: boolean
 }
 
+/**
+ * A vote as returned by GET /api/votes: the vote row plus just enough of its
+ * match to know whether it's been decided and what the backed bot was called.
+ * Drives the replay of a win/loss screen the player wasn't around to see (see
+ * lib/seenResults) — hence the names, which the vote row itself doesn't carry.
+ */
+export interface VoteWithResult extends Vote {
+  winner_side: 'left' | 'right' | null
+  left_name: string
+  right_name: string
+}
+
 export interface VoteStandings {
   poolLeft: number
   poolRight: number

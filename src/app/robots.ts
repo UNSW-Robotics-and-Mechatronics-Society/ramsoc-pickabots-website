@@ -4,7 +4,7 @@ const ORIGIN = "https://pickabots.ramsocunsw.org";
 
 // Every route except `/` is auth-gated and returns 404 to signed-out crawlers,
 // so there is nothing else to expose. We deliberately do NOT disallow anything:
-// crawlers must be free to fetch `/join` (to see its 308 → `/`) and `/` itself.
+// crawlers must be free to fetch `/` itself.
 export default function robots(): MetadataRoute.Robots {
   return {
     rules: {

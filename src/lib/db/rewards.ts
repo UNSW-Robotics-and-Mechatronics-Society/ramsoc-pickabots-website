@@ -4,14 +4,14 @@ import { resolveRound } from "@/lib/vote-pool";
 import type { VoteEntry } from "@/lib/vote-pool";
 
 /**
- * Rewards all voters for a resolved match using resolveRound as the single
- * source of payout truth. Winners receive their proportional share of the
- * total pool. If nobody backed the winner, everyone is refunded their stake.
- * Rewards all voters for a resolved match.
- * Winners receive their proportional share of the total pool.
- * Losers lose their votes regardless — no refund even if nobody backed the winner.
- * Every vote's `payout` column is recorded (0 for losers) so the coin ledger
- * can read gain/loss straight off `votes` instead of re-deriving pool math.
+ * Rewards all voters for a resolved match, using resolveRound as the single
+ * source of payout truth:
+ *  - Winners take their proportional share of the whole pool; losers get nothing.
+ *  - If NOBODY backed the winning side, the round is a refund — every voter gets
+ *    their own stake back (there's no winning pool to divide the losers' stakes
+ *    into, so the house doesn't keep them either).
+ * Every vote's `payout` column is recorded (0 for a losing vote) so the coin
+ * ledger can read gain/loss straight off `votes` instead of re-deriving pool math.
  */
 export async function rewardWinners(matchId: string, winnerSide: "left" | "right"): Promise<void> {
   const { data: rows, error: votesErr } = await supabase

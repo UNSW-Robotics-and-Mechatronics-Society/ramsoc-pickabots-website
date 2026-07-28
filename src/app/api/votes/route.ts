@@ -4,16 +4,36 @@ import supabase from '@/lib/supabase'
 
 const MAX_VOTE_FRAC = 0.5
 
-// GET /api/votes — the signed-in user's votes
+// GET /api/votes — the signed-in user's votes, each carrying enough of its
+// match to tell whether it's been decided and which bot was backed. That lets
+// the bidding page replay a win/loss screen the player missed because they
+// weren't on it when the match resolved (see lib/seenResults).
+type VoteMatchJoin = { winner_side: string | null; left_name: string; right_name: string }
+
 export async function GET() {
   const { userId } = await auth()
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { data, error } = await supabase
-    .from('votes').select('id, match_id, side, amount').eq('user_id', userId)
+    .from('votes')
+    .select('id, match_id, side, amount, matches!inner(winner_side, left_name, right_name)')
+    .eq('user_id', userId)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data)
+
+  return NextResponse.json((data ?? []).map(v => {
+    // votes.match_id is a to-one FK, so PostgREST returns a single object here.
+    const match = v.matches as unknown as VoteMatchJoin | null
+    return {
+      id: v.id,
+      match_id: v.match_id,
+      side: v.side,
+      amount: v.amount,
+      winner_side: match?.winner_side ?? null,
+      left_name: match?.left_name ?? '',
+      right_name: match?.right_name ?? '',
+    }
+  }))
 }
 
 // Maps a coded exception raised by the place_vote/undo_vote SQL functions to an

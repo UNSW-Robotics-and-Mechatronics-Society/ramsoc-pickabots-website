@@ -423,81 +423,163 @@ export function isTeamNameTaken(
   );
 }
 
+/** A single slot somewhere in the bracket tree. */
+export type AdvancementSeat = { side: BracketSide; round: number; match: number; slot: 'a' | 'b' };
+/** "This team goes in that seat." */
+export type AdvancementWrite = { seat: AdvancementSeat; name: string };
+
+function sameSeat(a: AdvancementSeat, b: AdvancementSeat): boolean {
+  return a.side === b.side && a.round === b.round && a.match === b.match && a.slot === b.slot;
+}
+
+/**
+ * Every seat a COMPLETED match feeds, with the team that goes there — the
+ * winner's onward seat plus, where one exists, the loser's.
+ *
+ * The single source of truth for advancement, used in both directions:
+ * applyStatusChange writes these seats when a match completes, and RETRACTS
+ * exactly the same ones when it stops being completed (or when an edit changes
+ * who won). Deriving both from one function is what keeps a retraction from
+ * drifting out of sync with the write it's undoing.
+ *
+ * Empty names are omitted, so an incomplete match simply feeds nothing.
+ */
+export function advancementWrites(m: BracketMatch, teamCount: TeamCount): AdvancementWrite[] {
+  const wbRounds = wbRoundsFor(teamCount);
+  const out: AdvancementWrite[] = [];
+  const push = (seat: AdvancementSeat | null, name: string) => {
+    if (seat && name) out.push({ seat, name });
+  };
+
+  // A wildcard box isn't played — completing it just sends whoever is sitting
+  // in it into the losers bracket, so it's handled before the winner() check
+  // (there's no second slot for winner() to decide between).
+  if (m.side === 'wildcard') {
+    const t = wildcardTarget(m.matchNumber, teamCount);
+    push(t && { side: 'losers', round: t.round, match: t.match, slot: t.slot }, m.slotA.teamName);
+    return out;
+  }
+
+  const w = winner(m);
+  if (!w) return out;
+  const winnerName = w === 'a' ? m.slotA.teamName : m.slotB.teamName;
+  const loserName  = w === 'a' ? m.slotB.teamName : m.slotA.teamName;
+
+  if (m.side === 'winners') {
+    if (m.round === wbRounds) {
+      // WB Final: both participants go straight to Finals Day. The loser
+      // does NOT drop into the losers bracket this round — the LB Final
+      // stays purely LB-native so Finals Day's 4 teams are all distinct.
+      push({ side: 'finals-semi', round: 1, match: 1, slot: 'a' }, winnerName);
+      push({ side: 'finals-semi', round: 1, match: 2, slot: 'a' }, loserName);
+    } else {
+      push({
+        side: 'winners',
+        round: m.round + 1,
+        match: Math.ceil(m.matchNumber / 2),
+        slot: m.matchNumber % 2 === 1 ? 'a' : 'b',
+      }, winnerName);
+      const lb = wbLossToLBEntry(m.round, m.matchNumber, teamCount);
+      push({ side: 'losers', round: lb.round, match: lb.match, slot: lb.slot }, loserName);
+    }
+  } else if (m.side === 'losers') {
+    const adv = lbWinnerNext(m.round, m.matchNumber, teamCount);
+    if (adv) {
+      push({ side: 'losers', round: adv.round, match: adv.match, slot: adv.slot }, winnerName);
+    } else {
+      // LB Final: winner is LB Champion, loser is LB Runner-up — both
+      // feed Finals Day, crossed against the WB Final's two entrants.
+      push({ side: 'finals-semi', round: 1, match: 2, slot: 'b' }, winnerName);
+      push({ side: 'finals-semi', round: 1, match: 1, slot: 'b' }, loserName);
+    }
+  } else if (m.side === 'finals-semi') {
+    const slot = m.matchNumber === 1 ? 'a' : 'b';
+    push({ side: 'finals-final', round: 1, match: 1, slot }, winnerName);
+    // The semi-final loser plays for 3rd place against the other semi's loser.
+    push({ side: 'finals-third', round: 1, match: 1, slot }, loserName);
+  }
+
+  return out;
+}
+
 export function applyStatusChange(
   all: BracketMatch[],
   changed: BracketMatch,
   newStatus: MatchStatus,
   teamCount: TeamCount,
 ): BracketMatch[] {
-  // lbRounds is no longer needed here — lbWinnerNext derives it from teamCount.
-  const wbRounds = wbRoundsFor(teamCount);
+  const prev = all.find(m => m.id === changed.id);
 
-  let next = all.map(m => m.id === changed.id ? { ...changed, status: newStatus } : m);
+  // A match that WAS completed and still is, but no longer has a winner, was
+  // just edited below its target score (the classic mis-click: +1 auto-completed
+  // it, then -1). It can't stay completed with nobody having won — drop it back
+  // to 'todo' and let applyScheduleStatus re-derive active/next from the ring
+  // order. Only this case: an admin explicitly picking "completed" on a match
+  // with no winner is a deliberate choice (and is left alone).
+  const stillCompletedWithoutWinner =
+    prev?.status === 'completed' && newStatus === 'completed'
+    && changed.side !== 'wildcard' && !winner(changed);
+  const status: MatchStatus = stillCompletedWithoutWinner ? 'todo' : newStatus;
 
-  function setSlot(side: BracketSide, round: number, matchNum: number, slot: 'a' | 'b', name: string) {
+  const updated: BracketMatch = { ...changed, status };
+  let next = all.map(m => m.id === changed.id ? updated : m);
+
+  function setSlot(seat: AdvancementSeat, name: string) {
     next = next.map(m => {
-      if (m.division !== changed.division || m.side !== side || m.round !== round || m.matchNumber !== matchNum) return m;
-      return slot === 'a'
+      if (m.division !== changed.division || m.side !== seat.side
+          || m.round !== seat.round || m.matchNumber !== seat.match) return m;
+      return seat.slot === 'a'
         ? { ...m, slotA: { ...m.slotA, teamName: name, score: 0 } }
         : { ...m, slotB: { ...m.slotB, teamName: name, score: 0 } };
     });
   }
 
-  // A wildcard box isn't played — completing it just sends whoever is sitting
-  // in it into the losers bracket, so it's handled before the winner() check
-  // (there's no second slot for winner() to decide between).
-  if (newStatus === 'completed' && changed.side === 'wildcard') {
-    const target = wildcardTarget(changed.matchNumber, teamCount);
-    if (target && changed.slotA.teamName) {
-      setSlot('losers', target.round, target.match, target.slot, changed.slotA.teamName);
-    }
-    return next;
+  /**
+   * Undoes one advancement write. Only clears the seat if it still holds the
+   * team this match put there — so a name the admin typed by hand, or one a
+   * different feeder wrote, is never wiped.
+   *
+   * A downstream match that was itself COMPLETED is also reset to 'todo' with
+   * both scores zeroed: it can't have been played by a team that's no longer in
+   * it, and leaving it completed with one empty slot would make isByeMatch()
+   * read it as a bye and drop it from the schedule. Its OWN advancement is
+   * deliberately left in place (retraction is one level deep) — so re-entering
+   * a much earlier result can still leave a stale name further down the tree.
+   */
+  function clearSlot(seat: AdvancementSeat, name: string) {
+    next = next.map(m => {
+      if (m.division !== changed.division || m.side !== seat.side
+          || m.round !== seat.round || m.matchNumber !== seat.match) return m;
+      if ((seat.slot === 'a' ? m.slotA.teamName : m.slotB.teamName) !== name) return m;
+      const wasPlayed = m.status === 'completed';
+      const cleared = { teamName: '', score: 0 };
+      return {
+        ...m,
+        slotA: seat.slot === 'a' ? cleared : { ...m.slotA, score: wasPlayed ? 0 : m.slotA.score },
+        slotB: seat.slot === 'b' ? cleared : { ...m.slotB, score: wasPlayed ? 0 : m.slotB.score },
+        status: wasPlayed ? 'todo' : m.status,
+      };
+    });
   }
 
-  if (newStatus === 'completed') {
-    const w = winner({ ...changed, status: 'completed' });
-    if (w) {
-      const winnerName = w === 'a' ? changed.slotA.teamName : changed.slotB.teamName;
-      const loserName  = w === 'a' ? changed.slotB.teamName : changed.slotA.teamName;
-
-      if (changed.side === 'winners') {
-        if (changed.round === wbRounds) {
-          // WB Final: both participants go straight to Finals Day. The loser
-          // does NOT drop into the losers bracket this round — the LB Final
-          // stays purely LB-native so Finals Day's 4 teams are all distinct.
-          setSlot('finals-semi', 1, 1, 'a', winnerName);
-          if (loserName) setSlot('finals-semi', 1, 2, 'a', loserName);
-        } else {
-          const nr = changed.round + 1;
-          const nm = Math.ceil(changed.matchNumber / 2);
-          const ns = changed.matchNumber % 2 === 1 ? 'a' : 'b' as 'a' | 'b';
-          setSlot('winners', nr, nm, ns, winnerName);
-          if (loserName) {
-            const lb = wbLossToLBEntry(changed.round, changed.matchNumber, teamCount);
-            setSlot('losers', lb.round, lb.match, lb.slot, loserName);
-          }
-        }
-      } else if (changed.side === 'losers') {
-        const adv = lbWinnerNext(changed.round, changed.matchNumber, teamCount);
-        if (adv) {
-          setSlot('losers', adv.round, adv.match, adv.slot, winnerName);
-        } else {
-          // LB Final: winner is LB Champion, loser is LB Runner-up — both
-          // feed Finals Day, crossed against the WB Final's two entrants.
-          setSlot('finals-semi', 1, 2, 'b', winnerName);
-          if (loserName) setSlot('finals-semi', 1, 1, 'b', loserName);
-        }
-      } else if (changed.side === 'finals-semi') {
-        const ns = changed.matchNumber === 1 ? 'a' : 'b' as 'a' | 'b';
-        setSlot('finals-final', 1, 1, ns, winnerName);
-        // The semi-final loser plays for 3rd place against the other semi's loser.
-        if (loserName) setSlot('finals-third', 1, 1, ns, loserName);
-      }
-    }
+  // Retract what this match used to feed, then write what it feeds now. A seat
+  // that's about to be rewritten with the SAME team is skipped, so editing an
+  // unrelated field on a completed match (target score, voting toggle) doesn't
+  // needlessly churn the next round.
+  const before = prev?.status === 'completed' ? advancementWrites(prev, teamCount) : [];
+  const after  = status === 'completed' ? advancementWrites(updated, teamCount) : [];
+  for (const b of before) {
+    if (after.some(a => sameSeat(a.seat, b.seat) && a.name === b.name)) continue;
+    clearSlot(b.seat, b.name);
   }
+  for (const a of after) setSlot(a.seat, a.name);
+
+  // Wildcard boxes sit outside the bracket tree, so there's no "next box" to
+  // promote — the original early return, kept.
+  if (changed.side === 'wildcard') return next;
 
   // Promote the next match in bracket order (overridden by applyScheduleStatus, but kept for consistency)
-  if (newStatus === 'completed' || newStatus === 'skipped') {
+  if (status === 'completed' || status === 'skipped') {
     const sideMates = next
       .filter(m => m.division === changed.division && m.side === changed.side)
       .sort((a, b) => a.round !== b.round ? a.round - b.round : a.matchNumber - b.matchNumber);

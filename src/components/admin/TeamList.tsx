@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Phone } from "lucide-react";
 import { type Division, type Team } from "@/lib/mock-data";
+import { computeSeedConflicts } from "@/lib/seeds";
 import { cn } from "@/lib/cn";
 import TeamDetailsModal from "./TeamDetailsModal";
 
@@ -91,6 +92,16 @@ export default function TeamList({
       default:          return a.name.localeCompare(b.name);
     }
   });
+
+  // Seeds used by more than one team in this division. Typing a duplicate is
+  // ALLOWED — swapping two teams' seeds has to pass through a duplicate state —
+  // but it's flagged here, and Auto Fill and seed import both refuse while any
+  // exist (see AdminPageClient.duplicateSeeds).
+  const duplicateSeedValues = new Set(computeSeedConflicts(divTeams).map(c => c.seed));
+
+  function seedClashNames(seed: number, exceptId: string): string[] {
+    return divTeams.filter(t => t.seed === seed && t.id !== exceptId).map(t => t.name);
+  }
 
   // Special teams aren't division-scoped (same list shows on both the
   // Standards and Open pages) and have no seed to sort by — just the name
@@ -360,6 +371,7 @@ export default function TeamList({
             // Tri-state: an explicit override wins; otherwise a seed puts the
             // team in the bracket automatically. Auto Fill uses this same rule.
             const inBracket = team.inBracket ?? (team.seed != null);
+            const seedClash = team.seed != null && duplicateSeedValues.has(team.seed);
 
             // Present/absent is the card's ONLY overlay. In-bracket has its own
             // toggle in the row below — it doesn't also tint the card, so the
@@ -391,7 +403,13 @@ export default function TeamList({
                     )}>
                       {team.name}
                     </span>
-                    <span className="shrink-0 text-xs tabular-nums text-foreground/50">
+                    <span
+                      className={cn(
+                        "shrink-0 text-xs tabular-nums",
+                        seedClash ? "text-red-300" : "text-foreground/50",
+                      )}
+                      title={seedClash ? `Seed ${team.seed} is also on ${seedClashNames(team.seed!, team.id).join(', ')}` : undefined}
+                    >
                       Seed {team.seed ?? '—'}
                     </span>
                   </div>
@@ -480,9 +498,18 @@ export default function TeamList({
                           min={1}
                           value={team.seed ?? ""}
                           placeholder="Seed"
-                          title="Seed — 1 is the top seed. Auto Fill places seed 1 first; unseeded teams go behind every seeded one."
+                          title={
+                            seedClash
+                              ? `Seed ${team.seed} is also on ${seedClashNames(team.seed!, team.id).join(', ')} — Auto Fill and seed import won't run until every seed is unique.`
+                              : "Seed — 1 is the top seed. Auto Fill places seed 1 first; unseeded teams go behind every seeded one."
+                          }
                           onChange={e => update(team.id, "seed", e.target.value === "" ? null : Number(e.target.value))}
-                          className="w-20 shrink-0 rounded-lg border border-white/10 bg-white/8 px-2 py-1 text-xs tabular-nums placeholder:text-foreground/30 outline-none focus:border-white/30"
+                          className={cn(
+                            "w-20 shrink-0 rounded-lg border bg-white/8 px-2 py-1 text-xs tabular-nums placeholder:text-foreground/30 outline-none",
+                            seedClash
+                              ? "border-red-400/70 text-red-300 focus:border-red-400"
+                              : "border-white/10 focus:border-white/30",
+                          )}
                         />
                         <textarea
                           value={team.comment}

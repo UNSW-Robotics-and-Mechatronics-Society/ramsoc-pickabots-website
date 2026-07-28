@@ -13,7 +13,7 @@ const MODE_TABS: { key: Mode; label: string }[] = [
 ]
 
 const SUBTITLE: Record<Mode, string> = {
-  players: 'Sorted by ramcoins earned',
+  players: 'Sorted by Top RamCoin Hustler',
   teams:   'Sorted by ramcoins bet on',
 }
 
