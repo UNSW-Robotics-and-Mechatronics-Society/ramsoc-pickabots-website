@@ -15,6 +15,7 @@ import TeamList        from "./TeamList";
 import AdminBracket    from "./AdminBracket";
 import MatchesPanel    from "./MatchesPanel";
 import ConfirmDialog   from "./ConfirmDialog";
+import AlertDialog     from "./AlertDialog";
 import PlayersPanel    from "./PlayersPanel";
 import SettingsPanel   from "./SettingsPanel";
 
@@ -33,16 +34,21 @@ function computeEliminated(matches: BracketMatch[]): Set<string> {
 
 const TEAM_COUNTS: TeamCount[] = [4, 8, 16, 32, 64];
 
+const DIVISION_LABEL: Record<Division, string> = { standards: "Standards", open: "Open" };
+
 // A single parsed row of the "Import seeds" CSV. Shared shape between the
 // Settings panel (which parses the file) and the import handler here (which
 // matches names against the team list).
 export type SeedImportRow = { name: string; division: Division; seed: number };
 export type SeedImportResult = { imported: number; unmatched: SeedImportRow[] };
 
-// Standard balanced seeding order: expands recursively so seed 1 lands in M1
-// and seed 2 in M_last (opposite halves). For 8 matches → [1,8,5,4,3,6,7,2].
-// Lifted from AdminBracket so both the bracket's Auto Fill button and the
-// Settings panel's post-import prompt can re-seed Round 1 identically.
+// Standard balanced seeding order over bracket POSITIONS (1 = top seed):
+// expands recursively so position 1 lands in M1 and position 2 in M_last
+// (opposite halves), meaning the top two seeds can only meet in the final. For
+// 8 matches → [1,8,5,4,3,6,7,2], i.e. M1 = 1v16, M2 = 8v9, M3 = 5v12, …
+// slotB of each match = T+1 − slotA. Lifted from AdminBracket so both the
+// bracket's Auto Fill button and the Settings panel's post-import prompt
+// can re-seed Round 1 identically.
 function seedOrder(N: number): number[] {
   let seeds = [1];
   let tc = 2;
@@ -89,6 +95,10 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
   const [matches,      setMatches]   = useState<BracketMatch[]>(initialBracket.matches);
   const [teamCount,    setTeamCount] = useState<TeamCount>(initialBracket.teamCount);
   const [pendingCount, setPending]   = useState<TeamCount | null>(null);
+  // Why Auto Fill refused to run (too many in-bracket teams for the bracket
+  // size). Held here rather than in the two call sites — the bracket panel's
+  // button and the Settings panel's post-import prompt both surface it.
+  const [autoFillError, setAutoFillError] = useState<string | null>(null);
   const [schedules,    setSchedules] = useState<Record<Division, MatchSchedule>>(initialBracket.schedules);
   const [exhibitionSchedule, setExhibitionSchedule] = useState<ExhibitionSchedule>(initialBracket.exhibitionSchedule);
 
@@ -239,33 +249,63 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
     setSchedules(prev => ({ ...prev, [division]: rollSchedule(prev[division], next, division) }));
   }
 
-  // ── auto-fill Round 1 from the In-Bracket teams ──────────────────────────────
-  // Re-seeds the CURRENT division's WB Round 1 from its in-bracket teams (seeded
-  // by seed, unseeded shuffled into leftover slots), overwriting existing teams/
-  // scores. Lifted out of AdminBracket so the bracket's Auto Fill button and the
-  // Settings panel's post-import prompt share one implementation.
+  // ── auto-fill: reset the division's bracket and seed Round 1 ─────────────────
+  // Rebuilds the CURRENT division's bracket from scratch, then seeds its WB
+  // Round 1 from the in-bracket teams (by seed, unseeded shuffled into whatever
+  // slots are left). Lifted out of AdminBracket so the bracket's Auto Fill
+  // button and the Settings panel's post-import prompt share one implementation.
   function handleAutoFill() {
     const div = division;
     // In-bracket = explicit override, else auto (has a seed) — same rule as the
     // Teams list toggle. A seeded team turned off keeps its seed but is skipped.
     const divTeams = teams.filter(t => t.division === div && (t.inBracket ?? (t.seed != null)));
-    const withSeed = [...divTeams.filter(t => t.seed !== null)].sort((a, b) => (b.seed ?? 0) - (a.seed ?? 0));
+
+    // Regenerate rather than overwrite the loaded matches in place: Auto Fill
+    // resets the WHOLE division, so every round's teams, scores and statuses go
+    // back to empty/'todo'. Overwriting only R1's slots left the rest of the
+    // tree holding stale teams and results, and left a previously-'completed' R1
+    // match completed with its NEW teams and 0-0 scores — which both
+    // rollSchedule and applyScheduleStatus preserve, making that match
+    // permanently unplayable. Regenerating also means the bracket shape follows
+    // the generator (same reasoning as handleResetAll). Wildcard boxes are
+    // cleared along with everything else.
+    const fresh = generateDoubleElimBracket(teamCount, div);
+
+    const r1 = fresh
+      .filter(m => m.side === 'winners' && m.round === 1)
+      .sort((a, b) => a.matchNumber - b.matchNumber);
+    const numMatches = r1.length;
+    const T = 2 * numMatches;   // bracket team slots
+
+    // More in-bracket teams than slots has no correct answer — the extras used
+    // to be dropped silently, which read as a successful fill. Refuse instead,
+    // so the admin either grows the bracket or turns teams off.
+    if (divTeams.length > T) {
+      const bigger = TEAM_COUNTS.find(c => c >= divTeams.length);
+      setAutoFillError(
+        `${DIVISION_LABEL[div]} has ${divTeams.length} in-bracket teams but the bracket only has ${T} slots. ` +
+        (bigger ? `Set the bracket to ${bigger} teams, or turn ` : `Turn `) +
+        `${divTeams.length - T} team${divTeams.length - T === 1 ? '' : 's'} off in the Teams list, then try again.`,
+      );
+      return;
+    }
+
+    // Seed 1 is the TOP seed, so sort ascending: seed 1 takes bracket position
+    // 1, seed 2 position 2, … and seedOrder maps those positions to matches
+    // (position 1 and position T land in opposite halves). Unseeded in-bracket
+    // teams are shuffled in behind every seeded team.
+    const withSeed = [...divTeams.filter(t => t.seed !== null)].sort((a, b) => (a.seed ?? 0) - (b.seed ?? 0));
     const noSeed   = [...divTeams.filter(t => t.seed === null)];
     for (let i = noSeed.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [noSeed[i], noSeed[j]] = [noSeed[j], noSeed[i]];
     }
-    const sorted = [...withSeed, ...noSeed];
+    const sorted = [...withSeed, ...noSeed];   // sorted[0] = seed 1 (strongest)
 
-    const r1 = matches
-      .filter(m => m.division === div && m.side === 'winners' && m.round === 1)
-      .sort((a, b) => a.matchNumber - b.matchNumber);
-    const numMatches = r1.length;
-    const T = 2 * numMatches;
     const slotASeeds = seedOrder(numMatches);
 
-    const seeded = matches.map(m => {
-      if (m.division !== div || m.side !== 'winners' || m.round !== 1) return m;
+    const seeded = fresh.map(m => {
+      if (m.side !== 'winners' || m.round !== 1) return m;
       const i     = r1.findIndex(r => r.id === m.id);
       const aSeed = slotASeeds[i];
       const bSeed = T + 1 - aSeed;
@@ -279,9 +319,19 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
     // Any R1 match left with a single team (fewer in-bracket teams than slots)
     // is a bye: auto-complete it and advance that team to R2 so it never shows
     // up as a playable match. rollSchedule then excludes it from the list.
+    // Byes fall to the strongest seeds, since the empty positions are the
+    // last ones (T, T-1, …) and those face positions 1, 2, ….
     const resolved = completeRound1Byes(seeded, div);
 
-    setMatches(resolved);
+    // Exhibition matches carry a real `division` but sit outside the bracket
+    // tree (own rings, admin-controlled status) and the generator emits none —
+    // keep them, or the bracket save would delete them as stale rows.
+    const nextMatches = [
+      ...matches.filter(m => m.division !== div || m.side === 'exhibition'),
+      ...resolved,
+    ];
+
+    setMatches(nextMatches);
     setSchedules(prev => ({
       ...prev,
       [div]: rollSchedule(
@@ -292,7 +342,7 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
           prev[div].matchMinutes,
           prev[div].gapMinutes,
         ),
-        resolved,
+        nextMatches,
         div,
       ),
     }));
@@ -483,6 +533,15 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
           confirmLabel="Change size"
           onConfirm={() => applySizeChange(pendingCount)}
           onCancel={() => setPending(null)}
+        />
+      )}
+
+      {/* Auto Fill refused — more in-bracket teams than the bracket has slots */}
+      {autoFillError !== null && (
+        <AlertDialog
+          title="Too many teams for this bracket"
+          message={autoFillError}
+          onDismiss={() => setAutoFillError(null)}
         />
       )}
     </>
