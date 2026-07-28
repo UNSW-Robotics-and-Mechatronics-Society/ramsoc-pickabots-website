@@ -98,8 +98,10 @@ export default async function BracketOverlay({ searchParams }: Props) {
   const matches = applyScheduleStatus(bracket.matches, bracket.schedules[division], division)
     .filter(m => m.division === division);
 
-  const wbRounds = wbRoundsFor(bracket.teamCount);
-  const lbRounds = lbRoundsFor(bracket.teamCount);
+  // This division's own bracket size — the two divisions can differ.
+  const teamCount = bracket.teamCounts[division];
+  const wbRounds = wbRoundsFor(teamCount);
+  const lbRounds = lbRoundsFor(teamCount);
   const bySideRound = (side: BracketMatch["side"], round: number) =>
     matches
       .filter(m => m.side === side && m.round === round)

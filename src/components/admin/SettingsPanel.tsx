@@ -26,8 +26,11 @@ type SeedImportResult = { imported: number; unmatched: SeedImportRow[]; duplicat
 
 type Props = {
   division: Division;
+  /** THIS division's bracket size — each division has its own. */
   teamCount: TeamCount;
-  teamCounts: TeamCount[];
+  /** The sizes offered in the picker. */
+  teamCountOptions: TeamCount[];
+  /** Resizes the division currently on screen only. */
   onTeamCountChange: (n: TeamCount) => void;
   onSetAllPresent: (present: boolean) => Promise<void>;
   onSetAllInBracket: (inBracket: boolean) => Promise<void>;
@@ -104,7 +107,7 @@ type BroadcastPostResponse =
   | { error: string };
 
 export default function SettingsPanel({
-  division, teamCount, teamCounts,
+  division, teamCount, teamCountOptions,
   onTeamCountChange, onSetAllPresent, onSetAllInBracket,
   onImportSeeds, onAutoFill, onResetAll,
 }: Props) {
@@ -461,11 +464,15 @@ export default function SettingsPanel({
             <div className="rounded-2xl border border-white/22 bg-[#0d1018] p-3">
               <h3 className="mb-2 text-xs font-medium text-foreground">Team Settings</h3>
 
-              {/* Number of teams (bracket size) */}
+              {/* Bracket size — per division, so the label names which one this
+                  picker is changing (the same control shows a different value
+                  when the division toggle is flipped). */}
               <div className="mb-3">
-                <span className="text-[0.6rem] uppercase tracking-wider text-foreground/40">Number of Teams</span>
+                <span className="text-[0.6rem] uppercase tracking-wider text-foreground/40">
+                  Number of Teams · {DIVISION_LABEL[division]}
+                </span>
                 <div className="mt-1 flex flex-wrap items-center gap-1">
-                  {teamCounts.map(n => (
+                  {teamCountOptions.map(n => (
                     <button
                       key={n}
                       onClick={() => onTeamCountChange(n)}

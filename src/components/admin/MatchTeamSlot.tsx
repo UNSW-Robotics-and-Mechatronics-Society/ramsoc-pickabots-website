@@ -14,14 +14,28 @@ export const MATCH_DRAG_TYPE = "application/match-id";
 // Shared by MatchesPanel (axis labels) and AdminBracket (on each card) so
 // editing a time behaves identically — same click-to-edit affordance, same
 // "1:05pm"/"13:05" parsing — no matter which admin view it's edited from.
-export type TimeCellProps = { minute: number; onCommit: (minute: number) => void; className?: string };
+export type TimeCellProps = {
+  minute: number;
+  onCommit: (minute: number) => void;
+  className?: string;
+  /** This time was set by hand and no longer reflows with the schedule (see
+   *  RingMatch.pinned) — shown as a marker so it's clear why it stays put. */
+  pinned?: boolean;
+  /** Release a hand-set time back to the schedule's automatic layout. Offered
+   *  by clearing the input, so a slot edited once isn't stuck that way. */
+  onReset?: () => void;
+};
 
-export function TimeCell({ minute, onCommit, className }: TimeCellProps) {
+export function TimeCell({ minute, onCommit, className, pinned, onReset }: TimeCellProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft]     = useState('');
 
   function startEdit() { setDraft(formatTime(minute)); setEditing(true); }
-  function commit() { onCommit(parseTimeInput(draft, minute)); setEditing(false); }
+  function commit() {
+    if (draft.trim() === '' && onReset) onReset();
+    else onCommit(parseTimeInput(draft, minute));
+    setEditing(false);
+  }
 
   if (editing) {
     return (
@@ -32,6 +46,7 @@ export function TimeCell({ minute, onCommit, className }: TimeCellProps) {
         onBlur={commit}
         onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
         onMouseDown={e => e.stopPropagation()}
+        placeholder={onReset ? "clear = auto" : undefined}
         className={cn("w-14 rounded bg-white/10 px-1 py-0.5 text-center text-[0.55rem] text-foreground outline-none ring-1 ring-white/30", className)}
       />
     );
@@ -41,10 +56,16 @@ export function TimeCell({ minute, onCommit, className }: TimeCellProps) {
     <button
       onClick={e => { e.stopPropagation(); startEdit(); }}
       onMouseDown={e => e.stopPropagation()}
-      title="Click to edit this match's time"
-      className={cn("text-[0.55rem] tabular-nums text-foreground/50 transition-colors hover:text-foreground/80", className)}
+      title={pinned
+        ? "Start time set by hand — it stays put as the schedule reflows. Click to edit; clear the box to go back to the automatic time."
+        : "Click to edit this match's time"}
+      className={cn(
+        "text-[0.55rem] tabular-nums transition-colors",
+        pinned ? "text-yellow-300/80 hover:text-yellow-200" : "text-foreground/50 hover:text-foreground/80",
+        className,
+      )}
     >
-      {formatTime(minute)}
+      {formatTime(minute)}{pinned && <span className="ml-0.5 align-super text-[0.4rem]">•</span>}
     </button>
   );
 }

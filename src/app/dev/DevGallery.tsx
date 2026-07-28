@@ -705,7 +705,7 @@ function SettingsSection() {
         <SettingsPanel
           division="standards"
           teamCount={16}
-          teamCounts={[4, 8, 16, 32, 64] as TeamCount[]}
+          teamCountOptions={[4, 8, 16, 32, 64] as TeamCount[]}
           onTeamCountChange={() => {}}
           onSetAllPresent={async () => {}}
           onSetAllInBracket={async () => {}}

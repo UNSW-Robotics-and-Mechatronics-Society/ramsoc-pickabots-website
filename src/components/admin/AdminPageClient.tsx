@@ -75,7 +75,8 @@ type SpecialTeamField = typeof SPECIAL_TEAM_FIELDS[number];
 type BracketSavePayload = {
   matches?: BracketMatch[];
   replaceAll?: boolean;
-  teamCount?: TeamCount;
+  /** Partial: only the divisions being resized are sent. */
+  teamCounts?: Partial<Record<Division, TeamCount>>;
   schedules?: Record<Division, MatchSchedule>;
   exhibitionSchedule?: ExhibitionSchedule;
   clearCaptainNotified?: Division[];
@@ -99,8 +100,11 @@ function matchKey(m: BracketMatch): string {
   ].join('');
 }
 
-function ringsKey(rings: { matchId: string; startMinute: number }[][]): string {
-  return rings.map(r => r.map(e => `${e.matchId}@${e.startMinute}`).join(',')).join('|');
+// The pin marker is part of the key: re-typing a slot's existing time changes
+// nothing but `pinned`, and that still has to reach the database — otherwise
+// the slot stays unpinned and the next read-time roll moves it again.
+function ringsKey(rings: { matchId: string; startMinute: number; pinned?: boolean }[][]): string {
+  return rings.map(r => r.map(e => `${e.matchId}@${e.startMinute}${e.pinned ? '!' : ''}`).join(',')).join('|');
 }
 
 function schedulesKey(s: Record<Division, MatchSchedule>): string {
@@ -135,7 +139,8 @@ function toDuplicates(conflicts: SeedConflict[]): NonNullable<SeedImportResult['
 
 type InitialBracket = {
   matches: BracketMatch[];
-  teamCount: TeamCount;
+  /** Per division — the two brackets can be different sizes. */
+  teamCounts: Record<Division, TeamCount>;
   schedules: Record<Division, MatchSchedule>;
   exhibitionSchedule: ExhibitionSchedule;
 };
@@ -166,8 +171,10 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
   const [teams,        setTeams]     = useState<Team[]>(initialTeams);
   const [specialTeams, setSpecialTeams] = useState<SpecialTeam[]>(initialSpecialTeams);
   const [matches,      setMatches]   = useState<BracketMatch[]>(initialBracket.matches);
-  const [teamCount,    setTeamCount] = useState<TeamCount>(initialBracket.teamCount);
-  const [pendingCount, setPending]   = useState<TeamCount | null>(null);
+  const [teamCounts,   setTeamCounts] = useState<Record<Division, TeamCount>>(initialBracket.teamCounts);
+  // A pending resize is scoped to the division it was requested for — resizing
+  // Standards no longer implies anything about Open.
+  const [pendingCount, setPending]   = useState<{ division: Division; n: TeamCount } | null>(null);
   // Blocking problems worth interrupting for: Auto Fill refusing to run (too
   // many in-bracket teams, or duplicate seeds) and a team change the server
   // rejected. Held here rather than at the call sites — Auto Fill alone has two
@@ -193,15 +200,15 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
 
   // Mirror of the current state, so the saver and the realtime merge always read
   // the latest values instead of whatever a stale closure captured.
-  const latest = useRef({ matches, teamCount, schedules, exhibitionSchedule });
-  latest.current = { matches, teamCount, schedules, exhibitionSchedule };
+  const latest = useRef({ matches, teamCounts, schedules, exhibitionSchedule });
+  latest.current = { matches, teamCounts, schedules, exhibitionSchedule };
 
   // What we believe the server currently holds — the baseline every diff is
   // taken against. Updated on a successful save and when a remote change is
   // pulled in.
   const saved = useRef({
     matchKeys: new Map(initialBracket.matches.map(m => [m.id, matchKey(m)] as const)),
-    teamCount: initialBracket.teamCount as TeamCount,
+    teamCounts: { ...initialBracket.teamCounts },
     schedulesKey: schedulesKey(initialBracket.schedules),
     exhibitionKey: exhibitionKey(initialBracket.exhibitionSchedule),
   });
@@ -225,10 +232,15 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
     return out;
   }
 
+  /** Divisions whose bracket size differs from the saved baseline. */
+  function resizedDivisions(snapshot: BracketSnapshot): Division[] {
+    return ALL_DIVISIONS.filter(d => snapshot.teamCounts[d] !== saved.current.teamCounts[d]);
+  }
+
   function hasUnsavedWork(snapshot: BracketSnapshot): boolean {
     return pendingFull.current !== null
       || dirtyMatchIds(snapshot).size > 0
-      || snapshot.teamCount !== saved.current.teamCount
+      || resizedDivisions(snapshot).length > 0
       || schedulesKey(snapshot.schedules) !== saved.current.schedulesKey
       || exhibitionKey(snapshot.exhibitionSchedule) !== saved.current.exhibitionKey;
   }
@@ -250,23 +262,27 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
       body = {
         matches: cur.matches,
         replaceAll: true,
-        teamCount: cur.teamCount,
+        teamCounts: cur.teamCounts,
         schedules: cur.schedules,
         exhibitionSchedule: cur.exhibitionSchedule,
         ...(full.clearCaptainNotified ? { clearCaptainNotified: full.clearCaptainNotified } : {}),
       };
     } else {
       const dirty = dirtyMatchIds(cur);
-      const teamCountChanged  = cur.teamCount !== saved.current.teamCount;
+      const resized           = resizedDivisions(cur);
       const schedulesChanged  = schedulesKey(cur.schedules) !== saved.current.schedulesKey;
       const exhibitionChanged = exhibitionKey(cur.exhibitionSchedule) !== saved.current.exhibitionKey;
-      if (dirty.size === 0 && !teamCountChanged && !schedulesChanged && !exhibitionChanged) {
+      if (dirty.size === 0 && resized.length === 0 && !schedulesChanged && !exhibitionChanged) {
         setSaveStatus('saved');
         return;
       }
       body = {
         ...(dirty.size > 0 ? { matches: cur.matches.filter(m => dirty.has(m.id)) } : {}),
-        ...(teamCountChanged ? { teamCount: cur.teamCount } : {}),
+        // Only the resized division's size goes out, so a concurrent admin
+        // resizing the other division isn't overwritten.
+        ...(resized.length > 0
+          ? { teamCounts: Object.fromEntries(resized.map(d => [d, cur.teamCounts[d]])) }
+          : {}),
         // Schedules are one JSON blob per division, so they can only be sent
         // whole — ring/time edits stay last-write-wins at division granularity.
         // The exhibition copy rides along because it's mirrored into the same rows.
@@ -295,7 +311,7 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
         const sent = new Set(body.matches.map(m => m.id));
         for (const id of [...saved.current.matchKeys.keys()]) if (!sent.has(id)) saved.current.matchKeys.delete(id);
       }
-      if (body.teamCount !== undefined)          saved.current.teamCount     = body.teamCount;
+      if (body.teamCounts) Object.assign(saved.current.teamCounts, body.teamCounts);
       if (body.schedules)                        saved.current.schedulesKey  = schedulesKey(body.schedules);
       if (body.exhibitionSchedule)               saved.current.exhibitionKey = exhibitionKey(body.exhibitionSchedule);
 
@@ -322,7 +338,7 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
     if (isFirstRender.current) { isFirstRender.current = false; return; }
     if (hasUnsavedWork(latest.current)) scheduleSave();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matches, teamCount, schedules, exhibitionSchedule]);
+  }, [matches, teamCounts, schedules, exhibitionSchedule]);
 
   // Last line of defence for Fix 4: don't let a closing tab take an unsaved
   // result with it.
@@ -418,9 +434,14 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
     // A resize or a ring change we haven't saved yet must not be reverted by a
     // remote pull; otherwise adopt.
     if (pendingFull.current === null) {
-      if (latest.current.teamCount === saved.current.teamCount && remote.teamCount !== saved.current.teamCount) {
-        saved.current.teamCount = remote.teamCount;
-        setTeamCount(remote.teamCount);
+      // Per division, so adopting Open's new size doesn't clobber an unsaved
+      // local resize of Standards.
+      for (const d of ALL_DIVISIONS) {
+        if (latest.current.teamCounts[d] === saved.current.teamCounts[d]
+            && remote.teamCounts[d] !== saved.current.teamCounts[d]) {
+          saved.current.teamCounts[d] = remote.teamCounts[d];
+          setTeamCounts(prev => ({ ...prev, [d]: remote.teamCounts[d] }));
+        }
       }
       if (schedulesKey(latest.current.schedules) === saved.current.schedulesKey) {
         saved.current.schedulesKey = schedulesKey(remote.schedules);
@@ -747,9 +768,10 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
   );
 
   // ── bracket size change ──────────────────────────────────────────────────────
-  // The size is shared by both divisions (bracket_config stores one team_count
-  // per division but they're always written together — see saveBracketState), so
-  // a resize necessarily rebuilds BOTH brackets.
+  // Sizes are per division: bracket_config has a row each, and a save now sends
+  // only the division being resized (see saveBracketState), so Standards and
+  // Open can run different-sized brackets. A resize rebuilds ONLY the division
+  // it was asked for; the other one is left exactly as it is.
   function hasBracketData(div: Division): boolean {
     return matches.some(m =>
       m.division === div && (m.slotA.teamName !== '' || m.slotB.teamName !== '')
@@ -757,53 +779,51 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
   }
 
   function requestSizeChange(n: TeamCount) {
-    if (n === teamCount) return;
-    // Confirm if EITHER division has data — the resize rebuilds both, so
-    // checking only the division on screen let the other one be rebuilt with no
-    // warning at all.
-    if (ALL_DIVISIONS.some(hasBracketData)) {
-      setPending(n);
+    if (n === teamCounts[division]) return;
+    // Only this division's data is at risk now, so that's all we warn about.
+    if (hasBracketData(division)) {
+      setPending({ division, n });
     } else {
-      applySizeChange(n);
+      applySizeChange(division, n);
     }
   }
 
-  function applySizeChange(n: TeamCount) {
-    // Transfer BOTH divisions. The other division used to be regenerated from
-    // scratch here, which silently destroyed its teams, scores and results
-    // whenever the size was changed from the other side of the toggle.
-    // Exhibition matches have no seat in a generated bracket, so transferBracket
-    // can't carry them — they're preserved explicitly instead of being dropped
-    // (which also stranded the exhibition schedule's ring entries).
+  function applySizeChange(div: Division, n: TeamCount) {
+    // Transfer just this division; every other match row (the other division's
+    // whole bracket, and exhibition matches, which have no seat in a generated
+    // bracket and so can't be carried by transferBracket) passes through
+    // untouched.
     const newMatches = [
-      ...ALL_DIVISIONS.flatMap(d => transferBracket(matches, d, teamCount, n)),
-      ...matches.filter(m => m.side === 'exhibition'),
+      ...transferBracket(matches, div, teamCounts[div], n),
+      ...matches.filter(m => m.division !== div || m.side === 'exhibition'),
     ];
     // Whole-bracket rebuild: rows for rounds that no longer exist have to be
     // deleted, which only a replaceAll save does.
     requestFullSave();
     setMatches(newMatches);
-    // Rebuild schedules for both divisions as rolling schedules (only the
-    // currently-playable matches), preserving ring count, timing params and the
-    // Round 1 layout — transferBracket carries the teams over, so the round
+    // Rebuild ONLY the resized division's schedule, as a rolling schedule (just
+    // the currently-playable matches), preserving its ring count, timing params
+    // and Round 1 layout — transferBracket carries the teams over, so the round
     // keeps the shape the last Auto Fill gave it and must keep its play order
-    // too. Only an Auto Fill changes the layout.
-    setSchedules(prev => {
-      const rebuild = (d: Division) => rollSchedule(
+    // too. Only an Auto Fill changes the layout. The other division's matches
+    // didn't move, so its schedule (including any hand-edited ring order and
+    // times) is left alone.
+    setSchedules(prev => ({
+      ...prev,
+      [div]: rollSchedule(
         generateSchedule(
           [],
-          prev[d].concurrentRings,
-          prev[d].rings[0]?.[0]?.startMinute ?? START_MINUTE,
-          prev[d].matchMinutes,
-          prev[d].gapMinutes,
-          prev[d].autoFillMode,
+          prev[div].concurrentRings,
+          prev[div].rings[0]?.[0]?.startMinute ?? START_MINUTE,
+          prev[div].matchMinutes,
+          prev[div].gapMinutes,
+          prev[div].autoFillMode,
         ),
         newMatches,
-        d,
-      );
-      return Object.fromEntries(ALL_DIVISIONS.map(d => [d, rebuild(d)])) as Record<Division, MatchSchedule>;
-    });
-    setTeamCount(n);
+        div,
+      ),
+    }));
+    setTeamCounts(prev => ({ ...prev, [div]: n }));
     setPending(null);
   }
 
@@ -837,7 +857,7 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
     // permanently unplayable. Regenerating also means the bracket shape follows
     // the generator (same reasoning as handleResetAll). Wildcard boxes are
     // cleared along with everything else.
-    const fresh = generateDoubleElimBracket(teamCount, div);
+    const fresh = generateDoubleElimBracket(teamCounts[div], div);
 
     const r1 = fresh
       .filter(m => m.side === 'winners' && m.round === 1)
@@ -1062,7 +1082,7 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
     // rows by hand. saveBracketState's stale-row cleanup deletes whatever the
     // new set no longer contains, so the shape genuinely follows the generator.
     // Exhibition matches are dropped, same as before: the generator emits none.
-    const regenerated = ALL_DIVISIONS.flatMap(d => generateDoubleElimBracket(teamCount, d));
+    const regenerated = ALL_DIVISIONS.flatMap(d => generateDoubleElimBracket(teamCounts[d], d));
 
     // Whole-bracket replace (exhibition rows are deleted by the stale-row sweep),
     // clearing both divisions' captain-notified flags so the next teams to
@@ -1125,7 +1145,7 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
               teams={teams}
               matches={effectiveMatches}
               division={division}
-              teamCount={teamCount}
+              teamCount={teamCounts[division]}
               schedule={schedules[division]}
               onMatchesChange={commitMatches}
               onScheduleChange={s => setSchedules(prev => ({ ...prev, [division]: s }))}
@@ -1141,7 +1161,7 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
         <MatchesPanel
           matches={effectiveMatches}
           division={division}
-          teamCount={teamCount}
+          teamCount={teamCounts[division]}
           schedule={schedules[division]}
           exhibitionSchedule={exhibitionSchedule}
           teams={teams}
@@ -1160,8 +1180,8 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
       node: (
         <SettingsPanel
           division={division}
-          teamCount={teamCount}
-          teamCounts={TEAM_COUNTS}
+          teamCount={teamCounts[division]}
+          teamCountOptions={TEAM_COUNTS}
           onTeamCountChange={requestSizeChange}
           onSetAllPresent={handleSetAllPresent}
           onSetAllInBracket={handleSetAllInBracket}
@@ -1183,10 +1203,10 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
       {/* Confirm bracket size change */}
       {pendingCount !== null && (
         <ConfirmDialog
-          title={`Change bracket to ${pendingCount} teams?`}
-          message="The size is shared, so BOTH divisions are resized. In each one, later rounds (finals, semis, quarters) are kept and earlier rounds that no longer exist are discarded. Exhibition matches are unaffected."
+          title={`Change ${DIVISION_LABEL[pendingCount.division]} bracket to ${pendingCount.n} teams?`}
+          message={`Only the ${DIVISION_LABEL[pendingCount.division]} bracket is resized — the other division keeps its own size. Later rounds (finals, semis, quarters) are kept and earlier rounds that no longer exist are discarded. Exhibition matches are unaffected.`}
           confirmLabel="Change size"
-          onConfirm={() => applySizeChange(pendingCount)}
+          onConfirm={() => applySizeChange(pendingCount.division, pendingCount.n)}
           onCancel={() => setPending(null)}
         />
       )}
@@ -1206,7 +1226,7 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
           so it can't drift out of step with what's actually pending. */}
       <SaveBadge
         status={
-          saveStatus === 'saved' && hasUnsavedWork({ matches, teamCount, schedules, exhibitionSchedule })
+          saveStatus === 'saved' && hasUnsavedWork({ matches, teamCounts, schedules, exhibitionSchedule })
             ? 'pending'
             : saveStatus
         }

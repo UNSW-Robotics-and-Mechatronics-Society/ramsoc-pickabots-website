@@ -9,7 +9,7 @@ import {
 import {
   type MatchSchedule, type ExhibitionSchedule, type ConcurrentRings, type RingMatch,
   START_MINUTE,
-  changeTimings, changeExhibitionTimings, swapMatchIds, editMatchTime, rollSchedule,
+  changeTimings, changeExhibitionTimings, swapMatchIds, editMatchTime, resetMatchTime, rollSchedule,
   addExhibitionRing, removeExhibitionRing, addMatchToExhibitionRing, rollExhibitionSchedule,
 } from "@/lib/schedule";
 import { cn } from "@/lib/cn";
@@ -353,10 +353,13 @@ export default function MatchesPanel({
         !matches.some(o => o.side === 'exhibition' && o.id !== m.id && (o.slotA.teamName === name || o.slotB.teamName === name))
     : (m: BracketMatch, name: string) => !isTeamNameTaken(matches, division, m.id, name);
 
-  // Time-edit/swap act on whichever schedule the active mode owns.
+  // Time-edit/reset/swap act on whichever schedule the active mode owns.
   const onEditTime = mode === 'exhibition'
-    ? (matchId: string, minute: number) => onExhibitionScheduleChange(editMatchTime(exhibitionSchedule, matchId, minute))
-    : (matchId: string, minute: number) => onScheduleChange(editMatchTime(schedule, matchId, minute));
+    ? (matchId: string, minute: number) => onExhibitionScheduleChange(editMatchTime(exhibitionSchedule, matches, matchId, minute))
+    : (matchId: string, minute: number) => onScheduleChange(editMatchTime(schedule, matches, matchId, minute));
+  const onResetTime = mode === 'exhibition'
+    ? (matchId: string) => onExhibitionScheduleChange(resetMatchTime(exhibitionSchedule, matches, matchId))
+    : (matchId: string) => onScheduleChange(resetMatchTime(schedule, matches, matchId));
   const onSwap = mode === 'exhibition'
     ? (srcId: string, dstId: string) => onExhibitionScheduleChange(swapMatchIds(exhibitionSchedule, srcId, dstId))
     : (srcId: string, dstId: string) => onScheduleChange(swapMatchIds(schedule, srcId, dstId));
@@ -512,7 +515,9 @@ export default function MatchesPanel({
               >
                 <TimeCell
                   minute={entry.startMinute}
+                  pinned={entry.pinned}
                   onCommit={min => onEditTime(entry.matchId, min)}
+                  onReset={() => onResetTime(entry.matchId)}
                 />
               </div>
             ))}
