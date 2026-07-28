@@ -40,18 +40,34 @@ export default async function VoteOverlay() {
         dangerouslySetInnerHTML={{ __html: svg }}
       />
 
-      <div style={{ display: "flex", flexDirection: "column", gap: "3vh", maxWidth: "40vw" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "2.6vh", maxWidth: "42vw" }}>
         <div style={{
-          fontFamily: FONT_DISPLAY, fontSize: "3.6vw", lineHeight: 1.15,
+          fontFamily: FONT_DISPLAY, fontSize: "1.2vw", letterSpacing: "0.35em",
+          textTransform: "uppercase", color: GOLD,
+        }}>
+          Welcome to Sumobots 2026
+        </div>
+        <div style={{
+          fontFamily: FONT_DISPLAY, fontSize: "3.3vw", lineHeight: 1.15,
           letterSpacing: "0.06em", color: "#f4f7fb", textTransform: "uppercase",
           textShadow: "0 0 60px rgba(255,107,0,0.3), 0 4px 18px rgba(0,0,0,0.8)",
         }}>
-          Play<br />Pickabots
+          Join Pickabots<br />&amp; Play Along
         </div>
         <div style={{ fontSize: "1.3vw", lineHeight: 1.7, color: "rgba(244,247,251,0.85)", letterSpacing: "0.04em" }}>
           Scan to vote for your champion.<br />
           Back the right bots with your RAM coins<br />
           and climb the leaderboard.
+        </div>
+        <div style={{
+          alignSelf: "flex-start",
+          fontFamily: FONT_DISPLAY, fontSize: "1.15vw", letterSpacing: "0.12em",
+          textTransform: "uppercase", color: "#06080b",
+          background: `linear-gradient(100deg, ${GOLD}, #ffb84d)`,
+          padding: "1.3vh 1.8vw", borderRadius: 10,
+          boxShadow: "0 0 40px rgba(255,215,0,0.35)",
+        }}>
+          🏆 Prizes for the top players
         </div>
         <div style={{
           alignSelf: "flex-start",
