@@ -8,6 +8,8 @@ import {
   setNotifyLead,
   getAllIn,
   setAllIn,
+  getAutoSmsEnabled,
+  setAutoSmsEnabled,
 } from "@/lib/db/config";
 import { DEFAULT_SMS_UP_NEXT } from "@/lib/sms-template";
 
@@ -16,12 +18,19 @@ export async function GET() {
   const user = await currentUser();
   if (!isAdminUser(user)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   try {
-    const [smsUpNextTemplate, smsNotifyLead, allIn] = await Promise.all([
+    const [smsUpNextTemplate, smsNotifyLead, allIn, autoSmsEnabled] = await Promise.all([
       getSmsUpNextTemplate(),
       getNotifyLead(),
       getAllIn(),
+      getAutoSmsEnabled(),
     ]);
-    return NextResponse.json({ smsUpNextTemplate, smsUpNextDefault: DEFAULT_SMS_UP_NEXT, smsNotifyLead, allIn });
+    return NextResponse.json({
+      smsUpNextTemplate,
+      smsUpNextDefault: DEFAULT_SMS_UP_NEXT,
+      smsNotifyLead,
+      allIn,
+      autoSmsEnabled,
+    });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Unknown error" },
@@ -30,8 +39,9 @@ export async function GET() {
   }
 }
 
-// PUT { smsUpNextTemplate?, smsNotifyLead? } → save whichever fields are given.
-// An empty template string resets it to the built-in default.
+// PUT { smsUpNextTemplate?, smsNotifyLead?, allIn?, autoSmsEnabled? } → save
+// whichever fields are given. An empty template string resets it to the
+// built-in default.
 export async function PUT(req: NextRequest) {
   const user = await currentUser();
   if (!isAdminUser(user)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -40,9 +50,10 @@ export async function PUT(req: NextRequest) {
   const hasTemplate = typeof body?.smsUpNextTemplate === "string";
   const hasLead = typeof body?.smsNotifyLead === "number" && Number.isFinite(body.smsNotifyLead);
   const hasAllIn = typeof body?.allIn === "boolean";
-  if (!hasTemplate && !hasLead && !hasAllIn) {
+  const hasAutoSms = typeof body?.autoSmsEnabled === "boolean";
+  if (!hasTemplate && !hasLead && !hasAllIn && !hasAutoSms) {
     return NextResponse.json(
-      { error: "provide smsUpNextTemplate (string), smsNotifyLead (number), and/or allIn (boolean)" },
+      { error: "provide smsUpNextTemplate (string), smsNotifyLead (number), allIn (boolean), and/or autoSmsEnabled (boolean)" },
       { status: 400 },
     );
   }
@@ -54,13 +65,15 @@ export async function PUT(req: NextRequest) {
     }
     if (hasLead) await setNotifyLead(body.smsNotifyLead);
     if (hasAllIn) await setAllIn(body.allIn);
+    if (hasAutoSms) await setAutoSmsEnabled(body.autoSmsEnabled);
 
-    const [smsUpNextTemplate, smsNotifyLead, allIn] = await Promise.all([
+    const [smsUpNextTemplate, smsNotifyLead, allIn, autoSmsEnabled] = await Promise.all([
       getSmsUpNextTemplate(),
       getNotifyLead(),
       getAllIn(),
+      getAutoSmsEnabled(),
     ]);
-    return NextResponse.json({ ok: true, smsUpNextTemplate, smsNotifyLead, allIn });
+    return NextResponse.json({ ok: true, smsUpNextTemplate, smsNotifyLead, allIn, autoSmsEnabled });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Unknown error" },
