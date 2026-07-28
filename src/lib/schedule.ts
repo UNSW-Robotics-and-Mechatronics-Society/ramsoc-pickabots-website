@@ -1,4 +1,5 @@
 import { type BracketMatch, type Division, type MatchStatus } from "@/lib/mock-data";
+import { type AutoFillMode } from "@/lib/seeds";
 
 // Widened from 4 to 6 for the live-streamed format — one OBS scene per ring
 // (see /control and /overlay/*), with up to six rings running concurrently.
@@ -25,6 +26,16 @@ export type MatchSchedule = {
   concurrentRings: ConcurrentRings;
   matchMinutes: number;
   gapMinutes: number;
+  /**
+   * The Round 1 layout the last Auto Fill used, remembered so the play order it
+   * implies survives anything that rebuilds the order from scratch — a ring
+   * change (rollSchedule with redistribute), a fresh page load, or a server-side
+   * roll. Without it, defaultScheduleOrder would fall back to its middle-first
+   * WB R1 ordering and silently undo a Worst-plays-First fill. Absent on rows
+   * written before this existed, which reads as 'worst-plays-best' — the
+   * behaviour those rows already had.
+   */
+  autoFillMode?: AutoFillMode;
 };
 
 /**
@@ -223,12 +234,14 @@ export function generateSchedule(
   startMinute: number = START_MINUTE,
   matchMinutes: number = DEFAULT_MATCH_MINUTES,
   gapMinutes: number = DEFAULT_GAP_MINUTES,
+  autoFillMode: AutoFillMode = 'worst-plays-best',
 ): MatchSchedule {
   return {
     rings: buildRings(matchIds, rings, startMinute, matchMinutes + gapMinutes),
     concurrentRings: rings,
     matchMinutes,
     gapMinutes,
+    autoFillMode,
   };
 }
 
@@ -249,7 +262,13 @@ export function changeRings(
   const completedByRing: RingMatch[][] = schedule.rings.map(ring =>
     ring.filter(e => isCompleted(matches, e.matchId)),
   );
-  const pending = schedule.rings.flatMap(ring => ring.filter(e => !isCompleted(matches, e.matchId)));
+  // Sorted by time, not gathered ring by ring: a flat concat would read all of
+  // ring 0's queue before any of ring 1's, so redistributing would interleave
+  // them in the wrong order and silently reshuffle the running order.
+  const pending = schedule.rings
+    .flatMap((ring, ri) => ring.filter(e => !isCompleted(matches, e.matchId)).map(e => ({ e, ri })))
+    .sort((a, b) => a.e.startMinute - b.e.startMinute || a.ri - b.ri)
+    .map(({ e }) => e);
 
   const now = pending.length > 0
     ? Math.min(...pending.map(e => e.startMinute))
@@ -267,7 +286,7 @@ export function changeRings(
     rings[ri].push({ matchId: entry.matchId, startMinute: base + idxInPending * dur });
   });
 
-  return { rings, concurrentRings: newRings, matchMinutes: schedule.matchMinutes, gapMinutes: schedule.gapMinutes };
+  return { ...schedule, rings, concurrentRings: newRings };
 }
 
 /**
@@ -294,7 +313,7 @@ export function changeTimings(
       return { ...entry, startMinute };
     });
   });
-  return { rings, concurrentRings: schedule.concurrentRings, matchMinutes, gapMinutes };
+  return { ...schedule, rings, matchMinutes, gapMinutes };
 }
 
 /**
@@ -390,7 +409,7 @@ export function rollSchedule(
 
   // 2. Schedulable matches for this division not yet placed = newly ready.
   const placed = new Set(rings.flat().map(e => e.matchId));
-  const order = defaultScheduleOrder(matches, division);
+  const order = defaultScheduleOrder(matches, division, schedule.autoFillMode);
   const orderIndex = new Map(order.map((id, i) => [id, i] as const));
   const newlyReady = matches
     .filter(m => m.division === division && !placed.has(m.id) && schedulable(m.id))
@@ -552,6 +571,11 @@ export function isByeMatch(m: { status?: string; slotA?: { teamName?: string }; 
 export function defaultScheduleOrder(
   matches: Array<{ id: string; division: string; side: string; round: number; matchNumber: number; status?: string; slotA?: { teamName?: string }; slotB?: { teamName?: string } }>,
   division: string,
+  /** How WB Round 1 was laid out — see MatchSchedule.autoFillMode. A
+   *  'worst-plays-first' bracket already has its weakest match at the top, so it
+   *  wants plain top-to-bottom order; middle-first would fight the layout and
+   *  put the seed 1 v 2 match somewhere in the middle of the round. */
+  autoFillMode: AutoFillMode = 'worst-plays-best',
 ): string[] {
   // Skip bye matches (auto-completed, never played) so they don't clutter the
   // schedule / match list.
@@ -573,7 +597,7 @@ export function defaultScheduleOrder(
     const ms = div
       .filter(m => m.side === side && m.round === round)
       .sort((a, b) => a.matchNumber - b.matchNumber);
-    if (side === 'winners' && round === 1 && ms.length > 2) {
+    if (side === 'winners' && round === 1 && ms.length > 2 && autoFillMode === 'worst-plays-best') {
       return middleFirst(ms.length).map(mn => ms[mn - 1]?.id ?? '').filter(Boolean);
     }
     return ms.map(m => m.id);

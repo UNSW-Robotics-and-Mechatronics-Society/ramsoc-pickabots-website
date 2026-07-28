@@ -1,22 +1,29 @@
 "use client";
 
+import { cn } from "@/lib/cn";
+
 type Props = {
   title: string;
   message: string;
   confirmLabel?: string;
   cancelLabel?: string;
+  /** Extra controls between the message and the buttons (e.g. an option picker). */
+  children?: React.ReactNode;
+  /** Roomier panel, for when `children` needs more than a sentence of width. */
+  wide?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 };
 
 export default function ConfirmDialog({
-  title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', onConfirm, onCancel,
+  title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', children, wide = false, onConfirm, onCancel,
 }: Props) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="glass-strong mx-4 max-w-sm w-full rounded-2xl p-6">
+      <div className={cn("glass-strong mx-4 w-full rounded-2xl p-6", wide ? "max-w-md" : "max-w-sm")}>
         <h2 className="mb-2 text-sm font-semibold text-foreground">{title}</h2>
-        <p className="mb-6 text-xs text-foreground/60">{message}</p>
+        <p className={cn("text-xs text-foreground/60", children ? "mb-4" : "mb-6")}>{message}</p>
+        {children}
         <div className="flex justify-end gap-2">
           <button
             onClick={onCancel}

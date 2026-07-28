@@ -1,5 +1,6 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { ACCESS_COOKIE, accessToken } from "@/lib/access";
 
 // /dev is a development-only component gallery. It's exempted from every gate
 // here so it's reachable without auth/standby, and the page itself 404s in
@@ -12,8 +13,14 @@ import { NextResponse } from "next/server";
 // engines can index the site instead of caching a stale 404. They are exempt
 // from every gate below; none of them expose gated app content.
 const PUBLIC_PATHS       = ["/", "/robots.txt", "/sitemap.xml"];
-const isPublicRoute      = createRouteMatcher([...PUBLIC_PATHS, "/sign-in(.*)", "/sign-up(.*)", "/dev(.*)"]);
-const isPasswordExempt   = createRouteMatcher([...PUBLIC_PATHS, "/sign-in(.*)", "/sign-up(.*)", "/standby", "/api/(.*)", "/dev(.*)"]);
+// POST /api/access is how the event code is submitted, so it can't sit behind
+// the gate it opens. It's public and exempt everywhere for that reason — all it
+// does is compare a code and, on a match, set the access cookie.
+const isPublicRoute      = createRouteMatcher([...PUBLIC_PATHS, "/sign-in(.*)", "/sign-up(.*)", "/dev(.*)", "/api/access"]);
+// Everything not listed here needs the event access cookie — including every
+// other /api route, which used to be exempt (so a signed-in visitor could read
+// live match/leaderboard data without ever entering the code).
+const isPasswordExempt   = createRouteMatcher([...PUBLIC_PATHS, "/sign-in(.*)", "/sign-up(.*)", "/standby", "/api/access", "/dev(.*)"]);
 const isOnboardingExempt = createRouteMatcher([
   ...PUBLIC_PATHS,
   "/onboarding(.*)",
@@ -27,7 +34,6 @@ const isOnboardingExempt = createRouteMatcher([
   "/admin(.*)",
 ]);
 
-const ACCESS_COOKIE     = "pickabots_access";
 const ONBOARDED_COOKIE  = "pickabots_onboarded";
 
 // Flip back to true to re-enable the /onboarding redirect gate.
@@ -44,10 +50,17 @@ export default clerkMiddleware(async (auth, req) => {
 
   const { userId } = await auth();
 
-  // Event access password first — everyone must pass the standby gate.
+  // Event access code first — everyone must pass the standby gate. The cookie
+  // must hold the server-derived token (see lib/access): it's set only by
+  // POST /api/access after the code checks out, and can't be hand-written.
   if (!isPasswordExempt(req)) {
     const cookie = req.cookies.get(ACCESS_COOKIE);
-    if (cookie?.value !== "1") {
+    if (cookie?.value !== (await accessToken())) {
+      // API callers get a status they can act on; a redirect to an HTML page
+      // would just surface as a JSON parse error in the client.
+      if (req.nextUrl.pathname.startsWith("/api/")) {
+        return NextResponse.json({ error: "Event access code required" }, { status: 403 });
+      }
       return NextResponse.redirect(new URL("/standby", req.url));
     }
   }

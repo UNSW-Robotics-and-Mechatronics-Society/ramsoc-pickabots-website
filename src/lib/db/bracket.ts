@@ -276,8 +276,37 @@ async function reconcileVotingMatches(bracketMatchById: Map<string, BracketMatch
   await supabase.from("matches").delete().in("id", toDelete);
 }
 
-export async function saveBracketState(state: BracketState): Promise<void> {
-  const { matches, teamCount, schedules, exhibitionSchedule } = state;
+/**
+ * One bracket write. Every field is optional so an ordinary edit sends only the
+ * match rows it actually touched — that's what lets several admins work on the
+ * page at once without overwriting each other (see AdminPageClient's dirty-set
+ * save). Whole-bracket operations set `replaceAll`.
+ */
+export type BracketSave = {
+  /** Match rows to upsert. Omitted → no match row is touched. */
+  matches?: BracketMatch[];
+  /**
+   * Delete every match row NOT present in `matches`. ONLY for operations that
+   * genuinely replace a bracket (auto-fill, resize, reset all) — on a normal
+   * per-match save it would delete everything the sender didn't happen to be
+   * editing, including other admins' work.
+   */
+  replaceAll?: boolean;
+  teamCount?: TeamCount;
+  /** Both divisions at once — a schedule is one JSON blob per division. */
+  schedules?: Record<Division, MatchSchedule>;
+  exhibitionSchedule?: ExhibitionSchedule;
+  /**
+   * Divisions whose per-match captain_notified flags should be reset. Sent by
+   * auto-fill and reset-all: the flag dedupes the "up next" SMS per match, so
+   * without clearing it the NEW occupants of an already-notified match would
+   * never be texted.
+   */
+  clearCaptainNotified?: Division[];
+};
+
+export async function saveBracketState(save: BracketSave): Promise<void> {
+  const { matches, replaceAll = false, teamCount, schedules, clearCaptainNotified } = save;
 
   const [{ data: existingRows, error: exErr }, { data: teamRows, error: teamErr }] = await Promise.all([
     supabase.from("bracket_matches").select("id, status"),
@@ -291,45 +320,82 @@ export async function saveBracketState(state: BracketState): Promise<void> {
 
   // Resize can drop early rounds (see transferBracket) — delete rows that no
   // longer correspond to any match in the new set, don't just upsert.
-  const newIds = new Set(matches.map(m => m.id));
-  const staleIds = (existingRows ?? []).map(r => r.id as string).filter(id => !newIds.has(id));
-  if (staleIds.length > 0) {
-    const { error } = await supabase.from("bracket_matches").delete().in("id", staleIds);
-    if (error) throw new Error(`Failed to delete stale bracket_matches: ${error.message}`);
+  if (matches && replaceAll) {
+    const newIds = new Set(matches.map(m => m.id));
+    const staleIds = (existingRows ?? []).map(r => r.id as string).filter(id => !newIds.has(id));
+    if (staleIds.length > 0) {
+      const { error } = await supabase.from("bracket_matches").delete().in("id", staleIds);
+      if (error) throw new Error(`Failed to delete stale bracket_matches: ${error.message}`);
+    }
   }
 
-  const rows = matches.map(m => matchToRow(m, teamIdByName));
-  const { error: upsertErr } = await supabase.from("bracket_matches").upsert(rows, { onConflict: "id" });
-  if (upsertErr) throw new Error(`Failed to save bracket_matches: ${upsertErr.message}`);
+  if (matches && matches.length > 0) {
+    const rows = matches.map(m => matchToRow(m, teamIdByName));
+    const { error: upsertErr } = await supabase.from("bracket_matches").upsert(rows, { onConflict: "id" });
+    if (upsertErr) throw new Error(`Failed to save bracket_matches: ${upsertErr.message}`);
+  }
 
-  const { error: configErr } = await supabase
-    .from("bracket_config")
-    .upsert(DIVISIONS.map(d => ({ division: toDbCategory(d), team_count: teamCount })), { onConflict: "division" });
-  if (configErr) throw new Error(`Failed to save bracket_config: ${configErr.message}`);
+  // After the upsert: matchToRow deliberately omits captain_notified (so an
+  // ordinary save preserves it), which means clearing has to be its own write.
+  if (clearCaptainNotified && clearCaptainNotified.length > 0) {
+    const { error } = await supabase
+      .from("bracket_matches")
+      .update({ captain_notified: false })
+      .in("division", clearCaptainNotified.map(toDbCategory));
+    if (error) throw new Error(`Failed to clear captain_notified: ${error.message}`);
+  }
 
-  // The shared exhibition schedule has no table of its own — an identical
-  // copy is embedded in BOTH divisions' rows (see extractExhibitionSchedule),
-  // so either row can be read back as the source of truth. Built explicitly
-  // (not spread from the in-memory schedule object) so a stale legacy
-  // `exhibitionRings` key — carried through from a pre-migration row via
-  // rollSchedule's `{ ...schedule, ... }` spread — never gets written back.
-  const { error: schedErr } = await supabase
-    .from("bracket_schedule")
-    .upsert(
-      DIVISIONS.map(d => ({
-        division: toDbCategory(d),
-        schedule: {
-          rings: schedules[d].rings,
-          concurrentRings: schedules[d].concurrentRings,
-          matchMinutes: schedules[d].matchMinutes,
-          gapMinutes: schedules[d].gapMinutes,
-          exhibition: exhibitionSchedule,
-        },
-        updated_at: new Date().toISOString(),
-      })),
-      { onConflict: "division" },
-    );
-  if (schedErr) throw new Error(`Failed to save bracket_schedule: ${schedErr.message}`);
+  if (teamCount !== undefined) {
+    const { error: configErr } = await supabase
+      .from("bracket_config")
+      .upsert(DIVISIONS.map(d => ({ division: toDbCategory(d), team_count: teamCount })), { onConflict: "division" });
+    if (configErr) throw new Error(`Failed to save bracket_config: ${configErr.message}`);
+  }
+
+  if (schedules) {
+    // The shared exhibition schedule has no table of its own — an identical
+    // copy is embedded in BOTH divisions' rows (see extractExhibitionSchedule),
+    // so either row can be read back as the source of truth. Built explicitly
+    // (not spread from the in-memory schedule object) so a stale legacy
+    // `exhibitionRings` key — carried through from a pre-migration row via
+    // rollSchedule's `{ ...schedule, ... }` spread — never gets written back.
+    //
+    // A caller that sends schedules without the exhibition copy would blank it,
+    // so fall back to whatever is already stored rather than writing undefined.
+    let exhibitionSchedule = save.exhibitionSchedule;
+    if (!exhibitionSchedule) {
+      const { data: scheduleRows } = await supabase.from("bracket_schedule").select("schedule");
+      exhibitionSchedule = extractExhibitionSchedule(scheduleRows ?? []);
+    }
+
+    const { error: schedErr } = await supabase
+      .from("bracket_schedule")
+      .upsert(
+        DIVISIONS.map(d => ({
+          division: toDbCategory(d),
+          schedule: {
+            rings: schedules[d].rings,
+            concurrentRings: schedules[d].concurrentRings,
+            matchMinutes: schedules[d].matchMinutes,
+            gapMinutes: schedules[d].gapMinutes,
+            // Round 1 layout of the last Auto Fill — without it a reload would
+            // re-derive the play order from the default (middle-first) ordering.
+            autoFillMode: schedules[d].autoFillMode ?? 'worst-plays-best',
+            exhibition: exhibitionSchedule,
+          },
+          updated_at: new Date().toISOString(),
+        })),
+        { onConflict: "division" },
+      );
+    if (schedErr) throw new Error(`Failed to save bracket_schedule: ${schedErr.message}`);
+  }
+
+  // Reconcile against the state now actually IN the database, not the caller's
+  // view of it. With partial saves the sender only ever holds part of the
+  // picture (and may be one of several admins editing), so re-reading is the
+  // only way the voting-row reconciliation and captain alerts below see the
+  // whole bracket.
+  const fresh = await computeBracketState();
 
   // Voting rows follow the SCHEDULE-derived active/next (one active + one next
   // per ring) rather than the raw stored status — so changing the ring count
@@ -340,9 +406,9 @@ export async function saveBracketState(state: BracketState): Promise<void> {
   // admin-controlled via the dropdown, same as their team names/scores, so
   // `matches`' own status already reflects the admin's choice with no
   // derivation needed.
-  let effective = matches;
+  let effective = fresh.matches;
   for (const d of DIVISIONS) {
-    effective = applyScheduleStatus(effective, schedules[d], d);
+    effective = applyScheduleStatus(effective, fresh.schedules[d], d);
   }
 
   try {
@@ -364,7 +430,7 @@ export async function saveBracketState(state: BracketState): Promise<void> {
     const lead = await getNotifyLead();
     const dueIds = new Set<string>();
     for (const d of DIVISIONS) {
-      for (const id of dueForNotify(effective, schedules[d], lead)) dueIds.add(id);
+      for (const id of dueForNotify(effective, fresh.schedules[d], lead)) dueIds.add(id);
     }
     for (const id of dueIds) {
       await notifyCaptainsForMatch(id).catch(err =>

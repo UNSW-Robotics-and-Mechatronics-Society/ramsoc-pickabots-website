@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@clerk/nextjs/server";
 import { isAdminUser } from "@/lib/auth";
-import { bulkUpdateTeamState, bulkSetSeeds } from "@/lib/db/teams";
+import { bulkUpdateTeamState, bulkSetSeeds, findSeedConflicts } from "@/lib/db/teams";
 
 // POST /api/admin/teams/bulk — apply one action to many teams at once.
 //   { ids: string[], present: boolean }            → set present for all ids
@@ -20,6 +20,16 @@ export async function POST(req: NextRequest) {
         .map(s => s as { id?: unknown; seed?: unknown })
         .filter(s => typeof s.id === "string" && typeof s.seed === "number" && Number.isFinite(s.seed))
         .map(s => ({ teamId: s.id as string, seed: s.seed as number }));
+
+      // Reject the import WHOLE if it would leave any division with two teams on
+      // one seed — including a clash against a team that isn't in the file at
+      // all, which the importing client's stale team list can't see. 409 so the
+      // caller can list the clashes without having written anything.
+      const conflicts = await findSeedConflicts(seeds);
+      if (conflicts.length > 0) {
+        return NextResponse.json({ error: "Duplicate seeds", conflicts }, { status: 409 });
+      }
+
       await bulkSetSeeds(seeds);
       return NextResponse.json({ ok: true, updated: seeds.length });
     }

@@ -17,6 +17,8 @@ import { useAdminPanels } from "./AdminPanelContext";
 import { useTeamFilter, TeamFilterBar, isMatchDimmed } from "./TeamFilterBar";
 import VotingToggle from "./VotingToggle";
 import ConfirmDialog from "./ConfirmDialog";
+import AutoFillModePicker from "./AutoFillModePicker";
+import type { AutoFillMode } from "@/lib/seeds";
 
 // ── layout constants ───────────────────────────────────────────────────────────
 const MATCH_H      = 116; // +20 over the base card height, for the time row
@@ -465,7 +467,7 @@ type Props = {
    * post-import prompt can reuse it; this component only triggers it (behind a
    * confirm). Refuses, with an error dialog raised there, if the division has
    * more in-bracket teams than the bracket has slots. */
-  onAutoFill: () => void;
+  onAutoFill: (mode: AutoFillMode) => void;
 };
 
 export default function AdminBracket({ teams, matches, division, teamCount, schedule, onMatchesChange, onScheduleChange, onAutoFill }: Props) {
@@ -476,6 +478,8 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
   const [draggingId, setDragging]           = useState<string | null>(null);
   const [bracketView, setBracketView]       = useState<'all' | 'winners' | 'losers' | 'knockouts' | 'finals'>('all');
   const [confirmAutoFill, setConfirmAutoFill] = useState(false);
+  // Round 1 layout for the next Auto Fill — a per-run choice, not a saved setting.
+  const [autoFillMode, setAutoFillMode] = useState<AutoFillMode>('worst-plays-best');
   const { bracketFullscreen: fullscreen, setBracketFullscreen: setFullscreen } = useAdminPanels();
   const containerRef                        = useRef<HTMLDivElement>(null);
 
@@ -542,18 +546,18 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
     return !isTeamNameTaken(matches, division, matchId, name);
   }
 
+  // EVERY edit goes through applyStatusChange against the ORIGINAL array — not
+  // just status changes. It's what writes advancement when a match completes and
+  // retracts it when a match stops being completed or its winner changes, so a
+  // corrected score or a re-typed team name can't leave a stale team standing in
+  // the next round. (It must see the pre-edit array to know what to retract.)
   function handleChange(updated: BracketMatch) {
-    const prev = matches.find(m => m.id === updated.id);
-    if (!prev) return;
-    if (updated.status !== prev.status) {
-      onMatchesChange(applyStatusChange(matches, updated, updated.status, teamCount));
-    } else {
-      let next = matches.map(m => m.id === updated.id ? updated : m);
-      if (winner(updated) && AUTO_COMPLETE_FROM.includes(updated.status)) {
-        next = applyStatusChange(next, updated, 'completed', teamCount);
-      }
-      onMatchesChange(next);
-    }
+    if (!matches.some(m => m.id === updated.id)) return;
+    // A score reaching the target auto-completes the match.
+    const status: MatchStatus = winner(updated) && AUTO_COMPLETE_FROM.includes(updated.status)
+      ? 'completed'
+      : updated.status;
+    onMatchesChange(applyStatusChange(matches, updated, status, teamCount));
   }
 
   function handleMatchDrop(targetId: string) {
@@ -914,12 +918,15 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
       {/* Confirm auto-fill (resets the bracket, re-seeds Round 1 from the In-Bracket teams) */}
       {confirmAutoFill && (
         <ConfirmDialog
+          wide
           title="Auto-fill the bracket?"
           message="This whole bracket resets — every round's teams, scores, results and wildcard boxes are cleared. Round 1 is then seeded from the In-Bracket teams (seed 1 is the top seed; unseeded teams are placed at random behind the seeded ones). Teams with In Bracket turned off are left out. Exhibition matches are kept. This can't be undone."
           confirmLabel="Auto Fill"
-          onConfirm={() => { onAutoFill(); setConfirmAutoFill(false); }}
+          onConfirm={() => { onAutoFill(autoFillMode); setConfirmAutoFill(false); }}
           onCancel={() => setConfirmAutoFill(false)}
-        />
+        >
+          <AutoFillModePicker value={autoFillMode} onChange={setAutoFillMode} />
+        </ConfirmDialog>
       )}
     </div>
   );

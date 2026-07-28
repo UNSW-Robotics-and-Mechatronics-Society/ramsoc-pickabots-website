@@ -9,6 +9,11 @@ import {
   type ConcurrentRings, type MatchSchedule, type ExhibitionSchedule,
   generateSchedule, applyScheduleStatus, rollSchedule, rollExhibitionSchedule, START_MINUTE, MAX_RINGS,
 } from "@/lib/schedule";
+import {
+  type SeedConflict, type AutoFillMode, computeSeedConflicts, describeSeedConflicts, round1Pairs,
+} from "@/lib/seeds";
+import { getBrowserSupabase } from "@/lib/supabase-browser";
+import { cn } from "@/lib/cn";
 import { type PanelId } from "./AdminPanelContext";
 import PanelGrid        from "./PanelGrid";
 import TeamList        from "./TeamList";
@@ -36,32 +41,96 @@ const TEAM_COUNTS: TeamCount[] = [4, 8, 16, 32, 64];
 
 const DIVISION_LABEL: Record<Division, string> = { standards: "Standards", open: "Open" };
 
+const ALL_DIVISIONS: Division[] = ['standards', 'open'];
+
+const SAVE_DEBOUNCE_MS = 500;
+// Team + special-team data is refetched when admin_data_signal is bumped (see
+// 0023_admin_data_signal.sql). Short coalescing window — one admin action can
+// write several of those tables in quick succession.
+const ADMIN_DATA_SETTLE_MS = 500;
+// Only used when Realtime isn't available at all (no anon key configured).
+const ADMIN_DATA_FALLBACK_POLL_MS = 30_000;
+// Coalescing window for realtime pulls. One save writes many rows, and every
+// admin (including the writer) hears about all of them.
+const REALTIME_SETTLE_MS = 700;
+
+type SaveStatus = 'saved' | 'pending' | 'saving' | 'error';
+
+// The per-team fields this page can edit — everything else on a Team (id, name,
+// division) comes from the shared registration table and isn't editable here.
+// Merging a remote team list is done field by field over these, matching the
+// per-field granularity the PATCH endpoint already saves at.
+const TEAM_FIELDS = ['seed', 'comment', 'present', 'inBracket', 'points'] as const;
+type TeamField = typeof TEAM_FIELDS[number];
+
+// Same idea for special teams. `name` IS editable here (unlike regular teams,
+// which own their name in the shared registration table), and so are the contact
+// fields — so every one of them is merged field by field.
+const SPECIAL_TEAM_FIELDS = ['name', 'email', 'phone', 'notes', 'category', 'present', 'inBracket'] as const;
+type SpecialTeamField = typeof SPECIAL_TEAM_FIELDS[number];
+
+// Body of a PUT /api/admin/bracket write. Mirrors BracketSave in the
+// server-only lib/db/bracket module, duplicated here for the same reason
+// SpecialTeam is (see below) rather than importing across that boundary.
+type BracketSavePayload = {
+  matches?: BracketMatch[];
+  replaceAll?: boolean;
+  teamCount?: TeamCount;
+  schedules?: Record<Division, MatchSchedule>;
+  exhibitionSchedule?: ExhibitionSchedule;
+  clearCaptainNotified?: Division[];
+};
+
+// ── change detection ─────────────────────────────────────────────────────────
+// Explicit field-by-field keys rather than JSON.stringify: these values make a
+// round trip through JSONB (which does not preserve key order) and through
+// object spreads, so stringify would report spurious differences — and a
+// spurious difference here means a save, whose echo triggers a pull, which
+// reports another difference. Listing the fields keeps that loop impossible.
+//
+// The U+0001 separator matters: joined with '', a name running straight into a
+// score would let ("Alpha", 12) and ("Alpha1", 2) share a key, and a rename
+// between those two would never register as an edit to save.
+function matchKey(m: BracketMatch): string {
+  return [
+    m.id, m.division, m.side, m.round, m.matchNumber,
+    m.slotA.teamName, m.slotA.score, m.slotB.teamName, m.slotB.score,
+    m.targetScore, m.status, m.votingOpen,
+  ].join('');
+}
+
+function ringsKey(rings: { matchId: string; startMinute: number }[][]): string {
+  return rings.map(r => r.map(e => `${e.matchId}@${e.startMinute}`).join(',')).join('|');
+}
+
+function schedulesKey(s: Record<Division, MatchSchedule>): string {
+  return ALL_DIVISIONS
+    .map(d => [s[d].concurrentRings, s[d].matchMinutes, s[d].gapMinutes, s[d].autoFillMode ?? '', ringsKey(s[d].rings)].join(':'))
+    .join('||');
+}
+
+function exhibitionKey(e: ExhibitionSchedule): string {
+  return [e.matchMinutes, e.gapMinutes, ringsKey(e.rings)].join(':');
+}
+
 // A single parsed row of the "Import seeds" CSV. Shared shape between the
 // Settings panel (which parses the file) and the import handler here (which
 // matches names against the team list).
 export type SeedImportRow = { name: string; division: Division; seed: number };
-export type SeedImportResult = { imported: number; unmatched: SeedImportRow[] };
+/**
+ * `duplicates` non-empty means the import was REJECTED whole (imported: 0):
+ * applying it would have left two teams in a division sharing a seed, which
+ * Auto Fill can't order. The caller lists the clashes.
+ */
+export type SeedImportResult = {
+  imported: number;
+  unmatched: SeedImportRow[];
+  duplicates?: { division: Division; seed: number; names: string[] }[];
+};
 
-// Standard balanced seeding order over bracket POSITIONS (1 = top seed):
-// expands recursively so position 1 lands in M1 and position 2 in M_last
-// (opposite halves), meaning the top two seeds can only meet in the final. For
-// 8 matches → [1,8,5,4,3,6,7,2], i.e. M1 = 1v16, M2 = 8v9, M3 = 5v12, …
-// slotB of each match = T+1 − slotA. Lifted from AdminBracket so both the
-// bracket's Auto Fill button and the Settings panel's post-import prompt
-// can re-seed Round 1 identically.
-function seedOrder(N: number): number[] {
-  let seeds = [1];
-  let tc = 2;
-  while (seeds.length < N) {
-    const next: number[] = [];
-    for (let p = 0; p < seeds.length; p++) {
-      const s = seeds[p], comp = tc + 1 - s;
-      if (p % 2 === 0) { next.push(s, comp); } else { next.push(comp, s); }
-    }
-    seeds = next;
-    tc *= 2;
-  }
-  return seeds;
+/** SeedConflict → the flatter shape the Settings panel renders. */
+function toDuplicates(conflicts: SeedConflict[]): NonNullable<SeedImportResult['duplicates']> {
+  return conflicts.map(c => ({ division: c.division, seed: c.seed, names: c.teams.map(t => t.name) }));
 }
 
 type InitialBracket = {
@@ -70,6 +139,10 @@ type InitialBracket = {
   schedules: Record<Division, MatchSchedule>;
   exhibitionSchedule: ExhibitionSchedule;
 };
+
+/** The four pieces of bracket state a save covers. Same shape as InitialBracket
+ *  — named separately because it's passed around as a point-in-time snapshot. */
+type BracketSnapshot = InitialBracket;
 
 // One-time/exhibition team, kept in its own table — never division-scoped,
 // never fed into the bracket. Duplicated locally rather than imported from
@@ -95,47 +168,407 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
   const [matches,      setMatches]   = useState<BracketMatch[]>(initialBracket.matches);
   const [teamCount,    setTeamCount] = useState<TeamCount>(initialBracket.teamCount);
   const [pendingCount, setPending]   = useState<TeamCount | null>(null);
-  // Why Auto Fill refused to run (too many in-bracket teams for the bracket
-  // size). Held here rather than in the two call sites — the bracket panel's
-  // button and the Settings panel's post-import prompt both surface it.
-  const [autoFillError, setAutoFillError] = useState<string | null>(null);
+  // Blocking problems worth interrupting for: Auto Fill refusing to run (too
+  // many in-bracket teams, or duplicate seeds) and a team change the server
+  // rejected. Held here rather than at the call sites — Auto Fill alone has two
+  // of them (the bracket panel's button and the Settings panel's post-import
+  // prompt).
+  const [errorDialog, setErrorDialog] = useState<{ title: string; message: string } | null>(null);
   const [schedules,    setSchedules] = useState<Record<Division, MatchSchedule>>(initialBracket.schedules);
   const [exhibitionSchedule, setExhibitionSchedule] = useState<ExhibitionSchedule>(initialBracket.exhibitionSchedule);
 
-  // Debounced save-on-change — skips the very first render, since that's
-  // just the server-fetched initial state being echoed back.
+  // ── save pipeline ────────────────────────────────────────────────────────────
+  // Saves are DIFFED, not wholesale: an ordinary edit sends only the match rows
+  // that actually changed, so two admins editing different matches never
+  // overwrite each other (the old whole-state PUT meant the last writer won,
+  // clobbering everything the other had entered). Whole-bracket operations —
+  // auto-fill, resize, reset-all — set pendingFull instead and send everything
+  // with replaceAll, which is the only mode allowed to delete rows.
+  //
+  // `saveStatus` drives the badge in the corner: a failed save used to be a
+  // console.error nobody saw, so scores could sit on screen having never
+  // reached the database.
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved');
+  const [saveError, setSaveError]   = useState<string | null>(null);
+
+  // Mirror of the current state, so the saver and the realtime merge always read
+  // the latest values instead of whatever a stale closure captured.
+  const latest = useRef({ matches, teamCount, schedules, exhibitionSchedule });
+  latest.current = { matches, teamCount, schedules, exhibitionSchedule };
+
+  // What we believe the server currently holds — the baseline every diff is
+  // taken against. Updated on a successful save and when a remote change is
+  // pulled in.
+  const saved = useRef({
+    matchKeys: new Map(initialBracket.matches.map(m => [m.id, matchKey(m)] as const)),
+    teamCount: initialBracket.teamCount as TeamCount,
+    schedulesKey: schedulesKey(initialBracket.schedules),
+    exhibitionKey: exhibitionKey(initialBracket.exhibitionSchedule),
+  });
+
+  const pendingFull = useRef<{ clearCaptainNotified?: Division[] } | null>(null);
+  const saveTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inFlight    = useRef(false);
+  const retries     = useRef(0);
   const isFirstRender = useRef(true);
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    if (isFirstRender.current) { isFirstRender.current = false; return; }
+
+  /**
+   * Match rows in `snapshot` whose value differs from the last-saved baseline.
+   * Takes the snapshot explicitly so the render path can pass the current state
+   * variables while the async saver passes latest.current.
+   */
+  function dirtyMatchIds(snapshot: BracketSnapshot): Set<string> {
+    const out = new Set<string>();
+    for (const m of snapshot.matches) {
+      if (saved.current.matchKeys.get(m.id) !== matchKey(m)) out.add(m.id);
+    }
+    return out;
+  }
+
+  function hasUnsavedWork(snapshot: BracketSnapshot): boolean {
+    return pendingFull.current !== null
+      || dirtyMatchIds(snapshot).size > 0
+      || snapshot.teamCount !== saved.current.teamCount
+      || schedulesKey(snapshot.schedules) !== saved.current.schedulesKey
+      || exhibitionKey(snapshot.exhibitionSchedule) !== saved.current.exhibitionKey;
+  }
+
+  function scheduleSave(delay = SAVE_DEBOUNCE_MS) {
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      fetch('/api/admin/bracket', {
+    saveTimer.current = setTimeout(() => { saveTimer.current = null; void flushSave(); }, delay);
+  }
+
+  async function flushSave(): Promise<void> {
+    // One request at a time, so writes can't land out of order.
+    if (inFlight.current) { scheduleSave(200); return; }
+
+    const cur  = latest.current;
+    const full = pendingFull.current;
+
+    let body: BracketSavePayload;
+    if (full) {
+      body = {
+        matches: cur.matches,
+        replaceAll: true,
+        teamCount: cur.teamCount,
+        schedules: cur.schedules,
+        exhibitionSchedule: cur.exhibitionSchedule,
+        ...(full.clearCaptainNotified ? { clearCaptainNotified: full.clearCaptainNotified } : {}),
+      };
+    } else {
+      const dirty = dirtyMatchIds(cur);
+      const teamCountChanged  = cur.teamCount !== saved.current.teamCount;
+      const schedulesChanged  = schedulesKey(cur.schedules) !== saved.current.schedulesKey;
+      const exhibitionChanged = exhibitionKey(cur.exhibitionSchedule) !== saved.current.exhibitionKey;
+      if (dirty.size === 0 && !teamCountChanged && !schedulesChanged && !exhibitionChanged) {
+        setSaveStatus('saved');
+        return;
+      }
+      body = {
+        ...(dirty.size > 0 ? { matches: cur.matches.filter(m => dirty.has(m.id)) } : {}),
+        ...(teamCountChanged ? { teamCount: cur.teamCount } : {}),
+        // Schedules are one JSON blob per division, so they can only be sent
+        // whole — ring/time edits stay last-write-wins at division granularity.
+        // The exhibition copy rides along because it's mirrored into the same rows.
+        ...(schedulesChanged || exhibitionChanged
+          ? { schedules: cur.schedules, exhibitionSchedule: cur.exhibitionSchedule }
+          : {}),
+      };
+    }
+
+    inFlight.current = true;
+    setSaveStatus('saving');
+    try {
+      const res = await fetch('/api/admin/bracket', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ matches, teamCount, schedules, exhibitionSchedule }),
-      }).catch(err => console.error('[admin] bracket save failed:', err));
-    }, 500);
-    return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+
+      // Baseline advances only for what this request actually carried; anything
+      // edited while it was in flight stays dirty and goes out next time.
+      if (body.matches) {
+        for (const m of body.matches) saved.current.matchKeys.set(m.id, matchKey(m));
+      }
+      if (body.replaceAll && body.matches) {
+        const sent = new Set(body.matches.map(m => m.id));
+        for (const id of [...saved.current.matchKeys.keys()]) if (!sent.has(id)) saved.current.matchKeys.delete(id);
+      }
+      if (body.teamCount !== undefined)          saved.current.teamCount     = body.teamCount;
+      if (body.schedules)                        saved.current.schedulesKey  = schedulesKey(body.schedules);
+      if (body.exhibitionSchedule)               saved.current.exhibitionKey = exhibitionKey(body.exhibitionSchedule);
+
+      pendingFull.current = null;
+      retries.current = 0;
+      setSaveError(null);
+      inFlight.current = false;
+      // Edits that arrived mid-flight are still dirty — go round again. The
+      // badge derives 'pending' from that same diff, so it stays truthful.
+      setSaveStatus('saved');
+      if (hasUnsavedWork(latest.current)) scheduleSave(200);
+    } catch (err) {
+      inFlight.current = false;
+      retries.current += 1;
+      setSaveError(err instanceof Error ? err.message : 'Unknown error');
+      setSaveStatus('error');
+      console.error('[admin] bracket save failed:', err);
+      // Keep trying — a venue Wi-Fi blip shouldn't silently lose a result.
+      scheduleSave(Math.min(30_000, 1_000 * 2 ** Math.min(retries.current, 5)));
+    }
+  }
+
+  useEffect(() => {
+    if (isFirstRender.current) { isFirstRender.current = false; return; }
+    if (hasUnsavedWork(latest.current)) scheduleSave();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matches, teamCount, schedules, exhibitionSchedule]);
+
+  // Last line of defence for Fix 4: don't let a closing tab take an unsaved
+  // result with it.
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedWork(latest.current)) e.preventDefault();
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── realtime: pick up other admins' changes ──────────────────────────────────
+  // bracket_matches / bracket_config / bracket_schedule are already in the
+  // supabase_realtime publication (migration 0006), so this needs no schema
+  // change. useRealtimeRefresh can't be reused here: it calls router.refresh(),
+  // which updates the server props but never re-seeds useState.
+  //
+  // On any remote write we re-read the authoritative state and merge it in,
+  // keeping our own dirty rows — so an edit in progress is never yanked out from
+  // under whoever is typing it.
+  useEffect(() => {
+    const sb = getBrowserSupabase();
+    if (!sb) return;   // no anon key configured → single-admin mode, no sync
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const pull = async () => {
+      timer = undefined;
+      // Our own save is mid-flight: its echo is about to arrive anyway, and
+      // pulling now would race the baseline update. Try again shortly.
+      if (inFlight.current) { schedule(1_000); return; }
+      try {
+        const res = await fetch('/api/admin/bracket');
+        if (!res.ok) return;
+        mergeRemote(await res.json() as InitialBracket);
+      } catch (err) {
+        console.error('[admin] realtime pull failed:', err);
+      }
+    };
+
+    // Coalesce a burst of row writes (one save touches many rows) into one pull.
+    const schedule = (delay = REALTIME_SETTLE_MS) => {
+      if (timer) return;
+      timer = setTimeout(() => void pull(), delay);
+    };
+
+    let channel = sb.channel('admin:bracket');
+    for (const table of ['bracket_matches', 'bracket_config', 'bracket_schedule']) {
+      channel = channel.on('postgres_changes', { event: '*', schema: 'public', table }, () => schedule());
+    }
+    channel.subscribe();
+    return () => { if (timer) clearTimeout(timer); sb.removeChannel(channel); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * Folds the server's state into ours: remote wins for everything we haven't
+   * touched, local wins for anything still unsaved. The baseline moves with the
+   * remote values it adopts, so adopting them doesn't look like a fresh local
+   * edit and can't bounce back as a save.
+   */
+  function mergeRemote(remote: InitialBracket) {
+    // A whole-bracket replace is queued (auto-fill / resize / reset): our local
+    // set IS the intended end state, including the rows it drops. Adopting
+    // anything from the server here would partly undo it — a resize would have
+    // its deleted rounds handed straight back and then re-saved.
+    if (pendingFull.current !== null) return;
+
+    const dirty = dirtyMatchIds(latest.current);
+
+    setMatches(prev => {
+      const prevById = new Map(prev.map(m => [m.id, m]));
+      const merged = remote.matches.map(rm => (dirty.has(rm.id) ? prevById.get(rm.id) ?? rm : rm));
+      // Rows we've created but not yet saved (a new exhibition match) aren't in
+      // the remote set — keep them rather than making them vanish mid-edit.
+      const remoteIds = new Set(remote.matches.map(m => m.id));
+      for (const id of dirty) {
+        const local = prevById.get(id);
+        if (local && !remoteIds.has(id)) merged.push(local);
+      }
+      return merged;
+    });
+
+    for (const rm of remote.matches) {
+      if (!dirty.has(rm.id)) saved.current.matchKeys.set(rm.id, matchKey(rm));
+    }
+    const remoteIds = new Set(remote.matches.map(m => m.id));
+    for (const id of [...saved.current.matchKeys.keys()]) {
+      if (!remoteIds.has(id) && !dirty.has(id)) saved.current.matchKeys.delete(id);
+    }
+
+    // A resize or a ring change we haven't saved yet must not be reverted by a
+    // remote pull; otherwise adopt.
+    if (pendingFull.current === null) {
+      if (latest.current.teamCount === saved.current.teamCount && remote.teamCount !== saved.current.teamCount) {
+        saved.current.teamCount = remote.teamCount;
+        setTeamCount(remote.teamCount);
+      }
+      if (schedulesKey(latest.current.schedules) === saved.current.schedulesKey) {
+        saved.current.schedulesKey = schedulesKey(remote.schedules);
+        setSchedules(remote.schedules);
+      }
+      if (exhibitionKey(latest.current.exhibitionSchedule) === saved.current.exhibitionKey) {
+        saved.current.exhibitionKey = exhibitionKey(remote.exhibitionSchedule);
+        setExhibitionSchedule(remote.exhibitionSchedule);
+      }
+    }
+  }
+
+  /**
+   * Marks the next save as a whole-bracket replace (auto-fill / resize / reset).
+   * Schedules it directly as well, so the flag can never be left sitting on the
+   * ref to turn some later unrelated edit into a destructive replaceAll.
+   */
+  function requestFullSave(clearCaptainNotified?: Division[]) {
+    pendingFull.current = { clearCaptainNotified };
+    scheduleSave();
+  }
+
+  // ── teams ────────────────────────────────────────────────────────────────────
+  // Same baseline-diff idea as the bracket, at FIELD granularity (which is how
+  // the PATCH endpoint saves): savedTeams holds what the server last told us, so
+  // a pulled team list can adopt every field except the ones with an unsaved
+  // local edit.
+  const latestTeams = useRef(teams);
+  latestTeams.current = teams;
+  const savedTeams = useRef(new Map(initialTeams.map(t => [t.id, t] as const)));
+
+  function teamDirtyFields(t: Team): TeamField[] {
+    const base = savedTeams.current.get(t.id);
+    if (!base) return [...TEAM_FIELDS];          // server hasn't seen this team yet
+    return TEAM_FIELDS.filter(f => t[f] !== base[f]);
+  }
+
+  /** Puts the given fields back to the last value the server confirmed. */
+  function revertTeamFields(id: string, fields: TeamField[]) {
+    const base = savedTeams.current.get(id);
+    if (!base) return;
+    const restored = Object.fromEntries(fields.map(f => [f, base[f]])) as Partial<Team>;
+    setTeams(prev => prev.map(t => t.id === id ? { ...t, ...restored } : t));
+  }
 
   const teamSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   function handleTeamUpdate(id: string, patch: Partial<Team>) {
     setTeams(prev => prev.map(t => t.id === id ? { ...t, ...patch } : t));
 
-    const key = `${id}-${Object.keys(patch).sort().join(',')}`;
+    const fields = Object.keys(patch) as TeamField[];
+    const key = `${id}-${[...fields].sort().join(',')}`;
     clearTimeout(teamSaveTimers.current[key]);
-    teamSaveTimers.current[key] = setTimeout(() => {
-      fetch(`/api/admin/teams/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
-      }).catch(err => console.error('[admin] team update failed:', err));
+    teamSaveTimers.current[key] = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/admin/teams/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+
+        // The server rejected a seed that's already taken in this division —
+        // possibly by a team another admin seeded after our list was loaded.
+        if (res.status === 409) {
+          const { conflicts } = await res.json().catch(() => ({ conflicts: [] }));
+          revertTeamFields(id, fields);
+          setErrorDialog({
+            title: 'Seed already taken',
+            message: `${describeSeedConflicts((conflicts ?? []) as SeedConflict[], DIVISION_LABEL)}. Each team in a division needs its own seed, so the change was reverted.`,
+          });
+          return;
+        }
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+
+        // Baseline advances only for the fields this request carried.
+        const base = savedTeams.current.get(id);
+        if (base) savedTeams.current.set(id, { ...base, ...patch });
+      } catch (err) {
+        // Revert rather than leave an unsaved value sitting on screen looking
+        // saved — the same trap the bracket's save badge exists to close.
+        console.error('[admin] team update failed:', err);
+        revertTeamFields(id, fields);
+        setErrorDialog({
+          title: 'Change not saved',
+          message: `${err instanceof Error ? err.message : 'Unknown error'}. The change was reverted — please try again.`,
+        });
+      }
     }, 300);
   }
 
+  /**
+   * Folds a freshly-read team list in: remote wins for every field, except ones
+   * with an unsaved local edit. Dirty sets are computed BEFORE the baseline moves
+   * — otherwise every field would look clean against the new baseline and local
+   * edits would be silently dropped.
+   */
+  function mergeRemoteTeams(remote: Team[]) {
+    const dirtyByTeam = new Map<string, TeamField[]>();
+    for (const t of latestTeams.current) {
+      const d = teamDirtyFields(t);
+      if (d.length > 0) dirtyByTeam.set(t.id, d);
+    }
+    const localById = new Map(latestTeams.current.map(t => [t.id, t]));
+
+    setTeams(remote.map(rt => {
+      const dirty = dirtyByTeam.get(rt.id);
+      const local = localById.get(rt.id);
+      if (!dirty || !local) return rt;
+      return { ...rt, ...(Object.fromEntries(dirty.map(f => [f, local[f]])) as Partial<Team>) };
+    }));
+
+    // The baseline is always the server's value — a field we kept locally stays
+    // dirty against it, so its in-flight PATCH still counts as pending.
+    savedTeams.current = new Map(remote.map(t => [t.id, t] as const));
+  }
+
+  async function pullTeams(): Promise<void> {
+    try {
+      const res = await fetch('/api/admin/teams');
+      if (!res.ok) return;
+      mergeRemoteTeams(await res.json() as Team[]);
+    } catch (err) {
+      console.error('[admin] team pull failed:', err);
+    }
+  }
+
   // ── special (one-time/exhibition) teams ──────────────────────────────────────
+  // Same baseline-diff model as regular teams. Special teams can also be created
+  // and deleted here, so the merge has to cope with rows appearing and going away
+  // — including not resurrecting one whose DELETE is still in flight.
+  const latestSpecialTeams = useRef(specialTeams);
+  latestSpecialTeams.current = specialTeams;
+  const savedSpecialTeams = useRef(new Map(initialSpecialTeams.map(t => [t.id, t] as const)));
+  const pendingSpecialDeletes = useRef<Set<string>>(new Set());
+
+  function specialTeamDirtyFields(t: SpecialTeam): SpecialTeamField[] {
+    const base = savedSpecialTeams.current.get(t.id);
+    if (!base) return [...SPECIAL_TEAM_FIELDS];
+    return SPECIAL_TEAM_FIELDS.filter(f => t[f] !== base[f]);
+  }
+
+  function revertSpecialTeamFields(id: string, fields: SpecialTeamField[]) {
+    const base = savedSpecialTeams.current.get(id);
+    if (!base) return;
+    const restored = Object.fromEntries(fields.map(f => [f, base[f]])) as SpecialTeamPatch;
+    setSpecialTeams(prev => prev.map(t => t.id === id ? { ...t, ...restored } : t));
+  }
+
   async function handleAddSpecialTeam(input: SpecialTeamInput) {
     try {
       const res = await fetch('/api/admin/special-teams', {
@@ -145,9 +578,14 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'Add failed');
       const created: SpecialTeam = await res.json();
-      setSpecialTeams(prev => [created, ...prev]);
+      savedSpecialTeams.current.set(created.id, created);
+      setSpecialTeams(prev => prev.some(t => t.id === created.id) ? prev : [created, ...prev]);
     } catch (err) {
       console.error('[admin] add special team failed:', err);
+      setErrorDialog({
+        title: 'Team not added',
+        message: `${err instanceof Error ? err.message : 'Unknown error'}. Please try again.`,
+      });
     }
   }
 
@@ -156,28 +594,138 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
   function handleUpdateSpecialTeam(id: string, patch: SpecialTeamPatch) {
     setSpecialTeams(prev => prev.map(t => t.id === id ? { ...t, ...patch } : t));
 
-    const key = `${id}-${Object.keys(patch).sort().join(',')}`;
+    const fields = Object.keys(patch) as SpecialTeamField[];
+    const key = `${id}-${[...fields].sort().join(',')}`;
     clearTimeout(specialTeamSaveTimers.current[key]);
-    specialTeamSaveTimers.current[key] = setTimeout(() => {
-      fetch(`/api/admin/special-teams/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
-      }).catch(err => console.error('[admin] special team update failed:', err));
+    specialTeamSaveTimers.current[key] = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/admin/special-teams/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+        const base = savedSpecialTeams.current.get(id);
+        if (base) savedSpecialTeams.current.set(id, { ...base, ...patch });
+      } catch (err) {
+        // Revert, as for regular teams: a value left on screen that never
+        // reached the database would also be preserved forever by the merge
+        // below (it stays "dirty" with nothing pending to save it).
+        console.error('[admin] special team update failed:', err);
+        revertSpecialTeamFields(id, fields);
+        setErrorDialog({
+          title: 'Change not saved',
+          message: `${err instanceof Error ? err.message : 'Unknown error'}. The change was reverted — please try again.`,
+        });
+      }
     }, 300);
   }
 
   async function handleDeleteSpecialTeam(id: string) {
     const prev = specialTeams;
+    // Flagged so a merge landing mid-DELETE doesn't hand the row straight back.
+    pendingSpecialDeletes.current.add(id);
     setSpecialTeams(cur => cur.filter(t => t.id !== id));
     try {
       const res = await fetch(`/api/admin/special-teams/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Delete failed');
+      savedSpecialTeams.current.delete(id);
     } catch (err) {
       console.error('[admin] delete special team failed:', err);
       setSpecialTeams(prev); // revert on failure
+      setErrorDialog({
+        title: 'Team not deleted',
+        message: `${err instanceof Error ? err.message : 'Unknown error'}. The team is still there — please try again.`,
+      });
+    } finally {
+      pendingSpecialDeletes.current.delete(id);
     }
   }
+
+  /** Special-teams counterpart to mergeRemoteTeams — same before-the-baseline-moves rule. */
+  function mergeRemoteSpecialTeams(remote: SpecialTeam[]) {
+    const dirtyByTeam = new Map<string, SpecialTeamField[]>();
+    for (const t of latestSpecialTeams.current) {
+      const d = specialTeamDirtyFields(t);
+      if (d.length > 0) dirtyByTeam.set(t.id, d);
+    }
+    const localById = new Map(latestSpecialTeams.current.map(t => [t.id, t]));
+
+    setSpecialTeams(
+      remote
+        .filter(rt => !pendingSpecialDeletes.current.has(rt.id))
+        .map(rt => {
+          const dirty = dirtyByTeam.get(rt.id);
+          const local = localById.get(rt.id);
+          if (!dirty || !local) return rt;
+          return { ...rt, ...(Object.fromEntries(dirty.map(f => [f, local[f]])) as SpecialTeamPatch) };
+        }),
+    );
+
+    savedSpecialTeams.current = new Map(remote.map(t => [t.id, t] as const));
+  }
+
+  async function pullSpecialTeams(): Promise<void> {
+    try {
+      const res = await fetch('/api/admin/special-teams');
+      if (!res.ok) return;
+      mergeRemoteSpecialTeams(await res.json() as SpecialTeam[]);
+    } catch (err) {
+      console.error('[admin] special team pull failed:', err);
+    }
+  }
+
+  // ── live team sync ───────────────────────────────────────────────────────────
+  // Neither teams nor special teams can be subscribed to directly: Realtime
+  // enforces RLS for the anon key, and a public-read policy on
+  // pickabots_team_state / special_teams would publish private admin notes and
+  // special teams' contact details to anyone with that key (it ships in the
+  // client bundle). So a trigger bumps admin_data_signal — a one-row table
+  // holding only a timestamp — and the bump makes us refetch through the
+  // admin-gated endpoints. See 0023_admin_data_signal.sql.
+  async function pullAdminTeamData(): Promise<void> {
+    await Promise.all([pullTeams(), pullSpecialTeams()]);
+  }
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Coalesce: one admin action can touch teams and team_state in quick
+    // succession, and every open page hears about all of it.
+    const schedule = () => {
+      if (timer) return;
+      timer = setTimeout(() => { timer = undefined; void pullAdminTeamData(); }, ADMIN_DATA_SETTLE_MS);
+    };
+
+    // Cheap catch-all: someone coming back to the tab gets current data even if
+    // an event was missed while the socket was asleep.
+    const onVisible = () => { if (document.visibilityState === 'visible') void pullAdminTeamData(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+
+    // The slow poll runs even WITH a working subscription, deliberately. This
+    // repo's migrations are pasted into the Supabase dashboard by hand, so the
+    // code ships before the SQL runs — and a subscription to a table that isn't
+    // in the publication yet simply never fires rather than reporting an error.
+    // One small request a minute keeps the page correct in the meantime (and if
+    // the socket ever drops), while the signal is what makes it feel instant.
+    const poll = setInterval(() => void pullAdminTeamData(), ADMIN_DATA_FALLBACK_POLL_MS);
+
+    // No pull on mount — the initial props came from the server microseconds ago.
+    const sb = getBrowserSupabase();
+    const channel = sb
+      ?.channel('admin:team-data')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'admin_data_signal' }, schedule);
+    channel?.subscribe();
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      clearInterval(poll);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+      if (sb && channel) sb.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const eliminatedTeams = useMemo(() => computeEliminated(matches), [matches]);
 
@@ -199,6 +747,9 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
   );
 
   // ── bracket size change ──────────────────────────────────────────────────────
+  // The size is shared by both divisions (bracket_config stores one team_count
+  // per division but they're always written together — see saveBracketState), so
+  // a resize necessarily rebuilds BOTH brackets.
   function hasBracketData(div: Division): boolean {
     return matches.some(m =>
       m.division === div && (m.slotA.teamName !== '' || m.slotB.teamName !== '')
@@ -207,7 +758,10 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
 
   function requestSizeChange(n: TeamCount) {
     if (n === teamCount) return;
-    if (hasBracketData(division)) {
+    // Confirm if EITHER division has data — the resize rebuilds both, so
+    // checking only the division on screen let the other one be rebuilt with no
+    // warning at all.
+    if (ALL_DIVISIONS.some(hasBracketData)) {
       setPending(n);
     } else {
       applySizeChange(n);
@@ -215,13 +769,25 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
   }
 
   function applySizeChange(n: TeamCount) {
-    const otherDiv    = division === 'standards' ? 'open' : 'standards';
-    const transferred = transferBracket(matches, division, teamCount, n);
-    const otherMatches = generateDoubleElimBracket(n, otherDiv);
-    const newMatches   = [...transferred, ...otherMatches];
+    // Transfer BOTH divisions. The other division used to be regenerated from
+    // scratch here, which silently destroyed its teams, scores and results
+    // whenever the size was changed from the other side of the toggle.
+    // Exhibition matches have no seat in a generated bracket, so transferBracket
+    // can't carry them — they're preserved explicitly instead of being dropped
+    // (which also stranded the exhibition schedule's ring entries).
+    const newMatches = [
+      ...ALL_DIVISIONS.flatMap(d => transferBracket(matches, d, teamCount, n)),
+      ...matches.filter(m => m.side === 'exhibition'),
+    ];
+    // Whole-bracket rebuild: rows for rounds that no longer exist have to be
+    // deleted, which only a replaceAll save does.
+    requestFullSave();
     setMatches(newMatches);
     // Rebuild schedules for both divisions as rolling schedules (only the
-    // currently-playable matches), preserving ring count and timing params.
+    // currently-playable matches), preserving ring count, timing params and the
+    // Round 1 layout — transferBracket carries the teams over, so the round
+    // keeps the shape the last Auto Fill gave it and must keep its play order
+    // too. Only an Auto Fill changes the layout.
     setSchedules(prev => {
       const rebuild = (d: Division) => rollSchedule(
         generateSchedule(
@@ -230,11 +796,12 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
           prev[d].rings[0]?.[0]?.startMinute ?? START_MINUTE,
           prev[d].matchMinutes,
           prev[d].gapMinutes,
+          prev[d].autoFillMode,
         ),
         newMatches,
         d,
       );
-      return { [division]: rebuild(division), [otherDiv]: rebuild(otherDiv) } as Record<Division, MatchSchedule>;
+      return Object.fromEntries(ALL_DIVISIONS.map(d => [d, rebuild(d)])) as Record<Division, MatchSchedule>;
     });
     setTeamCount(n);
     setPending(null);
@@ -254,7 +821,8 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
   // Round 1 from the in-bracket teams (by seed, unseeded shuffled into whatever
   // slots are left). Lifted out of AdminBracket so the bracket's Auto Fill
   // button and the Settings panel's post-import prompt share one implementation.
-  function handleAutoFill() {
+  // `mode` picks the Round 1 layout — see AutoFillMode in lib/seeds.
+  function handleAutoFill(mode: AutoFillMode) {
     const div = division;
     // In-bracket = explicit override, else auto (has a seed) — same rule as the
     // Teams list toggle. A seeded team turned off keeps its seed but is skipped.
@@ -282,18 +850,35 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
     // so the admin either grows the bracket or turns teams off.
     if (divTeams.length > T) {
       const bigger = TEAM_COUNTS.find(c => c >= divTeams.length);
-      setAutoFillError(
-        `${DIVISION_LABEL[div]} has ${divTeams.length} in-bracket teams but the bracket only has ${T} slots. ` +
-        (bigger ? `Set the bracket to ${bigger} teams, or turn ` : `Turn `) +
-        `${divTeams.length - T} team${divTeams.length - T === 1 ? '' : 's'} off in the Teams list, then try again.`,
-      );
+      setErrorDialog({
+        title: 'Too many teams for this bracket',
+        message:
+          `${DIVISION_LABEL[div]} has ${divTeams.length} in-bracket teams but the bracket only has ${T} slots. ` +
+          (bigger ? `Set the bracket to ${bigger} teams, or turn ` : `Turn `) +
+          `${divTeams.length - T} team${divTeams.length - T === 1 ? '' : 's'} off in the Teams list, then try again.`,
+      });
       return;
     }
 
-    // Seed 1 is the TOP seed, so sort ascending: seed 1 takes bracket position
-    // 1, seed 2 position 2, … and seedOrder maps those positions to matches
-    // (position 1 and position T land in opposite halves). Unseeded in-bracket
-    // teams are shuffled in behind every seeded team.
+    // Two teams on the same seed have no defined order between them, so the
+    // bracket they'd produce is arbitrary. Refuse and name the clashes.
+    const dupes = computeSeedConflicts(divTeams);
+    if (dupes.length > 0) {
+      setErrorDialog({
+        title: 'Duplicate seeds',
+        message:
+          `${DIVISION_LABEL[div]} has ${dupes.length > 1 ? 'seeds' : 'a seed'} used more than once — ` +
+          describeSeedConflicts(dupes, DIVISION_LABEL) +
+          `. Give each in-bracket team its own seed, then try again.`,
+      });
+      return;
+    }
+
+    // Seed 1 is the TOP seed, so sort ascending: sorted[0] is the strongest team
+    // and its index is the team's RANK, not its seed number — only the relative
+    // order matters, so gaps in the seed numbering change nothing. Unseeded
+    // in-bracket teams are shuffled in behind every seeded team, which in either
+    // mode puts them among the weakest ranks.
     const withSeed = [...divTeams.filter(t => t.seed !== null)].sort((a, b) => (a.seed ?? 0) - (b.seed ?? 0));
     const noSeed   = [...divTeams.filter(t => t.seed === null)];
     for (let i = noSeed.length - 1; i > 0; i--) {
@@ -302,25 +887,25 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
     }
     const sorted = [...withSeed, ...noSeed];   // sorted[0] = seed 1 (strongest)
 
-    const slotASeeds = seedOrder(numMatches);
+    // Both layouts come from one place, keyed by match number, so this only has
+    // to copy names into slots.
+    const pairs = round1Pairs(mode, sorted.map(t => t.name), numMatches);
 
     const seeded = fresh.map(m => {
       if (m.side !== 'winners' || m.round !== 1) return m;
-      const i     = r1.findIndex(r => r.id === m.id);
-      const aSeed = slotASeeds[i];
-      const bSeed = T + 1 - aSeed;
+      const pair = pairs[m.matchNumber - 1] ?? { a: '', b: '' };
       return {
         ...m,
-        slotA: { teamName: sorted[aSeed - 1]?.name ?? '', score: 0 },
-        slotB: { teamName: sorted[bSeed - 1]?.name ?? '', score: 0 },
+        slotA: { teamName: pair.a, score: 0 },
+        slotB: { teamName: pair.b, score: 0 },
       };
     });
 
     // Any R1 match left with a single team (fewer in-bracket teams than slots)
     // is a bye: auto-complete it and advance that team to R2 so it never shows
-    // up as a playable match. rollSchedule then excludes it from the list.
-    // Byes fall to the strongest seeds, since the empty positions are the
-    // last ones (T, T-1, …) and those face positions 1, 2, ….
+    // up as a playable match. rollSchedule then excludes it from the list. In
+    // both modes round1Pairs leaves the empty slots where the byes land on the
+    // strongest seeds — see there for how each layout arranges that.
     const resolved = completeRound1Byes(seeded, div);
 
     // Exhibition matches carry a real `division` but sit outside the bracket
@@ -331,9 +916,26 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
       ...resolved,
     ];
 
+    // Whole-bracket replace, and clear this division's captain-notified flags:
+    // they're per-match and dedupe the "up next" SMS, so leaving them set would
+    // mean the teams just placed into an already-notified match never get texted.
+    requestFullSave([div]);
     setMatches(nextMatches);
     setSchedules(prev => ({
       ...prev,
+      // The chosen layout is recorded ON the schedule, not baked into a
+      // one-off match order: defaultScheduleOrder reads it back, so the play
+      // order survives a ring change (which re-spreads every match from
+      // scratch), a reload, and the server's own rolls.
+      //
+      // Caveat, only when there are byes: this mode pairs the bye seeds off in
+      // R2, so those R2 matches have both teams from the start. rollSchedule
+      // gives every ready match an earlier slot than one still waiting on a
+      // winner, so they play ahead of the R2 matches fed by R1 — R2 runs e.g.
+      // M3, M4, M1, M2 rather than M1..M4. Round 1 is unaffected, the ready
+      // matches keep top-to-bottom order among themselves, and seed 1 v seed 2
+      // is still the last of them; a full bracket has no byes and so runs
+      // top-to-bottom throughout.
       [div]: rollSchedule(
         generateSchedule(
           [],
@@ -341,6 +943,7 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
           prev[div].rings[0]?.[0]?.startMinute ?? START_MINUTE,
           prev[div].matchMinutes,
           prev[div].gapMinutes,
+          mode,
         ),
         nextMatches,
         div,
@@ -358,16 +961,26 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'Bulk update failed');
   }
 
+  /** Applies one field to every team in the current division, baseline included. */
+  function markBulkSaved(ids: string[], patch: Partial<Team>) {
+    for (const id of ids) {
+      const base = savedTeams.current.get(id);
+      if (base) savedTeams.current.set(id, { ...base, ...patch });
+    }
+  }
+
   async function handleSetAllPresent(present: boolean) {
     const ids = teams.filter(t => t.division === division).map(t => t.id);
     setTeams(prev => prev.map(t => t.division === division ? { ...t, present } : t));
     await bulkPostTeams({ ids, present });
+    markBulkSaved(ids, { present });
   }
 
   async function handleSetAllInBracket(inBracket: boolean) {
     const ids = teams.filter(t => t.division === division).map(t => t.id);
     setTeams(prev => prev.map(t => t.division === division ? { ...t, inBracket } : t));
     await bulkPostTeams({ ids, inBracket });
+    markBulkSaved(ids, { inBracket });
   }
 
   // Matches each CSV row to an existing team by name+division (teams come from
@@ -384,10 +997,48 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
       else unmatched.push(row);
     }
 
+    // Reject rather than half-apply: check the seeds each division would END UP
+    // with (imported values layered over the seeds already there), so a clash
+    // against a team that isn't even in the file is caught too. Nothing is
+    // written if any division has a duplicate.
+    const seedById = new Map(matched.map(m => [m.id, m.seed]));
+    const conflicts = computeSeedConflicts(
+      teams.map(t => ({ ...t, seed: seedById.get(t.id) ?? t.seed })),
+    );
+    if (conflicts.length > 0) {
+      return { imported: 0, unmatched, duplicates: toDuplicates(conflicts) };
+    }
+
     if (matched.length > 0) {
-      const seedById = new Map(matched.map(m => [m.id, m.seed]));
+      // Write BEFORE touching local state: the server runs the same check
+      // against the real current seeds (our team list may be minutes stale, and
+      // another admin may have taken one of these seeds since), so it can still
+      // reject. Applying afterwards means there's nothing to roll back.
+      const res = await fetch('/api/admin/teams/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seeds: matched }),
+      });
+      if (res.status === 409) {
+        const { conflicts } = await res.json().catch(() => ({ conflicts: [] }));
+        void pullTeams();   // our snapshot was out of date — get the real seeds
+        return {
+          imported: 0,
+          unmatched,
+          duplicates: ((conflicts ?? []) as SeedConflict[]).map(c => ({
+            division: c.division,
+            seed: c.seed,
+            names: c.teams.map(t => t.name),
+          })),
+        };
+      }
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'Seed import failed');
+
       setTeams(prev => prev.map(t => seedById.has(t.id) ? { ...t, seed: seedById.get(t.id)! } : t));
-      await bulkPostTeams({ seeds: matched });
+      for (const [id, seed] of seedById) {
+        const base = savedTeams.current.get(id);
+        if (base) savedTeams.current.set(id, { ...base, seed });
+      }
     }
     return { imported: matched.length, unmatched };
   }
@@ -411,13 +1062,17 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
     // rows by hand. saveBracketState's stale-row cleanup deletes whatever the
     // new set no longer contains, so the shape genuinely follows the generator.
     // Exhibition matches are dropped, same as before: the generator emits none.
-    const regenerated = (['standards', 'open'] as Division[])
-      .flatMap(d => generateDoubleElimBracket(teamCount, d));
+    const regenerated = ALL_DIVISIONS.flatMap(d => generateDoubleElimBracket(teamCount, d));
+
+    // Whole-bracket replace (exhibition rows are deleted by the stale-row sweep),
+    // clearing both divisions' captain-notified flags so the next teams to
+    // occupy each match are texted again.
+    requestFullSave(ALL_DIVISIONS);
 
     const rebuildSchedule = (d: Division, s: MatchSchedule): MatchSchedule => {
       const safeRings = Math.min(MAX_RINGS, Math.max(1, s.concurrentRings)) as ConcurrentRings;
       return rollSchedule(
-        generateSchedule([], safeRings, s.rings[0]?.[0]?.startMinute ?? START_MINUTE, s.matchMinutes, s.gapMinutes),
+        generateSchedule([], safeRings, s.rings[0]?.[0]?.startMinute ?? START_MINUTE, s.matchMinutes, s.gapMinutes, s.autoFillMode),
         regenerated,
         d,
       );
@@ -529,21 +1184,74 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
       {pendingCount !== null && (
         <ConfirmDialog
           title={`Change bracket to ${pendingCount} teams?`}
-          message="The bracket has existing data. Later rounds (finals, semis, quarters) will be kept. Earlier rounds that no longer exist will be discarded."
+          message="The size is shared, so BOTH divisions are resized. In each one, later rounds (finals, semis, quarters) are kept and earlier rounds that no longer exist are discarded. Exhibition matches are unaffected."
           confirmLabel="Change size"
           onConfirm={() => applySizeChange(pendingCount)}
           onCancel={() => setPending(null)}
         />
       )}
 
-      {/* Auto Fill refused — more in-bracket teams than the bracket has slots */}
-      {autoFillError !== null && (
+      {/* Auto Fill refused, or a team change the server wouldn't accept */}
+      {errorDialog !== null && (
         <AlertDialog
-          title="Too many teams for this bracket"
-          message={autoFillError}
-          onDismiss={() => setAutoFillError(null)}
+          title={errorDialog.title}
+          message={errorDialog.message}
+          onDismiss={() => setErrorDialog(null)}
         />
       )}
+
+      {/* Save state — a failed save used to be console-only, so an admin could
+          enter a result that never reached the database and never know.
+          "Unsaved" is derived at render time from the same diff the saver uses,
+          so it can't drift out of step with what's actually pending. */}
+      <SaveBadge
+        status={
+          saveStatus === 'saved' && hasUnsavedWork({ matches, teamCount, schedules, exhibitionSchedule })
+            ? 'pending'
+            : saveStatus
+        }
+        error={saveError}
+        onRetry={() => { retries.current = 0; void flushSave(); }}
+      />
     </>
+  );
+}
+
+// ── save-status badge ────────────────────────────────────────────────────────
+function SaveBadge({
+  status, error, onRetry,
+}: { status: SaveStatus; error: string | null; onRetry: () => void }) {
+  const LOOK: Record<SaveStatus, { dot: string; text: string; label: string }> = {
+    saved:   { dot: 'bg-emerald-400',        text: 'text-foreground/40', label: 'Saved' },
+    pending: { dot: 'bg-amber-300',          text: 'text-foreground/60', label: 'Unsaved changes' },
+    saving:  { dot: 'bg-amber-300 animate-pulse', text: 'text-foreground/60', label: 'Saving…' },
+    error:   { dot: 'bg-red-400 animate-pulse',   text: 'text-red-300',  label: 'Save failed' },
+  };
+  const look = LOOK[status];
+
+  return (
+    <div
+      className={cn(
+        "pointer-events-none fixed bottom-3 right-3 z-40 flex items-center gap-2 rounded-full border px-3 py-1.5 text-[0.65rem] backdrop-blur-sm transition-colors",
+        status === 'error'
+          ? "pointer-events-auto border-red-400/40 bg-red-950/70"
+          : "border-white/10 bg-black/50",
+      )}
+      title={status === 'error' && error ? error : undefined}
+    >
+      <span className={cn("size-1.5 shrink-0 rounded-full", look.dot)} />
+      <span className={look.text}>{look.label}</span>
+      {status === 'error' && (
+        <>
+          <span className="text-red-300/50">· retrying</span>
+          <button
+            onClick={onRetry}
+            className="pointer-events-auto rounded-full border border-red-400/40 px-2 py-0.5 text-red-200 transition-colors hover:bg-red-400/20"
+          >
+            Retry now
+          </button>
+        </>
+      )}
+    </div>
   );
 }

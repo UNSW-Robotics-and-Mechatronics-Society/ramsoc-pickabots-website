@@ -11,6 +11,8 @@ import {
   renderBroadcastTemplate,
 } from "@/lib/sms-template";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
+import AutoFillModePicker from "@/components/admin/AutoFillModePicker";
+import type { AutoFillMode } from "@/lib/seeds";
 
 const DEFAULT_SMS_NOTIFY_LEAD = 2;
 
@@ -18,7 +20,9 @@ const DEFAULT_SMS_NOTIFY_LEAD = 2;
 // SeedImportRow/SeedImportResult (the callback contract), kept local so this
 // panel doesn't import from its own parent.
 type SeedImportRow = { name: string; division: Division; seed: number };
-type SeedImportResult = { imported: number; unmatched: SeedImportRow[] };
+type SeedDuplicate = { division: Division; seed: number; names: string[] };
+// A non-empty `duplicates` means the whole import was rejected (imported: 0).
+type SeedImportResult = { imported: number; unmatched: SeedImportRow[]; duplicates?: SeedDuplicate[] };
 
 type Props = {
   division: Division;
@@ -28,7 +32,7 @@ type Props = {
   onSetAllPresent: (present: boolean) => Promise<void>;
   onSetAllInBracket: (inBracket: boolean) => Promise<void>;
   onImportSeeds: (rows: SeedImportRow[]) => Promise<SeedImportResult>;
-  onAutoFill: () => void;
+  onAutoFill: (mode: AutoFillMode) => void;
   onResetAll: () => void;
 };
 
@@ -115,9 +119,16 @@ export default function SettingsPanel({
   const [seedText, setSeedText]     = useState("");
   const [importBusy, setImportBusy] = useState(false);
   const [importResult, setImportResult] = useState<
-    { imported: number; unmatched: SeedImportRow[]; invalid: { line: string; reason: string }[] } | null
+    {
+      imported: number;
+      unmatched: SeedImportRow[];
+      invalid: { line: string; reason: string }[];
+      duplicates?: SeedDuplicate[];
+    } | null
   >(null);
   const [pendingAutoFill, setPendingAutoFill] = useState(false);
+  // Round 1 layout for the next Auto Fill — a per-run choice, not a saved setting.
+  const [autoFillMode, setAutoFillMode] = useState<AutoFillMode>('worst-plays-best');
   const [confirmResetTokens, setConfirmResetTokens] = useState(false);
   const [confirmResetAll, setConfirmResetAll]       = useState(false);
   const [resetTokensMsg, setResetTokensMsg]         = useState<string | null>(null);
@@ -263,8 +274,9 @@ export default function SettingsPanel({
     }
     setImportBusy(true);
     try {
-      const { imported, unmatched } = await onImportSeeds(valid);
-      setImportResult({ imported, unmatched, invalid });
+      const { imported, unmatched, duplicates } = await onImportSeeds(valid);
+      setImportResult({ imported, unmatched, invalid, duplicates });
+      // Don't offer to re-seed the bracket off an import that was rejected.
       if (imported > 0) setPendingAutoFill(true);
     } catch (err) {
       setImportResult({ imported: 0, unmatched: [], invalid: [{ line: "", reason: err instanceof Error ? err.message : "Import failed" }] });
@@ -525,6 +537,23 @@ export default function SettingsPanel({
                   <div className="mt-2 rounded-lg border border-white/10 bg-white/5 p-2 text-[0.65rem]">
                     {importResult.imported > 0 && (
                       <p className="text-green-300">Imported {importResult.imported} seed{importResult.imported === 1 ? "" : "s"} ✓</p>
+                    )}
+                    {/* Rejected whole — nothing was written, so the seeds on
+                        screen are unchanged and the file can be fixed and
+                        re-imported. */}
+                    {importResult.duplicates && importResult.duplicates.length > 0 && (
+                      <div className="text-foreground/55">
+                        <p className="text-red-300">Nothing imported — duplicate seeds:</p>
+                        <ul className="mt-0.5 space-y-0.5">
+                          {importResult.duplicates.slice(0, 6).map((d, i) => (
+                            <li key={i} className="truncate">
+                              • {DIVISION_LABEL[d.division]} seed {d.seed} — {d.names.join(", ")}
+                            </li>
+                          ))}
+                          {importResult.duplicates.length > 6 && <li>…and {importResult.duplicates.length - 6} more</li>}
+                        </ul>
+                        <p className="mt-1 text-foreground/40">Each team in a division needs its own seed.</p>
+                      </div>
                     )}
                     {importResult.unmatched.length > 0 && (
                       <div className="mt-1 text-foreground/55">
@@ -871,12 +900,15 @@ export default function SettingsPanel({
       {/* Post-import: offer to re-seed the CURRENT division's bracket */}
       {pendingAutoFill && (
         <ConfirmDialog
+          wide
           title="Auto-fill teams again?"
           message={`Seeds imported. Reset the ${DIVISION_LABEL[division]} bracket and seed its Round 1 from the In-Bracket teams now? Every round's teams, scores, results and wildcard boxes are cleared first (exhibition matches are kept). Only the ${DIVISION_LABEL[division]} bracket is affected — switch divisions to auto-fill the other.`}
           confirmLabel="Auto Fill"
-          onConfirm={() => { onAutoFill(); setPendingAutoFill(false); }}
+          onConfirm={() => { onAutoFill(autoFillMode); setPendingAutoFill(false); }}
           onCancel={() => setPendingAutoFill(false)}
-        />
+        >
+          <AutoFillModePicker value={autoFillMode} onChange={setAutoFillMode} />
+        </ConfirmDialog>
       )}
 
       {confirmResetTokens && (

@@ -24,9 +24,19 @@ export async function GET() {
     // bossbot / exhibition aren't in a division bracket — accept either.
     : wildcardStandards.has(name) || wildcardOpen.has(name)
 
-  return NextResponse.json((data ?? []).map(m => ({
-    ...m,
-    left_wildcard:  isWildcard(m.comp_type as string, m.left_name as string),
-    right_wildcard: isWildcard(m.comp_type as string, m.right_name as string),
-  })))
+  return NextResponse.json({
+    matches: (data ?? []).map(m => ({
+      ...m,
+      left_wildcard:  isWildcard(m.comp_type as string, m.left_name as string),
+      right_wildcard: isWildcard(m.comp_type as string, m.right_name as string),
+    })),
+    // How many physical rings each division is running. The bidding page shows
+    // one ring slot per ring (the schedule makes at most one match active per
+    // ring), so every live match is biddable and an idle ring still shows its
+    // "TBD" placeholder. Keyed by comp_type, matching the match rows.
+    ringCounts: {
+      standard: bracket.schedules.standards.concurrentRings,
+      open:     bracket.schedules.open.concurrentRings,
+    },
+  })
 }

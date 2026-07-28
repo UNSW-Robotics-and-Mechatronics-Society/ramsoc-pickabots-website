@@ -361,18 +361,15 @@ export default function MatchesPanel({
     ? (srcId: string, dstId: string) => onExhibitionScheduleChange(swapMatchIds(exhibitionSchedule, srcId, dstId))
     : (srcId: string, dstId: string) => onScheduleChange(swapMatchIds(schedule, srcId, dstId));
 
+  // Same single path as the bracket editor's handleChange — applyStatusChange
+  // against the ORIGINAL array on every edit, so advancement is both written and
+  // retracted consistently (see its clearSlot).
   function handleMatchChange(updated: BracketMatch) {
-    const prev = matches.find(m => m.id === updated.id);
-    if (!prev) return;
-    if (updated.status !== prev.status) {
-      onMatchesChange(applyStatusChange(matches, updated, updated.status, teamCount));
-    } else {
-      let next = matches.map(m => m.id === updated.id ? updated : m);
-      if (winner(updated) && AUTO_COMPLETE_FROM.includes(updated.status)) {
-        next = applyStatusChange(next, updated, 'completed', teamCount);
-      }
-      onMatchesChange(next);
-    }
+    if (!matches.some(m => m.id === updated.id)) return;
+    const status: MatchStatus = winner(updated) && AUTO_COMPLETE_FROM.includes(updated.status)
+      ? 'completed'
+      : updated.status;
+    onMatchesChange(applyStatusChange(matches, updated, status, teamCount));
   }
 
   // Add a blank exhibition match to a dedicated exhibition ring. It's a normal
