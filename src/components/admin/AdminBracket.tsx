@@ -460,9 +460,11 @@ type Props = {
   schedule: MatchSchedule;
   onMatchesChange: (next: BracketMatch[]) => void;
   onScheduleChange: (s: MatchSchedule) => void;
-  /** Re-seed the current division's Round 1 from its In-Bracket teams.
-   * Implemented in AdminPageClient so the Settings panel's post-import prompt
-   * can reuse it; this component only triggers it (behind a confirm). */
+  /** Reset the current division's bracket and re-seed Round 1 from its
+   * In-Bracket teams. Implemented in AdminPageClient so the Settings panel's
+   * post-import prompt can reuse it; this component only triggers it (behind a
+   * confirm). Refuses, with an error dialog raised there, if the division has
+   * more in-bracket teams than the bracket has slots. */
   onAutoFill: () => void;
 };
 
@@ -909,11 +911,11 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
         </div>
       </div>
 
-      {/* Confirm auto-fill (re-seeds Round 1 from the In-Bracket teams) */}
+      {/* Confirm auto-fill (resets the bracket, re-seeds Round 1 from the In-Bracket teams) */}
       {confirmAutoFill && (
         <ConfirmDialog
           title="Auto-fill the bracket?"
-          message="Round 1 will be re-seeded from the In-Bracket teams (by seed, then random for any unseeded ones), overwriting any team names, scores, and results already entered in this bracket. Teams with In Bracket turned off are left out. This can't be undone."
+          message="This whole bracket resets — every round's teams, scores, results and wildcard boxes are cleared. Round 1 is then seeded from the In-Bracket teams (seed 1 is the top seed; unseeded teams are placed at random behind the seeded ones). Teams with In Bracket turned off are left out. Exhibition matches are kept. This can't be undone."
           confirmLabel="Auto Fill"
           onConfirm={() => { onAutoFill(); setConfirmAutoFill(false); }}
           onCancel={() => setConfirmAutoFill(false)}

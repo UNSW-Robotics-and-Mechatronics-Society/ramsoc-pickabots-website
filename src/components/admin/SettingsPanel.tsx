@@ -489,7 +489,7 @@ export default function SettingsPanel({
               <div className="border-t border-white/10 pt-3">
                 <span className="text-[0.6rem] uppercase tracking-wider text-foreground/40">Import Seeds</span>
                 <p className="mt-0.5 text-[0.6rem] text-foreground/35">
-                  One team per line: <span className="font-mono text-foreground/50">name, division, seed</span> (comma or | separated). Updates existing teams by name — it can&rsquo;t create new ones.
+                  One team per line: <span className="font-mono text-foreground/50">name, division, seed</span> (comma or | separated). Seed 1 is the top seed. Updates existing teams by name — it can&rsquo;t create new ones.
                 </p>
                 <textarea
                   value={seedText}
@@ -872,7 +872,7 @@ export default function SettingsPanel({
       {pendingAutoFill && (
         <ConfirmDialog
           title="Auto-fill teams again?"
-          message={`Seeds imported. Re-seed the ${DIVISION_LABEL[division]} bracket's Round 1 from its In-Bracket teams now? This overwrites the ${DIVISION_LABEL[division]} bracket's current teams, scores and results. Only the ${DIVISION_LABEL[division]} bracket is affected — switch divisions to auto-fill the other.`}
+          message={`Seeds imported. Reset the ${DIVISION_LABEL[division]} bracket and seed its Round 1 from the In-Bracket teams now? Every round's teams, scores, results and wildcard boxes are cleared first (exhibition matches are kept). Only the ${DIVISION_LABEL[division]} bracket is affected — switch divisions to auto-fill the other.`}
           confirmLabel="Auto Fill"
           onConfirm={() => { onAutoFill(); setPendingAutoFill(false); }}
           onCancel={() => setPendingAutoFill(false)}

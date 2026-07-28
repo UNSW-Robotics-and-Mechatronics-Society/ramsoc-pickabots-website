@@ -477,8 +477,10 @@ export default function TeamList({
                       <div className="flex gap-2">
                         <input
                           type="number"
+                          min={1}
                           value={team.seed ?? ""}
                           placeholder="Seed"
+                          title="Seed — 1 is the top seed. Auto Fill places seed 1 first; unseeded teams go behind every seeded one."
                           onChange={e => update(team.id, "seed", e.target.value === "" ? null : Number(e.target.value))}
                           className="w-20 shrink-0 rounded-lg border border-white/10 bg-white/8 px-2 py-1 text-xs tabular-nums placeholder:text-foreground/30 outline-none focus:border-white/30"
                         />
