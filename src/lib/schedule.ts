@@ -13,13 +13,33 @@ export const DEFAULT_GAP_MINUTES   = 5;
 export const START_MINUTE          = 13 * 60; // 1:00 PM = 780
 
 /** One match's place in a ring's own timeline. */
-export type RingMatch = { matchId: string; startMinute: number };
+export type RingMatch = {
+  matchId: string;
+  startMinute: number;
+  /**
+   * This slot's time was set by hand (editMatchTime, from a TimeCell) rather
+   * than derived from its position in the ring. Every roll re-times the whole
+   * queue by position (see rollSchedule step 4) and a roll runs on every READ
+   * as well as every match edit — so without this flag a hand-set time only
+   * survived until the next page load. A pinned slot keeps its own time and
+   * anchors the slots after it.
+   *
+   * It belongs to the SLOT, not the match: swapMatchIds trades match ids
+   * between slots and leaves times (and pins) where they are, so "the third
+   * match on ring 2 starts at 3:00" survives a swap, which is what the drag
+   * gesture means.
+   */
+  pinned?: boolean;
+};
+
+/** Anything with ring queues and a slot duration — MatchSchedule or ExhibitionSchedule. */
+type RingSchedule = { rings: RingMatch[][]; matchMinutes: number; gapMinutes: number };
 
 /**
  * Each ring runs its own independent queue of matches. Rings are NOT
  * synchronized to shared rows — this lets a completed match's time stay
  * frozen (see changeTimings) and lets a newly added ring start from "now"
- * instead of the top (see changeRings), both per-ring rather than global.
+ * instead of the top (see retimeRings), both per-ring rather than global.
  */
 export type MatchSchedule = {
   rings: RingMatch[][];   // rings[ringIndex] = that ring's ordered queue
@@ -217,6 +237,73 @@ function isCompleted(matches: BracketMatch[], matchId: string): boolean {
   return matches.find(m => m.id === matchId)?.status === 'completed';
 }
 
+/**
+ * The single layout rule, applied by every roll and every timing change so the
+ * editor and a read-time roll can never disagree. Per ring:
+ *
+ *  - Completed matches are FROZEN at the time they actually played. Which ring
+ *    a match ran on and when is a record of what happened, not a layout choice.
+ *  - The pending queue then runs contiguously (one slot per match, no gaps that
+ *    grow as results come in) from the moment that ring is free: right after
+ *    its last completed match, or from `now` if it hasn't finished anything.
+ *  - A pinned slot (see RingMatch.pinned) overrides both, keeping its hand-set
+ *    time and re-anchoring everything after it.
+ *
+ * `now` is the soonest any ring is next free — i.e. when the current active
+ * matches are playing. Anchoring on it is what lets a ring added mid-event join
+ * the others at the time they're playing instead of being sent back to the top
+ * of the day. With nothing completed yet it falls back to `base`, the earliest
+ * slot in the schedule, so a fresh schedule lays out exactly as before.
+ */
+function retimeRings(
+  rings: RingMatch[][],
+  matches: BracketMatch[],
+  base: number,
+  dur: number,
+  /**
+   * Whether this slot's recorded time is a real one. A completed match is only
+   * frozen if it HAS a time to be frozen at: rollSchedule appends matches that
+   * were never on a ring with a placeholder, and a match completed in the
+   * bracket before it ever reached the schedule would otherwise be pinned to
+   * midnight and drag the whole layout with it.
+   */
+  hasRecordedTime: (matchId: string) => boolean = () => true,
+): RingMatch[][] {
+  const frozen = (e: RingMatch) => isCompleted(matches, e.matchId) && hasRecordedTime(e.matchId);
+
+  const lastPlayed = rings.map(ring =>
+    ring.reduce<number | null>(
+      (last, e) => (frozen(e) ? Math.max(last ?? e.startMinute, e.startMinute) : last),
+      null,
+    ),
+  );
+  const freeAt = lastPlayed.filter((t): t is number => t !== null).map(t => t + dur);
+  const now = freeAt.length ? Math.min(...freeAt) : base;
+
+  return rings.map((ring, ri) => {
+    const played = lastPlayed[ri];
+    let cursor = played === null ? now : played + dur;
+    return ring.map(entry => {
+      if (frozen(entry)) return entry;   // it already played — that time is a fact
+      const startMinute = entry.pinned ? entry.startMinute : cursor;
+      cursor = startMinute + dur;
+      return entry.startMinute === startMinute ? entry : { ...entry, startMinute };
+    });
+  });
+}
+
+/**
+ * The whole-schedule form of retimeRings, anchored on the earliest slot the
+ * schedule currently holds (which is how a manually-set overall start time is
+ * preserved). Shared by the rollers and by resetMatchTime so the editor and a
+ * read-time roll always produce the same layout.
+ */
+function retimeSchedule<T extends RingSchedule>(schedule: T, matches: BracketMatch[]): T {
+  const starts = schedule.rings.flat().map(e => e.startMinute);
+  const base = starts.length ? Math.min(...starts) : START_MINUTE;
+  return { ...schedule, rings: retimeRings(schedule.rings, matches, base, slotDuration(schedule)) };
+}
+
 /** Distribute a flat id order round-robin across `rings` queues, timed sequentially from startMinute. */
 function buildRings(ids: string[], rings: ConcurrentRings, startMinute: number, slotMin: number): RingMatch[][] {
   const out: RingMatch[][] = Array.from({ length: rings }, () => []);
@@ -246,50 +333,6 @@ export function generateSchedule(
 }
 
 /**
- * Redistribute matches into a new ring count. Completed matches stay exactly
- * where they are (front of their ring's queue); every not-yet-completed
- * match is redistributed across the new ring count. A newly added ring's
- * first match starts at "now" — the earliest currently-pending match's time
- * across all rings — rather than from the top of the day.
- */
-export function changeRings(
-  schedule: MatchSchedule,
-  matches: BracketMatch[],
-  newRings: ConcurrentRings,
-): MatchSchedule {
-  const dur = slotDuration(schedule);
-
-  const completedByRing: RingMatch[][] = schedule.rings.map(ring =>
-    ring.filter(e => isCompleted(matches, e.matchId)),
-  );
-  // Sorted by time, not gathered ring by ring: a flat concat would read all of
-  // ring 0's queue before any of ring 1's, so redistributing would interleave
-  // them in the wrong order and silently reshuffle the running order.
-  const pending = schedule.rings
-    .flatMap((ring, ri) => ring.filter(e => !isCompleted(matches, e.matchId)).map(e => ({ e, ri })))
-    .sort((a, b) => a.e.startMinute - b.e.startMinute || a.ri - b.ri)
-    .map(({ e }) => e);
-
-  const now = pending.length > 0
-    ? Math.min(...pending.map(e => e.startMinute))
-    : (schedule.rings[0]?.[0]?.startMinute ?? START_MINUTE);
-
-  const rings: RingMatch[][] = Array.from({ length: newRings }, (_, ri) => [...(completedByRing[ri] ?? [])]);
-
-  pending.forEach((entry, i) => {
-    const ri = i % newRings;
-    const completedCount = completedByRing[ri]?.length ?? 0;
-    const idxInPending    = rings[ri].length - completedCount;
-    const base = completedCount > 0
-      ? completedByRing[ri][completedCount - 1].startMinute + dur
-      : now;
-    rings[ri].push({ matchId: entry.matchId, startMinute: base + idxInPending * dur });
-  });
-
-  return { ...schedule, rings, concurrentRings: newRings };
-}
-
-/**
  * Change match length and/or gap. Completed matches keep their exact time;
  * every match after the last completed one in its ring reflows using the
  * new duration.
@@ -300,20 +343,7 @@ export function changeTimings(
   matchMinutes: number,
   gapMinutes: number,
 ): MatchSchedule {
-  const dur = matchMinutes + gapMinutes;
-  const rings = schedule.rings.map(ring => {
-    let cursor: number | null = null;
-    return ring.map(entry => {
-      if (isCompleted(matches, entry.matchId)) {
-        cursor = entry.startMinute + dur;
-        return entry; // frozen
-      }
-      const startMinute = cursor ?? entry.startMinute;
-      cursor = startMinute + dur;
-      return { ...entry, startMinute };
-    });
-  });
-  return { ...schedule, rings, matchMinutes, gapMinutes };
+  return { ...retimeSchedule({ ...schedule, matchMinutes, gapMinutes }, matches), matchMinutes, gapMinutes };
 }
 
 /**
@@ -344,19 +374,37 @@ export function swapMatchIds<T extends { rings: RingMatch[][] }>(schedule: T, id
 /**
  * Edit one match's time and cascade forward through the rest of its own ring
  * only. Generic over any ring-based schedule (bracket or exhibition).
+ *
+ * The edited slot is PINNED (see RingMatch.pinned): a hand-set time has to
+ * outlive the re-timing that every roll applies, otherwise it lasts only until
+ * the next reload. The cascade is just retimeSchedule — the same rule the roll
+ * uses — so the editor shows exactly what a reload will, and any other pin in
+ * the ring still holds rather than being flattened.
  */
-export function editMatchTime<T extends { rings: RingMatch[][]; matchMinutes: number; gapMinutes: number }>(
+export function editMatchTime<T extends RingSchedule>(
   schedule: T,
+  matches: BracketMatch[],
   matchId: string,
   newMinute: number,
 ): T {
-  const dur = slotDuration(schedule);
-  const rings = schedule.rings.map(ring => {
-    const idx = ring.findIndex(e => e.matchId === matchId);
-    if (idx === -1) return ring;
-    return ring.map((e, i) => i < idx ? e : { ...e, startMinute: newMinute + (i - idx) * dur });
-  });
-  return { ...schedule, rings };
+  const rings = schedule.rings.map(ring =>
+    ring.map(e => (e.matchId === matchId ? { ...e, startMinute: newMinute, pinned: true } : e)),
+  );
+  return retimeSchedule({ ...schedule, rings }, matches);
+}
+
+/**
+ * Drop a hand-set time and let the slot — and everything after it in its ring
+ * — fall back to the automatic, position-derived layout. The counterpart to
+ * editMatchTime; without it a slot that was edited once could never rejoin the
+ * rolling schedule.
+ */
+export function resetMatchTime<T extends RingSchedule>(schedule: T, matches: BracketMatch[], matchId: string): T {
+  if (!schedule.rings.some(ring => ring.some(e => e.matchId === matchId && e.pinned))) return schedule;
+  const rings = schedule.rings.map(ring =>
+    ring.map(e => (e.matchId === matchId && e.pinned ? { matchId: e.matchId, startMinute: e.startMinute } : e)),
+  );
+  return retimeSchedule({ ...schedule, rings }, matches);
 }
 
 /**
@@ -400,12 +448,30 @@ export function rollSchedule(
 
   const ringCount = Math.max(1, schedule.concurrentRings);
 
-  // 1. Start empty when redistributing (re-spread everything); otherwise keep
-  //    still-schedulable placements (preserves order/time/manual reorder).
-  const rings: RingMatch[][] = redistribute
-    ? Array.from({ length: ringCount }, () => [])
-    : Array.from({ length: ringCount }, (_, ri) =>
-        (schedule.rings[ri] ?? []).filter(e => schedulable(e.matchId)));
+  // 1. Keep still-schedulable placements (preserving order, time, manual
+  //    reordering and pinned times). Redistributing re-spreads the PENDING
+  //    queue only — completed matches never move, because the ring they ran on
+  //    and the time they ran at are a record of what happened. That's also what
+  //    makes a newly added ring recognisable as empty, so step 4 can start it
+  //    at "now" rather than at the top of the day.
+  //
+  //    Entries on a ring that no longer exists (the count was lowered) fold
+  //    into ring ri % ringCount and the ring is re-sorted by time, so a folded-
+  //    in completed match lands in the history rather than after the pending
+  //    queue.
+  const rings: RingMatch[][] = Array.from({ length: ringCount }, () => []);
+  let folded = false;
+  schedule.rings.forEach((ring, ri) => {
+    for (const e of ring) {
+      if (!schedulable(e.matchId)) continue;
+      if (redistribute && !isCompleted(matches, e.matchId)) continue;
+      if (ri >= ringCount) folded = true;
+      rings[ri % ringCount].push(e);
+    }
+  });
+  if (folded) {
+    for (const ring of rings) ring.sort((a, b) => a.startMinute - b.startMinute);
+  }
 
   // 2. Schedulable matches for this division not yet placed = newly ready.
   const placed = new Set(rings.flat().map(e => e.matchId));
@@ -417,28 +483,36 @@ export function rollSchedule(
     .sort((a, b) => (orderIndex.get(a) ?? Number.MAX_SAFE_INTEGER) - (orderIndex.get(b) ?? Number.MAX_SAFE_INTEGER));
 
   // 3. Append newly-ready, then still-upcoming (empty/TBD) matches — load-
-  //    balanced by ring length. Upcoming matches are shown for their schedule
-  //    slot but, since their teams aren't known, applyScheduleStatus never
-  //    makes them active/next (they stay "to-do").
-  function appendToShortestRing(id: string) {
+  //    balanced by how much each ring has left TO PLAY, not by total queue
+  //    length: a ring that has already run six matches is free now, and
+  //    counting its history against it would starve it of the next ones (and
+  //    would hand a freshly added ring every remaining match). Upcoming
+  //    matches are shown for their schedule slot but, since their teams aren't
+  //    known, applyScheduleStatus never makes them active/next (they stay
+  //    "to-do").
+  const pendingCount = rings.map(ring => ring.filter(e => !isCompleted(matches, e.matchId)).length);
+  function appendToFreestRing(id: string) {
     let best = 0;
-    for (let ri = 1; ri < ringCount; ri++) if (rings[ri].length < rings[best].length) best = ri;
+    for (let ri = 1; ri < ringCount; ri++) if (pendingCount[ri] < pendingCount[best]) best = ri;
     rings[best].push({ matchId: id, startMinute: 0 });
+    pendingCount[best] += 1;
   }
-  for (const id of newlyReady) appendToShortestRing(id);
+  for (const id of newlyReady) appendToFreestRing(id);
   const placedNow = new Set(rings.flat().map(e => e.matchId));
-  for (const upId of order.filter(id => !placedNow.has(id))) appendToShortestRing(upId);
+  for (const upId of order.filter(id => !placedNow.has(id))) appendToFreestRing(upId);
 
-  // 4. Re-time by position: ring slot k gets base + k*dur. This keeps the whole
-  //    schedule contiguous (consecutive matches exactly one slot apart, no gaps
-  //    that grow as results come in) and parallel across rings — and makes the
-  //    result deterministic + idempotent regardless of prior times. `base`
-  //    preserves a manually-set start time (the earliest slot in the schedule).
+  // 4. Re-time under the one shared layout rule (see retimeRings): completed
+  //    matches frozen where they played, each ring's pending queue contiguous
+  //    from when that ring is next free, pinned slots holding their hand-set
+  //    time. `base` — the earliest slot in the schedule — preserves a manually
+  //    set overall start time and is what a not-yet-started schedule lays out
+  //    from. This roll runs on every READ, so any rule applied only at edit
+  //    time would be undone by the next page load.
   const existingStarts = schedule.rings.flat().map(e => e.startMinute);
   const base = existingStarts.length ? Math.min(...existingStarts) : START_MINUTE;
-  const retimed = rings.map(ring => ring.map((e, k) => ({ ...e, startMinute: base + k * dur })));
+  const wasScheduled = new Set(schedule.rings.flat().map(e => e.matchId));
 
-  return { ...schedule, rings: retimed };
+  return { ...schedule, rings: retimeRings(rings, matches, base, dur, id => wasScheduled.has(id)) };
 }
 
 /**
@@ -483,10 +557,18 @@ export function removeExhibitionRing(schedule: ExhibitionSchedule, index: number
   return { ...schedule, rings: schedule.rings.filter((_, i) => i !== index) };
 }
 
-/** Append a match id to an exhibition ring's queue (time is normalised by rollExhibitionSchedule). */
+/**
+ * Append a match id to an exhibition ring's queue (time is normalised by
+ * rollExhibitionSchedule). The placeholder time is the schedule's existing
+ * earliest slot rather than START_MINUTE: the roll takes its `base` from the
+ * earliest slot present, so a hardcoded 1:00 PM on a schedule that starts later
+ * would drag the whole thing backwards before the roll ever looked at it.
+ */
 export function addMatchToExhibitionRing(schedule: ExhibitionSchedule, index: number, matchId: string): ExhibitionSchedule {
+  const starts = schedule.rings.flat().map(e => e.startMinute);
+  const startMinute = starts.length ? Math.min(...starts) : START_MINUTE;
   const rings = schedule.rings.map((ring, i) =>
-    i === index ? [...ring, { matchId, startMinute: START_MINUTE }] : ring,
+    i === index ? [...ring, { matchId, startMinute }] : ring,
   );
   return { ...schedule, rings };
 }
@@ -503,46 +585,33 @@ export function changeExhibitionTimings(
   matchMinutes: number,
   gapMinutes: number,
 ): ExhibitionSchedule {
-  const dur = matchMinutes + gapMinutes;
-  const rings = schedule.rings.map(ring => {
-    let cursor: number | null = null;
-    return ring.map(entry => {
-      if (isCompleted(matches, entry.matchId)) {
-        cursor = entry.startMinute + dur;
-        return entry; // frozen
-      }
-      const startMinute = cursor ?? entry.startMinute;
-      cursor = startMinute + dur;
-      return { ...entry, startMinute };
-    });
-  });
+  const { rings } = retimeSchedule({ ...schedule, matchMinutes, gapMinutes }, matches);
   return { rings, matchMinutes, gapMinutes };
 }
 
 /**
  * Rolling pass for the shared exhibition schedule: drops matches that were
  * deleted or skipped, keeps the rest (including blank ones being set up), and
- * re-times them by position by the same base+k*dur rule as rollSchedule.
- * Empty rings are kept so you can still add to them. Never division-scoped —
- * side === 'exhibition' is the only qualifying check.
+ * re-times them under the same shared rule as rollSchedule (see retimeRings) —
+ * so a ring added part-way through the event starts alongside whatever the
+ * other rings are playing, not back at the top of the day. Empty rings are kept
+ * so you can still add to them. Never division-scoped — side === 'exhibition'
+ * is the only qualifying check.
  */
 export function rollExhibitionSchedule(schedule: ExhibitionSchedule, matches: BracketMatch[]): ExhibitionSchedule {
-  const dur = slotDuration(schedule);
   const byId = new Map(matches.map(m => [m.id, m]));
 
   const existingStarts = schedule.rings.flat().map(e => e.startMinute);
   const base = existingStarts.length ? Math.min(...existingStarts) : START_MINUTE;
 
-  const rings = schedule.rings.map(ring =>
-    ring
-      .filter(e => {
-        const m = byId.get(e.matchId);
-        return m && m.side === 'exhibition' && m.status !== 'skipped';
-      })
-      .map((e, k) => ({ ...e, startMinute: base + k * dur })),
+  const kept = schedule.rings.map(ring =>
+    ring.filter(e => {
+      const m = byId.get(e.matchId);
+      return m && m.side === 'exhibition' && m.status !== 'skipped';
+    }),
   );
 
-  return { ...schedule, rings };
+  return { ...schedule, rings: retimeRings(kept, matches, base, slotDuration(schedule)) };
 }
 
 /**

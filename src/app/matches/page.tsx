@@ -4,9 +4,9 @@ import MatchList from '@/components/MatchList'
 export const dynamic = 'force-dynamic'
 
 export default async function MatchesPage() {
-  const { matches, teamCount, schedules, exhibitionSchedule } = await getBracketState()
+  const { matches, teamCounts, schedules, exhibitionSchedule } = await getBracketState()
   // Live updates are driven from inside MatchList via useRealtimeRefresh
   // (subscribed to the bracket tables). getBracketState is cached and
   // invalidated on save.
-  return <MatchList matches={matches} teamCount={teamCount} schedules={schedules} exhibitionSchedule={exhibitionSchedule} />
+  return <MatchList matches={matches} teamCounts={teamCounts} schedules={schedules} exhibitionSchedule={exhibitionSchedule} />
 }

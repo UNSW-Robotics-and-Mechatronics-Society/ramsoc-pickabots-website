@@ -9,7 +9,7 @@ import {
 } from "@/lib/mock-data";
 import {
   type MatchSchedule,
-  editMatchTime, scheduleOrder,
+  editMatchTime, resetMatchTime, scheduleOrder,
 } from "@/lib/schedule";
 import { cn } from "@/lib/cn";
 import { MATCH_DRAG_TYPE, SlotRow, TimeCell } from "./MatchTeamSlot";
@@ -63,11 +63,15 @@ type MatchCardProps = {
   time?: number;
   order?: number;
   onTimeChange?: (matchId: string, minute: number) => void;
+  /** Whether this match's time was set by hand — read off the schedule rather
+   *  than passed per-card, so it rides along in sharedCardProps like getTime. */
+  getTimePinned?: (matchId: string) => boolean;
+  onTimeReset?: (matchId: string) => void;
   /** Feeder placeholders for empty slots (e.g. { a: "Winner of R64 M3" }). */
   defaults?: { a?: string; b?: string };
 };
 function MatchCard({
-  match, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd, dimmed, time, order, onTimeChange, defaults,
+  match, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd, dimmed, time, order, onTimeChange, getTimePinned, onTimeReset, defaults,
 }: MatchCardProps) {
   const w = winner(match);
   const swappable       = match.status === 'todo' || match.status === 'next';
@@ -162,7 +166,12 @@ function MatchCard({
           className="flex shrink-0 items-center justify-center border-b border-white/[0.14] py-1"
           onMouseDown={e => e.stopPropagation()}
         >
-          <TimeCell minute={time} onCommit={min => onTimeChange?.(match.id, min)} />
+          <TimeCell
+            minute={time}
+            pinned={getTimePinned?.(match.id)}
+            onCommit={min => onTimeChange?.(match.id, min)}
+            onReset={onTimeReset && (() => onTimeReset(match.id))}
+          />
         </div>
       )}
       <SlotRow
@@ -368,9 +377,11 @@ type RoundColumnProps = {
   getOrder: (matchId: string) => number | undefined;
   getDefaults: (matchId: string) => { a?: string; b?: string } | undefined;
   onTimeChange: (matchId: string, minute: number) => void;
+  getTimePinned: (matchId: string) => boolean;
+  onTimeReset: (matchId: string) => void;
 };
 function RoundColumn({
-  matches, height, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd, filterSet, getTime, getOrder, getDefaults, onTimeChange,
+  matches, height, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd, filterSet, getTime, getOrder, getDefaults, onTimeChange, getTimePinned, onTimeReset,
 }: RoundColumnProps) {
   return (
     <div style={{ width: ROUND_W, height }} className="flex shrink-0 flex-col justify-around">
@@ -390,6 +401,8 @@ function RoundColumn({
           order={getOrder(m.id)}
           defaults={getDefaults(m.id)}
           onTimeChange={onTimeChange}
+          getTimePinned={getTimePinned}
+          onTimeReset={onTimeReset}
         />
       ))}
     </div>
@@ -415,9 +428,11 @@ type BracketStripProps = {
   getOrder: (matchId: string) => number | undefined;
   getDefaults: (matchId: string) => { a?: string; b?: string } | undefined;
   onTimeChange: (matchId: string, minute: number) => void;
+  getTimePinned: (matchId: string) => boolean;
+  onTimeReset: (matchId: string) => void;
 };
 function BracketStrip({
-  rounds, matchesByRound, height, connW, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd, filterSet, getTime, getOrder, getDefaults, onTimeChange,
+  rounds, matchesByRound, height, connW, onChange, datalistId, isValidTeamName, draggingId, onDragStart, onMatchDrop, onDragEnd, filterSet, getTime, getOrder, getDefaults, onTimeChange, getTimePinned, onTimeReset,
 }: BracketStripProps) {
   return (
     <div className="flex items-stretch" style={{ height }}>
@@ -438,6 +453,8 @@ function BracketStrip({
             getOrder={getOrder}
             getDefaults={getDefaults}
             onTimeChange={onTimeChange}
+            getTimePinned={getTimePinned}
+            onTimeReset={onTimeReset}
           />
           {i < rounds.length - 1 && matchesByRound[i].length >= 2 && (
             <ConnectorSVG fromMatches={matchesByRound[i]} height={height} connW={connW} />
@@ -613,12 +630,16 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
 
   const datalistId = `bl-teams-${division}`;
 
-  const timeByMatchId = new Map(schedule.rings.flat().map(e => [e.matchId, e.startMinute]));
-  function getTime(matchId: string): number | undefined { return timeByMatchId.get(matchId); }
+  const entryByMatchId = new Map(schedule.rings.flat().map(e => [e.matchId, e]));
+  function getTime(matchId: string): number | undefined { return entryByMatchId.get(matchId)?.startMinute; }
+  function getTimePinned(matchId: string): boolean { return !!entryByMatchId.get(matchId)?.pinned; }
   const orderByMatchId = scheduleOrder(schedule);
   function getOrder(matchId: string): number | undefined { return orderByMatchId.get(matchId); }
   function handleTimeChange(matchId: string, minute: number) {
-    onScheduleChange(editMatchTime(schedule, matchId, minute));
+    onScheduleChange(editMatchTime(schedule, matches, matchId, minute));
+  }
+  function handleTimeReset(matchId: string) {
+    onScheduleChange(resetMatchTime(schedule, matches, matchId));
   }
 
   const sharedCardProps = {
@@ -632,6 +653,8 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
     getOrder,
     getDefaults,
     onTimeChange: handleTimeChange,
+    getTimePinned,
+    onTimeReset: handleTimeReset,
   };
 
   return (

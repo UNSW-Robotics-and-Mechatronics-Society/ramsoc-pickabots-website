@@ -135,7 +135,7 @@ const FILTERS: { value: BracketView; label: string }[] = [
   { value: 'finals', label: 'Finals' },
 ]
 
-type Props = { matches: BracketMatch[]; teamCount: TeamCount; schedules: Record<Division, MatchSchedule> }
+type Props = { matches: BracketMatch[]; teamCounts: Record<Division, TeamCount>; schedules: Record<Division, MatchSchedule> }
 
 // A single round (Winners or Losers, whichever the current side-filter
 // means) or "finals" (Grand Final + 3rd place + podium, for Winners/All/
@@ -151,7 +151,7 @@ function computeDefaultRound(byRound: BracketMatch[][], roundsCount: number): Ro
   return 1 // nothing active yet (e.g. tournament hasn't started) — default to the first round
 }
 
-export default function BracketPage({ matches, teamCount, schedules }: Props) {
+export default function BracketPage({ matches, teamCounts, schedules }: Props) {
   useRealtimeRefresh(['bracket_matches', 'bracket_config', 'bracket_schedule'])
   const [division, setDivision] = useState<Division>('standards')
   const [view, setView]         = useState<BracketView>('all')
@@ -178,6 +178,10 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
   // after that commit.
   const pendingFocusRef = useRef<string | null>(null)
 
+  // Each division has its own bracket size, so every size-derived value below
+  // (round counts, section heights, round-of-N labels, wildcard round) follows
+  // the division currently on screen.
+  const teamCount = teamCounts[division]
   const wbRounds = wbRoundsFor(teamCount)
   const lbRounds = lbRoundsFor(teamCount)
 
@@ -517,7 +521,11 @@ export default function BracketPage({ matches, teamCount, schedules }: Props) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', gap: 6 }}>
             {(['standards', 'open'] as Division[]).map(d => (
-              <button key={d} onClick={() => setDivision(d)} style={pillStyle(division === d)}>
+              // The round-of-N selection is dropped on a division switch: the
+              // two brackets can be different sizes, so a round picked in one
+              // may not exist in the other (leaving no pill selected and the
+              // camera with nothing to jump to).
+              <button key={d} onClick={() => { setDivision(d); setRoundOverride({}) }} style={pillStyle(division === d)}>
                 {d === 'standards' ? 'Standard' : 'Open'}
               </button>
             ))}

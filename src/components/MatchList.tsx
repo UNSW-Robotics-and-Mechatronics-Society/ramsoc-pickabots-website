@@ -35,14 +35,15 @@ type ViewMode = Division | 'exhibition'
 
 type Props = {
   matches: BracketMatch[]
-  teamCount: TeamCount
+  // Per division — Standards and Open can run different bracket sizes.
+  teamCounts: Record<Division, TeamCount>
   schedules: Record<Division, MatchSchedule>
   // Shared across both divisions — not one copy per division. See
   // ExhibitionSchedule.
   exhibitionSchedule: ExhibitionSchedule
 }
 
-export default function MatchList({ matches, teamCount, schedules, exhibitionSchedule }: Props) {
+export default function MatchList({ matches, teamCounts, schedules, exhibitionSchedule }: Props) {
   useRealtimeRefresh(['bracket_matches', 'bracket_config', 'bracket_schedule'])
   const [viewMode, setViewMode] = useState<ViewMode>('standards')
   const [selectedTeam, setSelectedTeam] = useState<string | null>(null)
@@ -66,8 +67,10 @@ export default function MatchList({ matches, teamCount, schedules, exhibitionSch
   // Feeder placeholder text for empty slots — bracket-round only; exhibition
   // matches have no feeders.
   const slotDefaults = useMemo(
-    () => isExhibition ? new Map<string, { a?: string; b?: string }>() : computeSlotDefaults(matches, viewMode as Division, teamCount),
-    [matches, teamCount, viewMode, isExhibition],
+    () => isExhibition
+      ? new Map<string, { a?: string; b?: string }>()
+      : computeSlotDefaults(matches, viewMode as Division, teamCounts[viewMode as Division]),
+    [matches, teamCounts, viewMode, isExhibition],
   )
 
   // Bracket view: this division's rings only, never exhibition ones (those

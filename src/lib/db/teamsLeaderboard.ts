@@ -111,7 +111,7 @@ function buildEntry({
 }
 
 async function computeTeamsLeaderboard(): Promise<TeamLeaderboardEntry[]> {
-  const [{ data: teamRows, error: tErr }, { data: specialRows, error: sErr }, tokensByName, { matches, teamCount }] =
+  const [{ data: teamRows, error: tErr }, { data: specialRows, error: sErr }, tokensByName, { matches, teamCounts }] =
     await Promise.all([
       supabase.from("teams").select("id, name, category"),
       supabase.from("special_teams").select("id, name, category"),
@@ -126,9 +126,15 @@ async function computeTeamsLeaderboard(): Promise<TeamLeaderboardEntry[]> {
   for (const division of ["standards", "open"] as Division[]) {
     wildcardByDivision.set(division, wildcardTeamNames(matches.filter(m => m.division === division)));
   }
-  const wildcardRound = wildcardLbRound(teamCount);
-  // Matches the stageRank a losers-bracket match of that round scores.
-  const wildcardRank = wildcardRound === null ? Infinity : 5_000 + wildcardRound;
+  // Which losers-bracket round the wildcards feed depends on the bracket's
+  // size, and the two divisions can be sized differently — so this is per
+  // division too. Matches the stageRank a losers-bracket match of that round
+  // scores.
+  const wildcardRankByDivision = new Map<Division, number>();
+  for (const division of ["standards", "open"] as Division[]) {
+    const round = wildcardLbRound(teamCounts[division]);
+    wildcardRankByDivision.set(division, round === null ? Infinity : 5_000 + round);
+  }
 
   const entries: TeamLeaderboardEntry[] = [];
 
@@ -147,7 +153,7 @@ async function computeTeamsLeaderboard(): Promise<TeamLeaderboardEntry[]> {
       teamMatches: matches.filter(m =>
         m.division === division && (m.slotA.teamName === name || m.slotB.teamName === name)),
       wildcard: wildcardByDivision.get(division)?.has(name) ?? false,
-      wildcardRank,
+      wildcardRank: wildcardRankByDivision.get(division) ?? Infinity,
     }));
   }
 
@@ -163,7 +169,9 @@ async function computeTeamsLeaderboard(): Promise<TeamLeaderboardEntry[]> {
       tokens: tokensByName.get(name) ?? 0,
       teamMatches: matches.filter(m => m.slotA.teamName === name || m.slotB.teamName === name),
       wildcard: false, // special teams never enter the bracket, so never a wildcard
-      wildcardRank,
+      // Never in a bracket, so there's no wildcard round for them to be knocked
+      // out after — Infinity leaves their status untouched by that rule.
+      wildcardRank: Infinity,
     }));
   }
 

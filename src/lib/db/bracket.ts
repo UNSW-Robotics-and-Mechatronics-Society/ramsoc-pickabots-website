@@ -70,7 +70,11 @@ function matchToRow(m: BracketMatch, teamIdByName: Map<string, string>) {
 
 export type BracketState = {
   matches: BracketMatch[];
-  teamCount: TeamCount;
+  // Per division: Standards and Open each run their own bracket size, so a
+  // 32-team Standards draw can sit alongside an 8-team Open one. bracket_config
+  // has always had a row per division — this reads them independently instead
+  // of treating the 'standard' row as canonical for both.
+  teamCounts: Record<Division, TeamCount>;
   schedules: Record<Division, MatchSchedule>;
   // Shared across both divisions — not one copy per division. See
   // ExhibitionSchedule.
@@ -113,17 +117,21 @@ async function computeBracketState(): Promise<BracketState> {
   if (cErr) throw new Error(`Failed to load bracket_config: ${cErr.message}`);
   if (sErr) throw new Error(`Failed to load bracket_schedule: ${sErr.message}`);
 
-  // team_count is a single value shared across both divisions today (see
-  // AdminPageClient.applySizeChange, which regenerates the OTHER division at
-  // the same size whenever one division is resized) — read the 'standard'
-  // row as canonical.
-  const teamCount = ((configRows ?? []).find(c => c.division === "standard")?.team_count as TeamCount)
-    ?? DEFAULT_TEAM_COUNT;
+  // Each division's size is read from its OWN bracket_config row, so the two
+  // brackets can be different sizes. A division with no row yet falls back to
+  // the default rather than to whatever the other division happens to be.
+  const teamCounts = Object.fromEntries(
+    DIVISIONS.map(d => [
+      d,
+      ((configRows ?? []).find(c => c.division === toDbCategory(d))?.team_count as TeamCount)
+        ?? DEFAULT_TEAM_COUNT,
+    ]),
+  ) as Record<Division, TeamCount>;
 
   let matches = (matchRows ?? []).map(rowToMatch);
   for (const division of DIVISIONS) {
     if (!matches.some(m => m.division === division)) {
-      matches = [...matches, ...generateDoubleElimBracket(teamCount, division)];
+      matches = [...matches, ...generateDoubleElimBracket(teamCounts[division], division)];
     }
   }
 
@@ -139,7 +147,7 @@ async function computeBracketState(): Promise<BracketState> {
 
   const exhibitionSchedule = rollExhibitionSchedule(extractExhibitionSchedule(scheduleRows ?? []), matches);
 
-  return { matches, teamCount, schedules, exhibitionSchedule };
+  return { matches, teamCounts, schedules, exhibitionSchedule };
 }
 
 // Public reads — the competition/matches pages and the team-ledger modal — go
@@ -292,7 +300,12 @@ export type BracketSave = {
    * editing, including other admins' work.
    */
   replaceAll?: boolean;
-  teamCount?: TeamCount;
+  /**
+   * Bracket sizes, per division. Partial so resizing one division leaves the
+   * other's row untouched — writing both together is what previously forced the
+   * two brackets to be the same size.
+   */
+  teamCounts?: Partial<Record<Division, TeamCount>>;
   /** Both divisions at once — a schedule is one JSON blob per division. */
   schedules?: Record<Division, MatchSchedule>;
   exhibitionSchedule?: ExhibitionSchedule;
@@ -306,7 +319,7 @@ export type BracketSave = {
 };
 
 export async function saveBracketState(save: BracketSave): Promise<void> {
-  const { matches, replaceAll = false, teamCount, schedules, clearCaptainNotified } = save;
+  const { matches, replaceAll = false, teamCounts, schedules, clearCaptainNotified } = save;
 
   const [{ data: existingRows, error: exErr }, { data: teamRows, error: teamErr }] = await Promise.all([
     supabase.from("bracket_matches").select("id, status"),
@@ -345,11 +358,18 @@ export async function saveBracketState(save: BracketSave): Promise<void> {
     if (error) throw new Error(`Failed to clear captain_notified: ${error.message}`);
   }
 
-  if (teamCount !== undefined) {
-    const { error: configErr } = await supabase
-      .from("bracket_config")
-      .upsert(DIVISIONS.map(d => ({ division: toDbCategory(d), team_count: teamCount })), { onConflict: "division" });
-    if (configErr) throw new Error(`Failed to save bracket_config: ${configErr.message}`);
+  if (teamCounts) {
+    // Only the divisions actually present in the save — a resize of Standards
+    // must not rewrite Open's row (and vice versa).
+    const configRows = DIVISIONS
+      .filter(d => teamCounts[d] !== undefined)
+      .map(d => ({ division: toDbCategory(d), team_count: teamCounts[d]! }));
+    if (configRows.length > 0) {
+      const { error: configErr } = await supabase
+        .from("bracket_config")
+        .upsert(configRows, { onConflict: "division" });
+      if (configErr) throw new Error(`Failed to save bracket_config: ${configErr.message}`);
+    }
   }
 
   if (schedules) {
