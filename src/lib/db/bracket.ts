@@ -13,7 +13,7 @@ import {
 import { toDbCategory, fromDbCategory } from "./division";
 import { rewardWinners } from "./rewards";
 import { notifyCaptainsForMatch } from "./notify";
-import { getNotifyLead } from "./config";
+import { getNotifyLead, getAutoSmsEnabled } from "./config";
 
 const DIVISIONS: Division[] = ["standards", "open"];
 const DEFAULT_TEAM_COUNT: TeamCount = 16;
@@ -426,16 +426,24 @@ export async function saveBracketState(save: BracketSave): Promise<void> {
   // Lead-time captain alerts: text captains once their team is within
   // `notifyLead` matches of playing. Deduped per match via captain_notified, so
   // running on every save is safe. Best-effort — never fails the bracket save.
+  // Gated on the "auto captain texts" toggle so repeated saves during dev/
+  // testing don't spam real captains; the manual "up next" button bypasses
+  // this (it calls notifyCaptainsForMatch directly, not through here).
   try {
-    const lead = await getNotifyLead();
-    const dueIds = new Set<string>();
-    for (const d of DIVISIONS) {
-      for (const id of dueForNotify(effective, fresh.schedules[d], lead)) dueIds.add(id);
-    }
-    for (const id of dueIds) {
-      await notifyCaptainsForMatch(id).catch(err =>
-        console.error("[bracket] captain notify failed for", id, err),
-      );
+    if (await getAutoSmsEnabled()) {
+      const lead = await getNotifyLead();
+      const dueIds = new Set<string>();
+      for (const d of DIVISIONS) {
+        // fresh.schedules, not the caller's `schedules`: a partial save may not
+        // carry any schedule at all, and only the re-read state sees the whole
+        // bracket (see the computeBracketState call above).
+        for (const id of dueForNotify(effective, fresh.schedules[d], lead)) dueIds.add(id);
+      }
+      for (const id of dueIds) {
+        await notifyCaptainsForMatch(id).catch(err =>
+          console.error("[bracket] captain notify failed for", id, err),
+        );
+      }
     }
   } catch (err) {
     console.error("[bracket] captain-notify pass failed:", err);

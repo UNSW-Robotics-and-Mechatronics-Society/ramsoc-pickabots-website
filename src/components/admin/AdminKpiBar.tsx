@@ -104,7 +104,7 @@ export default function AdminKpiBar() {
 
   return (
     <div className="glass-nav flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 rounded-full px-3 py-1.5 text-[0.7rem]">
-      {kpisError && <span className="text-red-300/80">{kpisError}</span>}
+      {kpisError && <span className="max-w-[16rem] truncate text-red-300/80" title={kpisError}>{kpisError}</span>}
       {!kpisError && !kpis && <span className="text-foreground/40">Loading stats…</span>}
       {kpis && (
         <>
@@ -129,7 +129,7 @@ export default function AdminKpiBar() {
         <span className="flex items-center gap-1.5 whitespace-nowrap">
           <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", clickSendStatus ? DOT_CLASS[clickSendStatus] : "bg-white/20")} />
           <span className="text-foreground/40">ClickSend</span>
-          {balanceError && <span className="text-red-300/80">{balanceError}</span>}
+          {balanceError && <span className="max-w-[12rem] truncate text-red-300/80" title={balanceError}>{balanceError}</span>}
           {!balanceError && !balance && <span className="text-foreground/40">…</span>}
           {balance && (
             <span className={cn("font-medium", clickSendStatus ? TEXT_CLASS[clickSendStatus] : "text-foreground")}>

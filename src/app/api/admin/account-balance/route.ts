@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { currentUser } from "@clerk/nextjs/server";
 import { isAdminUser } from "@/lib/auth";
 import { getAccountBalance } from "@/lib/sms";
+import { safeErrorMessage } from "@/lib/safe-error-message";
 
 // GET → current ClickSend account balance, for the admin Settings panel.
 export async function GET() {
@@ -11,6 +12,6 @@ export async function GET() {
     const account = await getAccountBalance();
     return NextResponse.json(account);
   } catch (err) {
-    return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 500 });
+    return NextResponse.json({ error: safeErrorMessage(err, "Failed to load balance") }, { status: 500 });
   }
 }

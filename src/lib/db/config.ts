@@ -8,6 +8,7 @@ import { DEFAULT_SMS_UP_NEXT } from "@/lib/sms-template";
 const SMS_UP_NEXT_KEY = "sms_up_next_template";
 const NOTIFY_LEAD_KEY = "sms_notify_lead";
 const ALL_IN_KEY = "all_in";
+const AUTO_SMS_KEY = "auto_sms_enabled";
 
 /** Default: text captains when their team is this many matches from playing. */
 export const DEFAULT_NOTIFY_LEAD = 2;
@@ -79,4 +80,27 @@ export async function getAllIn(): Promise<boolean> {
 
 export async function setAllIn(value: boolean): Promise<void> {
   await setConfig(ALL_IN_KEY, value ? "true" : "false");
+}
+
+/**
+ * Auto captain texts: when off, the automatic "your match is up next" SMS
+ * pass (triggered on every bracket save, see saveBracketState) is skipped
+ * entirely — for dev/testing so repeated bracket edits don't spam real
+ * captains. Manual sends (the "up next" button, broadcast, test numbers)
+ * are unaffected — this only gates the automatic trigger. Defaults ON.
+ */
+export async function getAutoSmsEnabled(): Promise<boolean> {
+  try {
+    const raw = await getConfig(AUTO_SMS_KEY);
+    return raw === null ? true : raw === "true";
+  } catch (err) {
+    // Never let a config read failure silently suppress real alerts —
+    // default to the safe (enabled) behaviour.
+    console.error("[config] getAutoSmsEnabled failed, defaulting to on:", err);
+    return true;
+  }
+}
+
+export async function setAutoSmsEnabled(value: boolean): Promise<void> {
+  await setConfig(AUTO_SMS_KEY, value ? "true" : "false");
 }

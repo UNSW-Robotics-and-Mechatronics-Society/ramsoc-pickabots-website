@@ -12,14 +12,23 @@ import { ACCESS_COOKIE, accessToken } from "@/lib/access";
 // 200 to signed-out crawlers — Googlebot is always signed out — so search
 // engines can index the site instead of caching a stale 404. They are exempt
 // from every gate below; none of them expose gated app content.
-const PUBLIC_PATHS       = ["/", "/robots.txt", "/sitemap.xml"];
+// /overlay/* renders inside OBS Browser Sources on the streaming PC — a
+// context that is ALWAYS signed out and holds no cookies, so it must clear
+// every gate (auth, event password, onboarding) or the broadcast shows a
+// Clerk sign-in page instead of a lower-third. Safe to expose: the overlays
+// are literally what gets broadcast on the public livestream.
+const PUBLIC_PATHS       = ["/", "/robots.txt", "/sitemap.xml", "/overlay(.*)"];
 // POST /api/access is how the event code is submitted, so it can't sit behind
 // the gate it opens. It's public and exempt everywhere for that reason — all it
 // does is compare a code and, on a match, set the access cookie.
 const isPublicRoute      = createRouteMatcher([...PUBLIC_PATHS, "/sign-in(.*)", "/sign-up(.*)", "/dev(.*)", "/api/access"]);
 // Everything not listed here needs the event access cookie — including every
 // other /api route, which used to be exempt (so a signed-in visitor could read
-// live match/leaderboard data without ever entering the code).
+// live match/leaderboard data without ever entering the code). The overlays are
+// unaffected: they're server components that read the DB directly, and their one
+// client piece (OverlayRefresh) re-requests the public /overlay route itself,
+// never /api. The only OBS-related /api calls come from /control, whose human
+// operator passes the gate normally.
 const isPasswordExempt   = createRouteMatcher([...PUBLIC_PATHS, "/sign-in(.*)", "/sign-up(.*)", "/standby", "/api/access", "/dev(.*)"]);
 const isOnboardingExempt = createRouteMatcher([
   ...PUBLIC_PATHS,

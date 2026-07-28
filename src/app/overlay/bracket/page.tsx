@@ -124,12 +124,27 @@ export default async function BracketOverlay({ searchParams }: Props) {
           </div>
 
           <div style={{ display: "flex", gap: 24, alignItems: "stretch" }}>
-            {/* Winners over losers */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            {/* Winners over losers, each band labelled so the split reads
+                instantly on stream */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{
+                fontFamily: FONT_DISPLAY, fontSize: "0.7rem", letterSpacing: 4,
+                textTransform: "uppercase", color: meta.color,
+              }}>
+                Winners Bracket
+              </div>
               <div style={{ display: "flex", gap: 16, alignItems: "stretch" }}>
                 {Array.from({ length: wbRounds }, (_, i) => i + 1).map(r => (
                   <RoundColumn key={`wb-${r}`} label={wbRoundLabel(r, wbRounds)} matches={bySideRound("winners", r)} />
                 ))}
+              </div>
+              <div style={{
+                marginTop: 8, paddingTop: 14,
+                borderTop: `1px solid ${PLATE_BORDER}`,
+                fontFamily: FONT_DISPLAY, fontSize: "0.7rem", letterSpacing: 4,
+                textTransform: "uppercase", color: "rgba(244,247,251,0.55)",
+              }}>
+                Losers Bracket
               </div>
               <div style={{ display: "flex", gap: 16, alignItems: "stretch" }}>
                 {Array.from({ length: lbRounds }, (_, i) => i + 1).map(r => {

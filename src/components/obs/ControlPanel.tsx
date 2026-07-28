@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Radio, Circle, Camera, RotateCcw, Wifi, WifiOff, MonitorX } from 'lucide-react'
+import { Radio, Circle, Camera, RotateCcw, Wifi, WifiOff, MonitorX, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh'
 import { type ObsAction, type ObsState, SCREEN_SCENES, relayIsFresh, ringSceneName } from '@/lib/obs'
@@ -48,6 +48,29 @@ export default function ControlPanel({ initialState, live }: Props) {
 
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Tap feedback across the confirmation gap: `busy` covers the POST itself
+  // (sub-second), `pending` covers the seconds between "queued" and OBS's
+  // confirmed state arriving via realtime — the button spins the whole way,
+  // so a tap on flaky cellular never feels like it did nothing. Cleared when
+  // fresh server state lands (any prop change) or after a 6s worst case.
+  const [pendingCmd, setPendingCmd] = useState<string | null>(null)
+  // Reset-on-new-props during render (the React-sanctioned alternative to a
+  // setState-in-effect): fresh server state means the command's outcome is
+  // now visible, so the spinner's job is done.
+  const [seenState, setSeenState] = useState(s)
+  if (seenState !== s) {
+    setSeenState(s)
+    setPendingCmd(null)
+  }
+  useEffect(() => {
+    if (!pendingCmd) return
+    const id = setTimeout(() => setPendingCmd(null), 6000)
+    return () => clearTimeout(id)
+  }, [pendingCmd])
+  const spinner = (key: string) =>
+    busy === key || pendingCmd === key
+      ? <Loader2 size={14} className="shrink-0 animate-spin" aria-label="waiting for OBS" />
+      : null
   // Stop-stream/record are destructive mid-event; require a second tap
   // within 4s instead of a confirm dialog (dialogs are easy to fat-finger
   // through one-handed, and block the whole panel).
@@ -67,6 +90,7 @@ export default function ControlPanel({ initialState, live }: Props) {
         body: JSON.stringify({ action, payload }),
       })
       if (!res.ok) setError((await res.json().catch(() => null))?.error ?? `Command failed (${res.status})`)
+      else setPendingCmd(key)
     } catch {
       setError('Network error — command not sent')
     } finally {
@@ -94,6 +118,7 @@ export default function ControlPanel({ initialState, live }: Props) {
         body: JSON.stringify({ active, ring, left, right }),
       })
       if (!res.ok) setError((await res.json().catch(() => null))?.error ?? `Override failed (${res.status})`)
+      else setPendingCmd('override')
     } catch {
       setError('Network error — override not sent')
     } finally {
@@ -152,7 +177,7 @@ export default function ControlPanel({ initialState, live }: Props) {
                   ? 'border-orange-400/70 bg-orange-500/25 text-orange-200'
                   : 'border-white/15 bg-white/5 text-foreground/80 hover:bg-white/10')}
             >
-              {scene}
+              {scene}{spinner(`scene:${scene}`)}
             </button>
           ))}
         </div>
@@ -168,7 +193,7 @@ export default function ControlPanel({ initialState, live }: Props) {
                   ? 'border-orange-400/70 bg-orange-500/25 text-orange-200'
                   : 'border-white/15 bg-white/5 text-foreground/80 hover:bg-white/10')}
             >
-              {scene}
+              {scene}{spinner(`scene:${scene}`)}
             </button>
           ))}
         </div>
@@ -183,12 +208,12 @@ export default function ControlPanel({ initialState, live }: Props) {
               className={cn(bigBtn, armed === 'stop_stream'
                 ? 'border-red-400 bg-red-500/40 text-red-100'
                 : 'border-red-500/50 bg-red-500/15 text-red-300')}>
-              <Radio size={16}/>{armed === 'stop_stream' ? 'Tap to confirm' : 'Stop Stream'}
+              <Radio size={16}/>{armed === 'stop_stream' ? 'Tap to confirm' : 'Stop Stream'}{spinner('stop_stream')}
             </button>
           ) : (
             <button onClick={() => send('start_stream')}
               className={cn(bigBtn, 'border-emerald-500/50 bg-emerald-500/15 text-emerald-300')}>
-              <Radio size={16}/>Go Live
+              <Radio size={16}/>Go Live{spinner('start_stream')}
             </button>
           )}
           {s.recording ? (
@@ -196,23 +221,23 @@ export default function ControlPanel({ initialState, live }: Props) {
               className={cn(bigBtn, armed === 'stop_record'
                 ? 'border-red-400 bg-red-500/40 text-red-100'
                 : 'border-red-500/50 bg-red-500/15 text-red-300')}>
-              <Circle size={16}/>{armed === 'stop_record' ? 'Tap to confirm' : 'Stop Rec'}
+              <Circle size={16}/>{armed === 'stop_record' ? 'Tap to confirm' : 'Stop Rec'}{spinner('stop_record')}
             </button>
           ) : (
             <button onClick={() => send('start_record')}
               className={cn(bigBtn, 'border-white/15 bg-white/5 text-foreground/80')}>
-              <Circle size={16}/>Record
+              <Circle size={16}/>Record{spinner('start_record')}
             </button>
           )}
           {s.replayBuffer ? (
             <button onClick={() => send('save_replay_buffer')}
               className={cn(bigBtn, 'col-span-2 border-sky-500/50 bg-sky-500/15 text-sky-300')}>
-              <RotateCcw size={16}/>Save Instant Replay
+              <RotateCcw size={16}/>Save Instant Replay{spinner('save_replay_buffer')}
             </button>
           ) : (
             <button onClick={() => send('start_replay_buffer')}
               className={cn(bigBtn, 'col-span-2 border-white/15 bg-white/5 text-foreground/70')}>
-              <Camera size={16}/>Start Replay Buffer
+              <Camera size={16}/>Start Replay Buffer{spinner('start_replay_buffer')}
             </button>
           )}
         </div>
@@ -288,11 +313,11 @@ export default function ControlPanel({ initialState, live }: Props) {
           <div className="grid grid-cols-2 gap-2">
             <button onClick={() => postOverride(true)} disabled={busy === 'override' || (!left.trim() && !right.trim())}
               className={cn(bigBtn, 'border-orange-400/60 bg-orange-500/20 text-orange-200 disabled:opacity-40')}>
-              Set
+              Set{spinner('override')}
             </button>
             <button onClick={() => postOverride(false)} disabled={busy === 'override'}
               className={cn(bigBtn, 'border-white/15 bg-white/5 text-foreground/70 disabled:opacity-40')}>
-              Clear
+              Clear{spinner('override')}
             </button>
           </div>
           {s.overrideActive && (
