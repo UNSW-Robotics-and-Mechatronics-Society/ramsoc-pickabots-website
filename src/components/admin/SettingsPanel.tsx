@@ -44,10 +44,11 @@ type ConfigResponse = {
   smsUpNextDefault: string;
   smsNotifyLead?: number;
   allIn?: boolean;
+  autoSmsEnabled?: boolean;
 };
 
 type ConfigPutResponse =
-  | { ok: true; smsUpNextTemplate: string; smsNotifyLead: number; allIn?: boolean }
+  | { ok: true; smsUpNextTemplate: string; smsNotifyLead: number; allIn?: boolean; autoSmsEnabled?: boolean }
   | { error: string };
 
 const DIVISION_LABEL: Record<Division, string> = { standards: "Standards", open: "Open" };
@@ -110,6 +111,8 @@ export default function SettingsPanel({
   // ── Team / Player / Reset sections ─────────────────────────────────────────
   const [allIn, setAllIn]           = useState(false);
   const [allInBusy, setAllInBusy]   = useState(false);
+  const [autoSmsEnabled, setAutoSmsEnabled] = useState(true);
+  const [autoSmsBusy, setAutoSmsBusy]       = useState(false);
   const [teamActionBusy, setTeamActionBusy] = useState(false);
   const [teamActionMsg, setTeamActionMsg]   = useState<string | null>(null);
   const [seedText, setSeedText]     = useState("");
@@ -166,6 +169,7 @@ export default function SettingsPanel({
       setNotifyLead(lead);
       setSavedNotifyLead(lead);
       setAllIn(data.allIn ?? false);
+      setAutoSmsEnabled(data.autoSmsEnabled ?? true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load settings");
     } finally {
@@ -291,6 +295,26 @@ export default function SettingsPanel({
       setAllIn(!next); // revert
     } finally {
       setAllInBusy(false);
+    }
+  }
+
+  async function toggleAutoSms() {
+    const next = !autoSmsEnabled;
+    setAutoSmsBusy(true);
+    setAutoSmsEnabled(next); // optimistic
+    try {
+      const res = await fetch("/api/admin/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ autoSmsEnabled: next }),
+      });
+      const data = (await res.json()) as ConfigPutResponse;
+      if (!res.ok || "error" in data) throw new Error("error" in data ? data.error : `Save failed (${res.status})`);
+      setAutoSmsEnabled(data.autoSmsEnabled ?? next);
+    } catch {
+      setAutoSmsEnabled(!next); // revert
+    } finally {
+      setAutoSmsBusy(false);
     }
   }
 
@@ -624,6 +648,29 @@ export default function SettingsPanel({
                   2 = they get the heads-up one match before they&rsquo;re on-deck, so
                   they&rsquo;re already at the arena.
                 </p>
+              </div>
+
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3">
+                <div className="min-w-0">
+                  <p className="text-xs text-foreground">Auto captain texts</p>
+                  <p className="text-[0.65rem] text-foreground/40">
+                    Turn off to stop the automatic &ldquo;up next&rdquo; texts that fire on every
+                    bracket save — e.g. while testing/dev, so real captains don&rsquo;t get spammed.
+                    The manual &ldquo;up next&rdquo; button and broadcasts still work either way.
+                  </p>
+                </div>
+                <button
+                  disabled={autoSmsBusy}
+                  onClick={toggleAutoSms}
+                  className={cn(
+                    "shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-40",
+                    autoSmsEnabled
+                      ? "border-[#FF6B00]/60 bg-[#FF6B00]/25 text-[#FF6B00]"
+                      : "border-white/15 bg-white/5 text-foreground/50 hover:text-foreground/80",
+                  )}
+                >
+                  {autoSmsEnabled ? "AUTO TEXTS: ON" : "AUTO TEXTS: OFF"}
+                </button>
               </div>
 
               {saveError && (
