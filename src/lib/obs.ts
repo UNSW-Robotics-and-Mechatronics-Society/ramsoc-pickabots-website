@@ -34,7 +34,7 @@ export function ringSceneName(ring: number): string {
 // "Commentary" is the phone-camera scene (Larix → MediaMTX `phone` path) +
 // the KPI banner. "Blank" is an intentionally empty scene — pure black
 // output for a hard visual reset (or the safest hold while rearranging).
-export const SCREEN_SCENES = ["Sumobots", "Intermission", "Bracket", "Standings", "Leaderboard", "Results", "All Rings", "Commentary", "Standby", "Blank"] as const;
+export const SCREEN_SCENES = ["Sumobots", "Intermission", "Bracket", "Standings", "Leaderboard", "Results", "All Rings", "Vote", "Commentary", "Standby", "Blank"] as const;
 export const INTERMISSION_SCENE = SCREEN_SCENES[0];
 
 /**
