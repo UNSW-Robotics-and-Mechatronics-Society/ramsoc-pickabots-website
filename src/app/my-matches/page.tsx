@@ -18,7 +18,17 @@ export default async function MyMatches() {
   const membership = profile ? await getTeamForProfile(profile.id) : null;
 
   if (!membership) {
-    return <MyMatchesPage team={null} matches={[]} pastMatches={[]} wins={0} losses={0} winRate={0} />;
+    return (
+      <MyMatchesPage
+        team={null}
+        matches={[]}
+        pastMatches={[]}
+        wins={0}
+        losses={0}
+        winRate={0}
+        eliminated={null}
+      />
+    );
   }
 
   const [matches, ledger] = await Promise.all([
@@ -34,6 +44,7 @@ export default async function MyMatches() {
       wins={ledger?.wins ?? 0}
       losses={ledger?.losses ?? 0}
       winRate={ledger?.winRate ?? 0}
+      eliminated={ledger?.eliminated ?? null}
     />
   );
 }

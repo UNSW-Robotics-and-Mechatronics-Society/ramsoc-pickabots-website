@@ -31,6 +31,7 @@ type Props = {
   wins: number
   losses: number
   winRate: number
+  eliminated: { roundLabel: string } | null
 }
 
 function StatTile({ label, value, color }: { label: string; value: string; color: string }) {
@@ -47,7 +48,7 @@ function StatTile({ label, value, color }: { label: string; value: string; color
   )
 }
 
-export default function MyMatchesPage({ team, matches, pastMatches, wins, losses, winRate }: Props) {
+export default function MyMatchesPage({ team, matches, pastMatches, wins, losses, winRate, eliminated }: Props) {
   // Ring/schedule edits (admin) and match results both change when a team's
   // upcoming slot or opponent shifts — same table set MatchList subscribes to.
   useRealtimeRefresh(['bracket_matches', 'bracket_config', 'bracket_schedule'])
@@ -99,16 +100,41 @@ export default function MyMatchesPage({ team, matches, pastMatches, wins, losses
         </div>
       )}
 
-      {team && matches.length === 0 && (
+      {team && eliminated && (
+        <div className="glass" style={{
+          borderRadius: 14, padding: '16px 18px',
+          border: '1px solid rgba(255,80,80,0.35)',
+        }}>
+          <div style={{
+            fontSize: '0.44rem', fontWeight: 900, letterSpacing: 2, textTransform: 'uppercase',
+            color: '#ff6666', marginBottom: 6,
+          }}>
+            Knocked Out · {eliminated.roundLabel}
+          </div>
+          <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.7)', lineHeight: 1.6, margin: 0 }}>
+            {matches.length === 0
+              ? "Your team has been eliminated from the bracket — there are no more matches to come."
+              : "Your team has been eliminated from the bracket, but you still have a match below."}
+          </p>
+        </div>
+      )}
+
+      {team && !eliminated && matches.length === 0 && (
         <div className="glass" style={{ borderRadius: 14, padding: '20px 18px', textAlign: 'center' }}>
           <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.6)', margin: 0 }}>
-            No upcoming matches scheduled right now — check back later.
+            No upcoming matches scheduled right now. This page updates automatically as soon as your
+            next match is added to the schedule.
           </p>
         </div>
       )}
 
       {team && matches.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{
+            fontSize: '0.44rem', color: 'rgba(255,255,255,0.35)', letterSpacing: 1, lineHeight: 1.5,
+          }}>
+            Estimated times — this list updates automatically as matches complete and the schedule shifts.
+          </div>
           {matches.map((m, i) => (
             <div
               key={m.matchId}
