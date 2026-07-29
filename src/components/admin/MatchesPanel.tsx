@@ -8,7 +8,6 @@ import {
 } from "@/lib/mock-data";
 import {
   type MatchSchedule, type ExhibitionSchedule, type ConcurrentRings, type RingMatch,
-  START_MINUTE,
   changeTimings, changeExhibitionTimings, swapMatchIds, editMatchTime, resetMatchTime, rollSchedule,
   addExhibitionRing, removeExhibitionRing, addMatchToExhibitionRing, rollExhibitionSchedule,
 } from "@/lib/schedule";
@@ -29,15 +28,14 @@ const STATUS_TEXT: Record<MatchStatus, string> = {
 };
 
 // ── layout constants ─────────────────────────────────────────────────────────
-const AXIS_W    = 56;  // shared left time-axis column width
 const RING_W    = 196; // ring's match-column width — card ≈ 188 (after inset), matching the bracket box
 const HEADER_H  = 30;  // sticky header row height
-const CARD_H    = 116; // match card height — matches the bracket box (incl. the top toggle row)
+const CARD_H    = 116; // match card height — matches the bracket box (incl. the top time row)
 const BOX_GAP   = 12;  // vertical gap between consecutive boxes, independent of match/gap minutes
 
-/** One ring's full column (axis + matches) — the panel should never be
- * resized narrower than this, so at least one ring is always fully visible. */
-export const MIN_MATCH_LIST_W = AXIS_W + RING_W;
+/** One ring's full column — the panel should never be resized narrower than
+ * this, so at least one ring is always fully visible. */
+export const MIN_MATCH_LIST_W = RING_W;
 
 function matchLabel(m: BracketMatch, teamCount: TeamCount): string {
   if (m.side === 'finals-semi')  return `Finals Semi ${m.matchNumber}`;
@@ -104,11 +102,19 @@ type MatchCardProps = {
   onRemove?: (id: string) => void;
   /** Default placeholder text for empty slots (feeder labels, e.g. "Winner of R64 M3"). */
   defaults?: { a?: string; b?: string };
+  /** This match's scheduled start, shown and edited on the card itself — see
+   *  the top row below. Undefined only if the match isn't on a ring at all. */
+  minute?: number;
+  /** Its time was set by hand (see RingMatch.pinned). */
+  pinned?: boolean;
+  onTimeCommit?: (minute: number) => void;
+  onTimeReset?: () => void;
 };
 
 function MatchCard({
   match, teamCount,
   onDrop, onChange, datalistId, isValidTeamName, dimmed, onRemove, defaults,
+  minute, pinned, onTimeCommit, onTimeReset,
 }: MatchCardProps) {
   const [isDragging, setIsDragging]     = useState(false);
   const [dragOver,   setDragOver]       = useState(false);
@@ -178,15 +184,28 @@ function MatchCard({
         dimmed     && 'opacity-30 grayscale-70',
       )}
     >
-      {/* Top row — mirrors the bracket card's time row (but with no time);
-          holds the remove control (left, exhibition only) and the vote toggle
-          (right, active only). Always present so every card is the same height
-          as the bracket boxes. */}
+      {/* Top row — the same time row as the bracket card (AdminBracket's
+          MatchCard), plus the remove control (left, exhibition only) and the
+          vote toggle (right, active/next only). The time is absolutely centred
+          rather than a third flex child: both of the other two come and go
+          (the ✕ on hover, the toggle with status), and a flex layout would
+          shift the time sideways as they do. */}
       <div
-        className="flex shrink-0 items-center justify-between border-b border-white/[0.14] px-1.5 py-1"
+        className="relative flex shrink-0 items-center justify-between border-b border-white/[0.14] px-1.5 py-1"
         style={{ minHeight: 20 }}
         onMouseDown={e => e.stopPropagation()}
       >
+        {minute !== undefined && onTimeCommit && (
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+            <TimeCell
+              minute={minute}
+              pinned={pinned}
+              onCommit={onTimeCommit}
+              onReset={onTimeReset}
+            />
+          </div>
+        )}
+
         {removable ? (
           confirmRemove ? (
             <span className="flex items-center gap-1">
@@ -436,14 +455,13 @@ export default function MatchesPanel({
   // any team's name in by hand already worked.
   const exhibitionDatalistId = "ms-teams-exhibition";
 
-  // One shared axis: every ring uses the same start-time reference and the
-  // same pixel-per-minute density, so a given clock time lines up at the
-  // same row across every ring — but each ring still shows and edits its own
-  // matches' times individually. The density is derived from the fixed card
-  // height so a match's box always exactly fills its own slot — card size
-  // never changes, only the (visible) gap after it grows/shrinks with gap time.
-  // Only the rings for the active mode are shown/measured — bracket-round
-  // and exhibition matches no longer share one combined view.
+  // Matches stack directly on top of each other in each ring, every card the
+  // same height with a fixed gap, and each card carries its own start time (see
+  // MatchCard's top row) — there's no time axis and no time→pixel projection.
+  // Rows therefore line up across rings by QUEUE POSITION rather than by clock
+  // time, and the gap between two cards no longer varies with gap minutes.
+  // Only the rings for the active mode are shown — bracket-round and exhibition
+  // matches no longer share one combined view.
   const shownEntries = mode === 'exhibition' ? exhibitionSchedule.rings.flat() : schedule.rings.flat();
   // Show the ring area if there are any matches OR (in exhibition mode) any
   // exhibition rings at all — even empty ones, so you can add matches to a
@@ -451,20 +469,10 @@ export default function MatchesPanel({
   const isEmpty = mode === 'exhibition'
     ? shownEntries.length === 0 && exhibitionSchedule.rings.length === 0
     : shownEntries.length === 0;
+  // Still needed by the Match/Gap inputs below (they rewrite the schedule's
+  // times) — they just no longer drive any pixel geometry.
   const activeMatchMinutes = mode === 'exhibition' ? exhibitionSchedule.matchMinutes : schedule.matchMinutes;
   const activeGapMinutes   = mode === 'exhibition' ? exhibitionSchedule.gapMinutes   : schedule.gapMinutes;
-  const starts = shownEntries.map(e => e.startMinute);
-  const globalStart = starts.length ? Math.min(...starts) : START_MINUTE;
-  const globalEnd = starts.length
-    ? Math.max(...starts) + activeMatchMinutes + activeGapMinutes
-    : globalStart + activeMatchMinutes + activeGapMinutes;
-  const totalMinutes = Math.max(1, globalEnd - globalStart);
-  // Smaller pixel-to-time ratio than before: each slot (match + gap) occupies
-  // only CARD_H + BOX_GAP px, so consecutive boxes sit close together. The box
-  // itself is always drawn at CARD_H — this changes the spacing, not the size.
-  const pxPerMin = (CARD_H + BOX_GAP) / (activeMatchMinutes + activeGapMinutes);
-  const canvasH = totalMinutes * pxPerMin;
-  const yFor = (minute: number) => (minute - globalStart) * pxPerMin;
 
   // One ring column (used for both bracket rings and exhibition rings). Bracket
   // rings just show a label; exhibition rings also get an add-match "+" and a
@@ -482,7 +490,7 @@ export default function MatchesPanel({
             "sticky top-0 z-10 flex items-center justify-center border bg-black/85 text-[0.8rem] font-bold uppercase tracking-widest text-white backdrop-blur-sm",
             opts?.accent ? "border-violet-400/60" : "border-white/30",
           )}
-          style={{ height: HEADER_H, width: AXIS_W + RING_W }}
+          style={{ height: HEADER_H, width: RING_W }}
         >
           {label}
           <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-1">
@@ -504,51 +512,47 @@ export default function MatchesPanel({
             )}
           </div>
         </div>
-        <div className="flex items-start pt-3">
-          {/* this ring's own time axis — same scale as every other ring */}
-          <div className="relative shrink-0" style={{ width: AXIS_W, height: canvasH }}>
-            {ring.map(entry => (
-              <div
-                key={entry.matchId}
-                className="absolute right-1.5 flex items-center justify-end"
-                style={{ top: yFor(entry.startMinute) + (CARD_H - 18) / 2, height: 18 }}
-              >
-                <TimeCell
+        {/* This ring's matches, stacked in start-time order. The sort is purely
+            presentational — every write below is keyed by match id (swap, time
+            edit/reset, remove), so the stored queue order is untouched. Ties
+            (which shouldn't happen within one ring) keep queue order, since
+            Array#sort is stable. */}
+        <div className="flex flex-col px-1 pt-3" style={{ width: RING_W, gap: BOX_GAP }}>
+          {[...ring].sort((a, b) => a.startMinute - b.startMinute).map(entry => {
+            const match = matchById.get(entry.matchId);
+            if (!match) return null;
+            return (
+              <div key={match.id} className="shrink-0" style={{ height: CARD_H }}>
+                <MatchCard
+                  match={match}
+                  teamCount={teamCount}
+                  onDrop={srcId => onSwap(srcId, match.id)}
+                  onChange={handleMatchChange}
+                  datalistId={match.side === 'exhibition' ? exhibitionDatalistId : datalistId}
+                  isValidTeamName={name => isValidTeamName(match, name)}
+                  dimmed={isMatchDimmed(match, filterSet)}
+                  onRemove={handleRemoveMatch}
+                  defaults={slotDefaults.get(match.id)}
                   minute={entry.startMinute}
                   pinned={entry.pinned}
-                  onCommit={min => onEditTime(entry.matchId, min)}
-                  onReset={() => onResetTime(entry.matchId)}
+                  onTimeCommit={min => onEditTime(entry.matchId, min)}
+                  onTimeReset={() => onResetTime(entry.matchId)}
                 />
               </div>
-            ))}
-          </div>
+            );
+          })}
 
-          {/* this ring's matches */}
-          <div className="relative shrink-0" style={{ width: RING_W, height: canvasH }}>
-            {ring.map(entry => {
-              const match = matchById.get(entry.matchId);
-              if (!match) return null;
-              return (
-                <div
-                  key={match.id}
-                  className="absolute inset-x-1"
-                  style={{ top: yFor(entry.startMinute), height: CARD_H }}
-                >
-                  <MatchCard
-                    match={match}
-                    teamCount={teamCount}
-                    onDrop={srcId => onSwap(srcId, match.id)}
-                    onChange={handleMatchChange}
-                    datalistId={match.side === 'exhibition' ? exhibitionDatalistId : datalistId}
-                    isValidTeamName={name => isValidTeamName(match, name)}
-                    dimmed={isMatchDimmed(match, filterSet)}
-                    onRemove={handleRemoveMatch}
-                    defaults={slotDefaults.get(match.id)}
-                  />
-                </div>
-              );
-            })}
-          </div>
+          {/* A stacked column collapses to nothing when empty — without this a
+              freshly added exhibition ring would show a bare header with no
+              indication that its "+" is what fills it. */}
+          {ring.length === 0 && (
+            <div
+              className="flex items-center justify-center rounded-md border border-dashed border-white/15 text-[0.55rem] text-foreground/30"
+              style={{ height: CARD_H }}
+            >
+              {opts?.onAddMatch ? 'No matches — use + above' : 'No matches'}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -632,8 +636,8 @@ export default function MatchesPanel({
 
         {/* Match/Gap apply globally to every not-yet-completed match across
             all rings for the active mode (changeTimings/changeExhibitionTimings
-            freeze completed matches' times). Card size never changes with
-            these — only the axis spacing does. */}
+            freeze completed matches' times). They only move the times shown on
+            the cards — the stacked layout's spacing is fixed either way. */}
         <div className="flex shrink-0 items-center gap-1.5 @max-[180px]:hidden">
           <span className="text-[0.55rem] uppercase tracking-widest text-foreground/40">Match</span>
           <NumInput
@@ -684,9 +688,9 @@ export default function MatchesPanel({
         />
       </div>
 
-      {/* Match list — one shared scale, one scroll; each ring keeps its own
-          axis column so every match's time is still edited individually.
-          Extra right padding keeps the scrollbar off the match cards. */}
+      {/* Match list — one shared scale, one scroll; each ring is its own stacked
+          column and every match's time is still edited individually, on its own
+          card. Extra right padding keeps the scrollbar off the match cards. */}
       <div className="min-h-0 flex-1 overflow-auto pr-10">
         {isEmpty ? (
           <div className="flex h-full items-center justify-center">
@@ -705,7 +709,7 @@ export default function MatchesPanel({
         )}
       </div>
 
-      {/* Uniform scale — zooms the whole list (rings + cards + axis) proportionally */}
+      {/* Uniform scale — zooms the whole list (rings + cards) proportionally */}
       {!isEmpty && (
         <div className="flex shrink-0 items-center justify-end gap-2 border-t border-white/10 px-3 py-1.5">
           <span className="text-[0.55rem] text-foreground/40">Scale</span>

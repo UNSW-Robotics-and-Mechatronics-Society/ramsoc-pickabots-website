@@ -10,11 +10,15 @@ import BracketZoomPan, { type BracketZoomPanHandle } from './BracketZoomPan'
 import TeamFilterBar from './TeamFilterBar'
 import TeamLedgerModal from './TeamLedgerModal'
 
-// Table geometry. TIME_W is the fixed left "time" column; ring columns are a
-// fixed card size — the table is panned/zoomed as a whole (see
-// BracketZoomPan, shared with the bracket page) rather than scaled to fit
-// the screen, so column widths no longer depend on container size.
-const TIME_W  = 64
+// Table geometry. Every ring is a TIME_W time column followed by a fixed-size
+// card column (one axis per ring, as in the admin panel) — the table is
+// panned/zoomed as a whole (see BracketZoomPan, shared with the bracket page)
+// rather than scaled to fit the screen, so column widths no longer depend on
+// container size.
+// Same width as the admin panel's per-ring axis, so "12:05 PM" fits without
+// wrapping while the right-aligned time still sits close to its own card
+// (rather than drifting toward the ring on its left).
+const TIME_W  = 56
 const COL_GAP = 10
 const ROW_GAP = 8
 // Fixed card scale, applied uniformly regardless of viewport — the zoom
@@ -97,21 +101,6 @@ export default function MatchList({ matches, teamCounts, schedules, exhibitionSc
   const rowH = MATCH_H * CARD_SCALE
   const cardW = ROUND_W * CARD_SCALE
 
-  // Left-column row label. Rings usually run in step, so a row normally has one
-  // time worth labelling — but they are independent queues and DO drift apart
-  // (a completed match stays frozen at the time it played, a hand-set time is
-  // pinned, a ring added mid-event starts from "now" — see retimeRings), so the
-  // label is only shown when every ring's entry at this index agrees. Each card
-  // always carries its own exact start time, which is what the admin panel's
-  // per-ring time axis shows.
-  const timeForRow = (i: number): number | null => {
-    const minutes = ringCols
-      .map(c => c.ring[i]?.startMinute)
-      .filter((m): m is number => m !== undefined)
-    if (minutes.length === 0) return null
-    return minutes.every(m => m === minutes[0]) ? minutes[0] : null
-  }
-
   const headerCell: CSSProperties = {
     textTransform: 'uppercase', fontSize: '0.5rem', fontWeight: 900, letterSpacing: 2,
     color: 'rgba(255,255,255,0.5)', textAlign: 'center',
@@ -122,58 +111,62 @@ export default function MatchList({ matches, teamCounts, schedules, exhibitionSc
   const tableContent = (
     <div style={{
       display: 'grid',
-      gridTemplateColumns: `${TIME_W}px repeat(${nRings}, ${cardW}px)`,
+      gridTemplateColumns: `repeat(${nRings}, ${TIME_W}px ${cardW}px)`,
       columnGap: COL_GAP, rowGap: ROW_GAP,
       alignItems: 'center', padding: '4px 16px 24px',
     }}>
       {/* Header row — pans/zooms with the rest of the content, same as the
           bracket page's "Winners Bracket" / "Ring 1" labels (nothing here
-          is pinned to the viewport; the camera is what moves instead). */}
-      <div style={headerCell}>Time</div>
+          is pinned to the viewport; the camera is what moves instead). Each
+          label spans its ring's time + card columns. */}
       {ringCols.map((c, ri) => (
-        <div key={`h-${ri}`} style={headerCell}>{c.label}</div>
+        <div key={`h-${ri}`} style={{ ...headerCell, gridColumn: 'span 2' }}>{c.label}</div>
       ))}
 
       {/* One row per slot index */}
       {Array.from({ length: maxLen }, (_, i) => {
-        const minute = timeForRow(i)
         return (
           <Fragment key={`row-${i}`}>
-            <div style={{
-              height: rowH, display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
-              paddingRight: 6,
-              fontSize: '0.62rem', fontWeight: 800, letterSpacing: 0.5,
-              color: 'rgba(255,215,0,0.75)',
-            }}>
-              {minute === null ? '' : formatTime(minute)}
-            </div>
-
-            {/* One card cell per ring */}
+            {/* Per ring: its own time cell, then its card. Every ring carries
+                its own axis (as the admin panel does) because rings are
+                independent queues whose times drift apart — a completed match
+                stays frozen at the time it played, a hand-set time is pinned,
+                and a ring added mid-event starts from "now" (see retimeRings).
+                One shared column per row would have to pick one ring's time
+                and show it against every other ring's match. */}
             {ringCols.map((c, ri) => {
               const entry = c.ring[i]
               const match = entry ? matchById.get(entry.matchId) : undefined
               return (
-                <div key={`c-${ri}-${i}`} style={{ height: rowH, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  {entry && match ? (
-                    <div
-                      ref={el => { matchRefs.current[match.id] = el }}
-                      style={{ width: cardW, height: rowH }}
-                    >
-                      <div style={{ transform: `scale(${CARD_SCALE})`, transformOrigin: 'top left', width: ROUND_W, height: MATCH_H }}>
-                        <MatchCard
-                          match={match}
-                          // This ring's own slot time — never the row label, which
-                          // is blank whenever the rings have drifted apart.
-                          time={formatTime(entry.startMinute)}
-                          dimmed={isMatchDimmed(match, filterSet)}
-                          selected={isMatchSelected(match, filterSet)}
-                          defaults={slotDefaults.get(match.id)}
-                          onTeamClick={setSelectedTeam}
-                        />
+                <Fragment key={`c-${ri}-${i}`}>
+                  <div style={{
+                    height: rowH, display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+                    paddingRight: 6, whiteSpace: 'nowrap',
+                    fontSize: '0.62rem', fontWeight: 800, letterSpacing: 0.5,
+                    color: 'rgba(255,215,0,0.75)',
+                  }}>
+                    {entry && match ? formatTime(entry.startMinute) : ''}
+                  </div>
+
+                  <div style={{ height: rowH, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {entry && match ? (
+                      <div
+                        ref={el => { matchRefs.current[match.id] = el }}
+                        style={{ width: cardW, height: rowH }}
+                      >
+                        <div style={{ transform: `scale(${CARD_SCALE})`, transformOrigin: 'top left', width: ROUND_W, height: MATCH_H }}>
+                          <MatchCard
+                            match={match}
+                            dimmed={isMatchDimmed(match, filterSet)}
+                            selected={isMatchSelected(match, filterSet)}
+                            defaults={slotDefaults.get(match.id)}
+                            onTeamClick={setSelectedTeam}
+                          />
+                        </div>
                       </div>
-                    </div>
-                  ) : null}
-                </div>
+                    ) : null}
+                  </div>
+                </Fragment>
               )
             })}
           </Fragment>
