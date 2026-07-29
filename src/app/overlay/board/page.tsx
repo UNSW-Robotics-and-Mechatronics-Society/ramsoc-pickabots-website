@@ -8,6 +8,8 @@ import { DIVISION_META, GOLD, PLATE_BG, PLATE_BORDER, FONT_DISPLAY, FONT_BODY } 
 
 export const dynamic = "force-dynamic";
 
+type Props = { searchParams: Promise<{ layout?: string }> };
+
 /**
  * The info board — a single page carrying the multiview's fourth quadrant
  * (design signed off via the reviewed mock):
@@ -42,7 +44,13 @@ function nextMatches(bracket: BracketState, division: Division, count: number) {
   return out.slice(0, count);
 }
 
-export default async function BoardOverlay() {
+export default async function BoardOverlay({ searchParams }: Props) {
+  // ?layout=wide → the five cards in ONE row, designed for a 1920×540
+  // browser source (a full-width bottom band on the multiview). Default is
+  // the two-row 1920×1080 quadrant layout.
+  const params = await searchParams;
+  const wide = params.layout === "wide";
+
   const [bracket, leaderboard, wagers] = await Promise.all([
     getBracketState(), getTeamsLeaderboard(), getWagerStats(),
   ]);
@@ -100,20 +108,27 @@ export default async function BoardOverlay() {
   return (
     <>
       <OverlayRefresh tables={["bracket_matches", "bracket_schedule", "votes", "matches"]} intervalMs={4000} />
-      <div style={{
+      <div style={wide ? {
+        position: "fixed", inset: 0, padding: 18,
+        display: "grid", gridTemplateColumns: "460px 460px 300px 1fr 400px", gap: 16,
+        fontFamily: FONT_BODY,
+      } : {
         position: "fixed", inset: 0, padding: 26,
         display: "grid", gridTemplateRows: "490px 1fr", gap: 20,
         fontFamily: FONT_BODY,
       }}>
-        {/* ── row 1: up next per division ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+        {/* ── up next per division (row 1 in quadrant layout; first two
+            columns in wide) ── */}
+        <div style={wide
+          ? { display: "contents" }
+          : { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
           {(["standards", "open"] as Division[]).map(d => {
             const meta = DIVISION_META[d];
             return (
               <div key={d} style={{ ...card, padding: 0, gap: 10 }}>
                 <div style={{
-                  fontFamily: FONT_DISPLAY, fontSize: "1.45rem", letterSpacing: 8,
-                  textTransform: "uppercase", padding: "16px 28px",
+                  fontFamily: FONT_DISPLAY, fontSize: wide ? "1rem" : "1.45rem", letterSpacing: 8,
+                  textTransform: "uppercase", padding: wide ? "10px 20px" : "16px 28px",
                   borderBottom: `5px solid ${GOLD}`,
                 }}>
                   Up Next
@@ -125,19 +140,19 @@ export default async function BoardOverlay() {
                 )}
                 {upNext[d].map(({ match, ring, startMinute }) => (
                   <div key={match.id} style={{
-                    display: "flex", alignItems: "center", gap: 20,
+                    display: "flex", alignItems: "center", gap: wide ? 14 : 20,
                     borderLeft: `7px solid ${meta.color}`,
-                    padding: "12px 24px", margin: "0 12px",
+                    padding: wide ? "9px 16px" : "12px 24px", margin: "0 12px",
                     background: "rgba(255,255,255,0.03)",
                   }}>
-                    <span style={{ display: "flex", flexDirection: "column", alignItems: "center", minWidth: 104 }}>
-                      <span style={{ color: GOLD, fontSize: "1.3rem", fontWeight: 800 }}>{formatTime(startMinute)}</span>
-                      <span style={{ fontSize: "0.95rem", fontWeight: 800, letterSpacing: 3, textTransform: "uppercase", color: meta.color }}>
+                    <span style={{ display: "flex", flexDirection: "column", alignItems: "center", minWidth: wide ? 80 : 104 }}>
+                      <span style={{ color: GOLD, fontSize: wide ? "1rem" : "1.3rem", fontWeight: 800 }}>{formatTime(startMinute)}</span>
+                      <span style={{ fontSize: wide ? "0.75rem" : "0.95rem", fontWeight: 800, letterSpacing: 3, textTransform: "uppercase", color: meta.color }}>
                         Ring {ring}
                       </span>
                     </span>
                     <span style={{
-                      fontFamily: FONT_DISPLAY, fontSize: "1.5rem", minWidth: 0,
+                      fontFamily: FONT_DISPLAY, fontSize: wide ? "1.05rem" : "1.5rem", minWidth: 0,
                       whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                     }}>
                       {match.slotA.teamName || "TBD"} <span style={{ color: "rgba(255,255,255,0.4)" }}>vs</span> {match.slotB.teamName || "TBD"}
@@ -149,8 +164,10 @@ export default async function BoardOverlay() {
           })}
         </div>
 
-        {/* ── row 2: graphs ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "450px 1fr 600px", gap: 20 }}>
+        {/* ── graphs (row 2 in quadrant layout; remaining columns in wide) ── */}
+        <div style={wide
+          ? { display: "contents" }
+          : { display: "grid", gridTemplateColumns: "450px 1fr 600px", gap: 20 }}>
 
           {/* ① progress */}
           <div style={card}>
