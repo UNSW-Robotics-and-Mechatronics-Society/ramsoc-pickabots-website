@@ -209,10 +209,14 @@ export function dueForNotify(
 }
 
 export function formatTime(minute: number): string {
-  const h = Math.floor(minute / 60);
+  // Wrap into a 24-hour day. A long queue on few rings — or a start time set
+  // late in the evening — pushes slots past midnight, and an unwrapped hour
+  // just keeps counting: 1500 (25:00) rendered as "13:00 PM" and 1440
+  // (midnight) as "12:00 PM" instead of "12:00 AM".
+  const h = Math.floor(minute / 60) % 24;
   const m = minute % 60;
   const period = h >= 12 ? 'PM' : 'AM';
-  const displayH = h > 12 ? h - 12 : h === 0 ? 12 : h;
+  const displayH = h % 12 === 0 ? 12 : h % 12;
   return `${displayH}:${m.toString().padStart(2, '0')} ${period}`;
 }
 
