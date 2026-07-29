@@ -17,6 +17,14 @@ export type TeamLedgerMatchEntry = {
   roundLabel: string;
 };
 
+export type UpcomingTeamMatch = {
+  matchId: string;
+  opponentName: string;
+  roundLabel: string;
+  time: string | null;
+  isExhibition: boolean;
+};
+
 export type TeamLedger = {
   name: string;
   kind: "regular" | "special";
@@ -210,4 +218,58 @@ export async function getTeamLedger(name: string, divisionHint?: Division): Prom
     nextMatch,
     eliminated,
   };
+}
+
+/**
+ * Every not-yet-played match (active/next/todo, plus any exhibition match)
+ * for a team, soonest first — the "your upcoming matches" list for a player
+ * linked to a competing team. `divisionHint` disambiguates a name that
+ * happens to exist as a team in both divisions, same as getTeamLedger;
+ * exhibition matches are always included regardless (their `division` field
+ * is vestigial — see BracketSide's 'exhibition' doc comment).
+ */
+export async function getUpcomingMatchesForTeam(
+  name: string,
+  divisionHint?: Division,
+): Promise<UpcomingTeamMatch[]> {
+  const { matches, schedules, exhibitionSchedule } = await getBracketState();
+
+  const teamMatches = matches.filter(
+    m =>
+      (m.slotA.teamName === name || m.slotB.teamName === name) &&
+      (!divisionHint || m.division === divisionHint || m.side === "exhibition"),
+  );
+
+  const upcoming = teamMatches.filter(
+    m => m.status === "active" || m.status === "next" || m.status === "todo",
+  );
+
+  const timeByMatchId = new Map<string, number>();
+  for (const division of Object.keys(schedules) as Division[]) {
+    for (const e of schedules[division].rings.flat()) timeByMatchId.set(e.matchId, e.startMinute);
+  }
+  for (const e of exhibitionSchedule.rings.flat()) timeByMatchId.set(e.matchId, e.startMinute);
+
+  // Soonest scheduled time first; matches with no slot yet (undecided
+  // feeders) fall back to bracket stage order and sort after every timed one.
+  upcoming.sort((a, b) => {
+    const ta = timeByMatchId.get(a.id);
+    const tb = timeByMatchId.get(b.id);
+    if (ta !== undefined && tb !== undefined) return ta - tb;
+    if (ta !== undefined) return -1;
+    if (tb !== undefined) return 1;
+    return stageRank(a) - stageRank(b);
+  });
+
+  return upcoming.map(m => {
+    const isA = m.slotA.teamName === name;
+    const minute = timeByMatchId.get(m.id);
+    return {
+      matchId: m.id,
+      opponentName: isA ? m.slotB.teamName : m.slotA.teamName,
+      roundLabel: roundLabel(m),
+      time: minute !== undefined ? formatTime(minute) : null,
+      isExhibition: m.side === "exhibition",
+    };
+  });
 }
