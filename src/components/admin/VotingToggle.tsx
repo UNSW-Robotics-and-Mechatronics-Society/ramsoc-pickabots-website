@@ -2,8 +2,8 @@ import { cn } from "@/lib/cn";
 
 /**
  * Small on/off switch (with a "VOTE" label) the admin uses to open or lock
- * public voting on a match. Only rendered on active matches. Stops mousedown
- * so it doesn't start a card drag.
+ * public voting on a match. Rendered on active and next (upcoming) matches.
+ * Stops mousedown so it doesn't start a card drag.
  */
 export default function VotingToggle({
   open,

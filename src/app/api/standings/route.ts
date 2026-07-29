@@ -4,16 +4,17 @@ import supabase from '@/lib/supabase'
 import { getLiveStandings, type VoteEntry } from '@/lib/vote-pool'
 import type { VoteStandings } from '@/lib/types'
 
-// Live odds for EVERY active match in one cached response. The voting page polls
-// this once per tick instead of firing one request per active match per viewer,
-// and the short TTL collapses all viewers' polls into a single vote scan every
-// ~2s. This is the dominant read on the voting path at scale, so caching it is
-// the biggest efficiency win there — odds are already only as fresh as the
-// poll, so a 2s cache is invisible to users.
+// Live odds for every biddable match (active OR next-with-voting-open) in one
+// cached response. The voting page polls this once per tick instead of firing
+// one request per match per viewer, and the short TTL collapses all viewers'
+// polls into a single vote scan every ~2s. This is the dominant read on the
+// voting path at scale, so caching it is the biggest efficiency win there —
+// odds are already only as fresh as the poll, so a 2s cache is invisible to
+// users.
 const getActiveStandings = unstable_cache(
   async (): Promise<Record<string, VoteStandings>> => {
     const { data: activeMatches, error: mErr } = await supabase
-      .from('matches').select('id').eq('is_active', true)
+      .from('matches').select('id').or('is_active.eq.true,voting_open.eq.true')
     if (mErr) throw new Error(mErr.message)
 
     const ids = (activeMatches ?? []).map(m => m.id as string)

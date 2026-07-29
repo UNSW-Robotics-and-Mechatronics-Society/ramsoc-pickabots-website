@@ -153,7 +153,7 @@ export default function VotePage() {
   // one request per active match, so a room full of viewers is a single vote
   // scan every couple of seconds instead of hundreds of requests per second.
   useEffect(() => {
-    const hasActive = matches.some(m => m.is_active)
+    const hasActive = matches.some(m => m.is_active || m.voting_open)
     if (!hasActive) return
     let cancelled = false
     async function fetchStandings() {
@@ -494,11 +494,25 @@ export default function VotePage() {
               Next Matches
             </span>
             {nextVisible.map(match => (
-              <NextMatchCard
-                key={match.id}
-                match={match}
-                onTeamClick={name => handleTeamClick(name, match.comp_type)}
-              />
+              // A "next" match with voting opened by the admin is biddable
+              // just like an active one — the read-only card is only for
+              // the ones still waiting on that.
+              match.voting_open
+                ? <Ring
+                    key={match.id}
+                    match={match}
+                    vote={votes[match.id] ?? null}
+                    standings={standings[match.id] ?? null}
+                    votingOpen={match.voting_open}
+                    onVote={side => handleVote(match.id, side, side === 'left' ? match.left_name : match.right_name, match.comp_type)}
+                    onUndo={() => handleUndo(match.id)}
+                    onTeamClick={name => handleTeamClick(name, match.comp_type)}
+                  />
+                : <NextMatchCard
+                    key={match.id}
+                    match={match}
+                    onTeamClick={name => handleTeamClick(name, match.comp_type)}
+                  />
             ))}
           </div>
         )}

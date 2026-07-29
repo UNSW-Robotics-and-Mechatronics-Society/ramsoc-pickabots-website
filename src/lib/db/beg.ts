@@ -36,14 +36,15 @@ async function countCompletedMatches(): Promise<number> {
   return count ?? 0;
 }
 
-// True when the player has a vote riding on a still-live match (one that
-// hasn't been resolved yet). Begging is blocked while a stake is on the table
-// — otherwise a player could go all-in, then top up mid-match by begging.
+// True when the player has a vote riding on a still-unresolved match — active
+// or an upcoming "next" match with voting opened early. Begging is blocked
+// while a stake is on the table — otherwise a player could go all-in, then
+// top up before the outcome by begging.
 async function userHasActiveVote(userId: string): Promise<boolean> {
   const { data: activeMatches, error: mErr } = await supabase
     .from("matches")
     .select("id")
-    .eq("is_active", true);
+    .is("winner_side", null);
   if (mErr) throw new Error(`Failed to load active matches: ${mErr.message}`);
 
   const ids = (activeMatches ?? []).map(m => m.id as string);
