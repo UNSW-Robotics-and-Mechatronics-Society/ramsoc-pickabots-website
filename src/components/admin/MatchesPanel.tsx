@@ -127,10 +127,10 @@ function MatchCard({
     match.status === 'skipped'   ? 'border-red-400 shadow-[0_0_10px_rgba(248,113,113,0.45)]' :
     'border-white/[0.28]';
 
-  // Non-active matches (todo/next/completed/skipped) can be scored at any time.
-  // For ACTIVE matches, keep the rule: scoring only once voting is closed, so
-  // votes are locked in before any score is entered.
-  const scoringAllowed = match.status === 'active' ? !match.votingOpen : true;
+  // Todo/completed/skipped matches can be scored at any time. For ACTIVE and
+  // NEXT matches (either can now have voting open), keep the rule: scoring
+  // only once voting is closed, so votes are locked in before a score lands.
+  const scoringAllowed = (match.status === 'active' || match.status === 'next') ? !match.votingOpen : true;
 
   function setScore(slot: 'a' | 'b', delta: number) {
     const updated: BracketMatch = {
@@ -223,7 +223,7 @@ function MatchCard({
           <span />
         )}
 
-        {match.status === 'active' ? (
+        {(match.status === 'active' || match.status === 'next') ? (
           <VotingToggle
             open={match.votingOpen}
             onToggle={() => onChange({ ...match, votingOpen: !match.votingOpen })}

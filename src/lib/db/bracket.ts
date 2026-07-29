@@ -244,9 +244,10 @@ async function reconcileVotingMatches(bracketMatchById: Map<string, BracketMatch
     const desired = {
       comp_type: toDbCategory(bm.division),
       is_active: bm.status === "active",
-      // Only active matches can have voting opened; non-active are always closed.
-      // Active matches default closed — admin explicitly opens voting.
-      voting_open: bm.status === "active" ? (bm.votingOpen ?? false) : false,
+      // Active AND next matches can have voting opened — the admin can let
+      // people bet on the upcoming match, not just the one currently live.
+      // Anything else (todo/completed/skipped) is always closed.
+      voting_open: (bm.status === "active" || bm.status === "next") ? (bm.votingOpen ?? false) : false,
       is_exhibition: bm.side === "exhibition",
       left_name: bm.slotA.teamName || "TBD",
       right_name: bm.slotB.teamName || "TBD",

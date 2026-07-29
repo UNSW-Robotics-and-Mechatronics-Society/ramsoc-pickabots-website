@@ -78,10 +78,11 @@ function MatchCard({
   const isBeingDragged  = draggingId === match.id;
   const isMatchDropTgt  = draggingId !== null && draggingId !== match.id && swappable;
 
-  // Non-active matches (todo/next/completed/skipped) can be scored at any time.
-  // For ACTIVE matches we keep the original rule: scoring is only allowed once
-  // voting is closed, so votes are locked in before any score is entered.
-  const scoringAllowed = match.status === 'active' ? !match.votingOpen : true;
+  // Todo/completed/skipped matches can be scored at any time. For ACTIVE and
+  // NEXT matches (either can now have voting open) we keep the original rule:
+  // scoring is only allowed once voting is closed, so votes are locked in
+  // before any score is entered.
+  const scoringAllowed = (match.status === 'active' || match.status === 'next') ? !match.votingOpen : true;
 
   function setScore(slot: 'a' | 'b', delta: number) {
     const updated: BracketMatch = {
@@ -136,7 +137,7 @@ function MatchCard({
         dimmed          && "opacity-30 grayscale-70",
       )}
     >
-      {(order !== undefined || match.status === 'active') && (
+      {(order !== undefined || match.status === 'active' || match.status === 'next') && (
         <div className="absolute right-1 top-1 z-20 flex items-center gap-1">
           {/* Play order — where this match sits in the running order. Subtle
               tint (orange for Standards, green for Open) so it's not obtrusive. */}
@@ -153,7 +154,7 @@ function MatchCard({
               {order}
             </span>
           )}
-          {match.status === 'active' && (
+          {(match.status === 'active' || match.status === 'next') && (
             <VotingToggle
               open={match.votingOpen}
               onToggle={() => onChange({ ...match, votingOpen: !match.votingOpen })}
