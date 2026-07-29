@@ -5,7 +5,7 @@ import {
   type BracketMatch, type Division,
   type MatchStatus, type Team, type TeamCount,
   wbRoundsFor, lbRoundsFor,
-  winner, applyStatusChange, isTeamNameTaken, wildcardLbRound, computeSlotDefaults,
+  winner, applyStatusChange, isTeamSwapOnly, wildcardLbRound, computeSlotDefaults,
 } from "@/lib/mock-data";
 import {
   type MatchSchedule,
@@ -226,9 +226,10 @@ function MatchCard({
 
 // ── WildcardCard ───────────────────────────────────────────────────────────────
 // A holding box that lives OUTSIDE the bracket tree. The admin types a
-// knocked-out team into it (the duplicate-name guard is lifted for wildcard
-// boxes — see isTeamNameTaken), then "Send in" marks it completed, which
-// applyStatusChange turns into slot B of the losers-bracket match it feeds.
+// knocked-out team into it — by definition a team already standing elsewhere in
+// the bracket, which is fine now that any slot takes any team (see
+// isTeamSwapOnly) — then "Send in" marks it completed, which applyStatusChange
+// turns into slot B of the losers-bracket match it feeds.
 function WildcardCard({
   match, index, target, onChange, datalistId, isValidTeamName,
 }: {
@@ -560,17 +561,26 @@ export default function AdminBracket({ teams, matches, division, teamCount, sche
     return () => ro.disconnect();
   }, []);
 
-  function isValidTeamName(matchId: string, name: string): boolean {
-    return !isTeamNameTaken(matches, division, matchId, name);
-  }
+  // Any team can go in any slot, including one already standing elsewhere in the
+  // bracket — see isTeamSwapOnly for why the duplicate guard had to go.
+  const isValidTeamName: (matchId: string, name: string) => boolean = () => true;
 
-  // EVERY edit goes through applyStatusChange against the ORIGINAL array — not
-  // just status changes. It's what writes advancement when a match completes and
-  // retracts it when a match stops being completed or its winner changes, so a
-  // corrected score or a re-typed team name can't leave a stale team standing in
+  // Every edit EXCEPT a manual team swap goes through applyStatusChange against
+  // the ORIGINAL array — not just status changes. It's what writes advancement
+  // when a match completes and retracts it when a match stops being completed or
+  // its winner changes, so a corrected score can't leave a stale team standing in
   // the next round. (It must see the pre-edit array to know what to retract.)
+  //
+  // A swap takes the short path instead: write that slot and touch nothing else,
+  // so every match already logged downstream keeps its teams and scores. See
+  // isTeamSwapOnly.
   function handleChange(updated: BracketMatch) {
-    if (!matches.some(m => m.id === updated.id)) return;
+    const prev = matches.find(m => m.id === updated.id);
+    if (!prev) return;
+    if (isTeamSwapOnly(prev, updated)) {
+      onMatchesChange(matches.map(m => (m.id === updated.id ? updated : m)));
+      return;
+    }
     // A score reaching the target auto-completes the match.
     const status: MatchStatus = winner(updated) && AUTO_COMPLETE_FROM.includes(updated.status)
       ? 'completed'

@@ -268,21 +268,72 @@ async function reconcileVotingMatches(bracketMatchById: Map<string, BracketMatch
 
   if (toDelete.length === 0) return;
 
-  const { data: voteRows } = await supabase
-    .from("votes").select("user_id, amount").in("match_id", toDelete);
-  if (voteRows && voteRows.length > 0) {
-    const refundByUser = new Map<string, number>();
-    for (const v of voteRows) {
-      const uid = v.user_id as string;
-      refundByUser.set(uid, (refundByUser.get(uid) ?? 0) + (v.amount as number));
-    }
-    for (const [userId, refund] of refundByUser) {
-      const { data: user } = await supabase.from("users").select("tokens").eq("id", userId).single();
-      if (user) await supabase.from("users").update({ tokens: (user.tokens as number) + refund }).eq("id", userId);
-    }
-    console.warn(`[bracket] refunded ${voteRows.length} vote(s) on stale matches before cleanup: ${toDelete.join(", ")}`);
+  const refunded = await refundVotesOn(toDelete);
+  if (refunded > 0) {
+    console.warn(`[bracket] refunded ${refunded} vote(s) on stale matches before cleanup: ${toDelete.join(", ")}`);
   }
   await supabase.from("matches").delete().in("id", toDelete);
+}
+
+/**
+ * Credits every bet placed on these voting rows back to whoever placed it, and
+ * returns how many bets were refunded. Does NOT delete the vote rows — callers
+ * that delete the voting row itself get that for free (the FK is ON DELETE
+ * CASCADE); the one caller that keeps the row has to clear them itself (see
+ * refundVotesOnSwappedMatches), or the same bet would be paid out later as well.
+ */
+async function refundVotesOn(votingRowIds: string[]): Promise<number> {
+  const { data: voteRows } = await supabase
+    .from("votes").select("user_id, amount").in("match_id", votingRowIds);
+  if (!voteRows || voteRows.length === 0) return 0;
+
+  const refundByUser = new Map<string, number>();
+  for (const v of voteRows) {
+    const uid = v.user_id as string;
+    refundByUser.set(uid, (refundByUser.get(uid) ?? 0) + (v.amount as number));
+  }
+  for (const [userId, refund] of refundByUser) {
+    const { data: user } = await supabase.from("users").select("tokens").eq("id", userId).single();
+    if (user) await supabase.from("users").update({ tokens: (user.tokens as number) + refund }).eq("id", userId);
+  }
+  return voteRows.length;
+}
+
+/**
+ * A team was swapped out of a match that already had RamCoin on it, so those
+ * bets are refunded and cleared: they were placed on a specific robot, and the
+ * slot no longer holds it — paying them out against whoever took its place
+ * would settle a bet nobody made. The voting row itself SURVIVES (unlike the
+ * stale-row cleanup above): the match is still on, just with a different team,
+ * and reconcileVotingMatches corrects its left_name/right_name from the bracket
+ * moments later, so betting reopens on the new pairing with a clean pool.
+ *
+ * Only a real substitution counts — a slot that was empty and has just been
+ * filled (advancement writing a decided feeder, which happens on most saves) is
+ * not a swap and must never refund anything. A slot being emptied does count:
+ * that match can no longer be played by the team people backed.
+ */
+async function refundVotesOnSwappedMatches(
+  swappedBracketMatchIds: string[],
+): Promise<void> {
+  if (swappedBracketMatchIds.length === 0) return;
+
+  const { data: rows } = await supabase
+    .from("matches").select("id").in("bracket_match_id", swappedBracketMatchIds);
+  const rowIds = (rows ?? []).map(r => r.id as string);
+  if (rowIds.length === 0) return;
+
+  const refunded = await refundVotesOn(rowIds);
+  if (refunded === 0) return;
+
+  const { error } = await supabase.from("votes").delete().in("match_id", rowIds);
+  if (error) {
+    // The refund has already landed, so leaving the rows would double-pay on settlement.
+    throw new Error(`Refunded ${refunded} vote(s) on swapped matches but failed to clear them: ${error.message}`);
+  }
+  console.warn(
+    `[bracket] team swapped on ${swappedBracketMatchIds.join(", ")} — refunded and cleared ${refunded} bet(s)`,
+  );
 }
 
 /**
@@ -323,7 +374,7 @@ export async function saveBracketState(save: BracketSave): Promise<void> {
   const { matches, replaceAll = false, teamCounts, schedules, clearCaptainNotified } = save;
 
   const [{ data: existingRows, error: exErr }, { data: teamRows, error: teamErr }] = await Promise.all([
-    supabase.from("bracket_matches").select("id, status"),
+    supabase.from("bracket_matches").select("id, status, slot_a_name, slot_b_name"),
     supabase.from("teams").select("id, name"),
   ]);
   if (exErr) throw new Error(`Failed to read existing bracket_matches: ${exErr.message}`);
@@ -331,6 +382,22 @@ export async function saveBracketState(save: BracketSave): Promise<void> {
 
   const beforeStatusById = new Map((existingRows ?? []).map(r => [r.id as string, r.status as MatchStatus]));
   const teamIdByName = new Map((teamRows ?? []).map(t => [t.name as string, t.id as string]));
+
+  // Matches where this save replaces the team standing in a slot — the admin's
+  // manual swap (see isTeamSwapOnly). Detected here, against the rows as they
+  // are NOW, because the client only ever sends the matches it touched and the
+  // refund below needs the pre-swap occupant to know a real substitution
+  // happened. A slot going from empty to filled is advancement writing a decided
+  // feeder, not a swap; going from filled to empty or to a different team is.
+  const swappedMatchIds = (matches ?? [])
+    .filter(m => {
+      const before = (existingRows ?? []).find(r => r.id === m.id);
+      if (!before) return false;
+      const changed = (was: unknown, now: string) => !!was && (was as string) !== now;
+      return changed(before.slot_a_name, m.slotA.teamName)
+        || changed(before.slot_b_name, m.slotB.teamName);
+    })
+    .map(m => m.id);
 
   // Resize can drop early rounds (see transferBracket) — delete rows that no
   // longer correspond to any match in the new set, don't just upsert.
@@ -347,6 +414,20 @@ export async function saveBracketState(save: BracketSave): Promise<void> {
     const rows = matches.map(m => matchToRow(m, teamIdByName));
     const { error: upsertErr } = await supabase.from("bracket_matches").upsert(rows, { onConflict: "id" });
     if (upsertErr) throw new Error(`Failed to save bracket_matches: ${upsertErr.message}`);
+  }
+
+  // Bets placed on a team that has just been swapped out are refunded (and the
+  // match's captain alert re-armed, so the incoming team gets told it's up).
+  // Runs after the upsert so a failure here can't leave the swap unsaved, and
+  // before the reconciliation below, which is what renames the voting row to the
+  // new pairing.
+  if (swappedMatchIds.length > 0) {
+    await refundVotesOnSwappedMatches(swappedMatchIds);
+    const { error } = await supabase
+      .from("bracket_matches")
+      .update({ captain_notified: false })
+      .in("id", swappedMatchIds);
+    if (error) console.error("[bracket] failed to re-arm captain alert after swap:", error.message);
   }
 
   // After the upsert: matchToRow deliberately omits captain_notified (so an

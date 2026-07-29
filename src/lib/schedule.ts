@@ -230,7 +230,27 @@ export function parseTimeInput(raw: string, fallback: number): number {
   if (period === 'pm' && h !== 12) h += 12;
   if (period === 'am' && h === 12) h = 0;
   if (h > 23 || min > 59) return fallback;
-  return h * 60 + min;
+
+  // What's typed is a time OF DAY, but a schedule counts minutes from the start
+  // of day 0 and keeps counting past 1440 once the event crosses midnight (see
+  // formatTime, which wraps for display). Resolve the typed time to whichever
+  // occurrence of it sits CLOSEST to the slot's current time, so editing an
+  // 11:00 PM slot to "12am" moves it forward 60 minutes to the coming midnight
+  // rather than back 23 hours to 00:00 — the latter being the schedule's new
+  // earliest slot, which used to drag the entire layout with it (retimeRings
+  // anchors `base` on the minimum start).
+  //
+  // Nearest-occurrence, rather than always-forward, keeps ordinary backward
+  // edits working: a 3:00 PM slot set to "2pm" still moves an hour earlier, and
+  // re-committing an unchanged time is a no-op on either side of midnight.
+  // A 12-hour tie resolves to the same day, so no edit jumps a day on a coin flip.
+  const DAY = 24 * 60;
+  const timeOfDay = h * 60 + min;
+  let best = timeOfDay + Math.floor(fallback / DAY) * DAY;
+  for (const candidate of [best - DAY, best + DAY]) {
+    if (candidate >= 0 && Math.abs(candidate - fallback) < Math.abs(best - fallback)) best = candidate;
+  }
+  return best;
 }
 
 function slotDuration(s: Pick<MatchSchedule, 'matchMinutes' | 'gapMinutes'>): number {

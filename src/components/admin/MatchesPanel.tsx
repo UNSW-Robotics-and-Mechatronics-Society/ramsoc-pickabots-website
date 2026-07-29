@@ -3,7 +3,7 @@
 import { useState } from "react";
 import {
   type BracketMatch, type Division, type MatchStatus, type Team, type TeamCount,
-  winner, applyStatusChange, isTeamNameTaken, computeSlotDefaults,
+  winner, applyStatusChange, isTeamSwapOnly, computeSlotDefaults,
   wbRoundsFor, lbRoundsFor, wbRoundLabel, lbRoundLabel,
 } from "@/lib/mock-data";
 import {
@@ -364,13 +364,15 @@ export default function MatchesPanel({
     teamSuggestions, filterSet, addTeamFilter, removeTeamFilter,
   } = useTeamFilter(divMatches);
 
-  // Team-name uniqueness: bracket-round matches only conflict within their
-  // own division; exhibition matches are a single shared pool, so they only
-  // conflict with each other, never with bracket-round matches.
-  const isValidTeamName = mode === 'exhibition'
-    ? (m: BracketMatch, name: string) =>
+  // Bracket-round slots take any team, including one already standing elsewhere
+  // in the bracket (see isTeamSwapOnly — a swap is done one slot at a time, so
+  // the halfway state is always a duplicate). Exhibition matches keep their own
+  // uniqueness rule: they're a single shared pool with no bracket to swap
+  // within, so the same team twice is just a mistake.
+  const isValidTeamName: (m: BracketMatch, name: string) => boolean = mode === 'exhibition'
+    ? (m, name) =>
         !matches.some(o => o.side === 'exhibition' && o.id !== m.id && (o.slotA.teamName === name || o.slotB.teamName === name))
-    : (m: BracketMatch, name: string) => !isTeamNameTaken(matches, division, m.id, name);
+    : () => true;
 
   // Time-edit/reset/swap act on whichever schedule the active mode owns.
   const onEditTime = mode === 'exhibition'
@@ -385,9 +387,16 @@ export default function MatchesPanel({
 
   // Same single path as the bracket editor's handleChange — applyStatusChange
   // against the ORIGINAL array on every edit, so advancement is both written and
-  // retracted consistently (see its clearSlot).
+  // retracted consistently (see its clearSlot) — with the same one exception: a
+  // manual team swap writes only the slot it changed, leaving every already-
+  // logged match downstream exactly as it was recorded (see isTeamSwapOnly).
   function handleMatchChange(updated: BracketMatch) {
-    if (!matches.some(m => m.id === updated.id)) return;
+    const prev = matches.find(m => m.id === updated.id);
+    if (!prev) return;
+    if (isTeamSwapOnly(prev, updated)) {
+      onMatchesChange(matches.map(m => (m.id === updated.id ? updated : m)));
+      return;
+    }
     const status: MatchStatus = winner(updated) && AUTO_COMPLETE_FROM.includes(updated.status)
       ? 'completed'
       : updated.status;
