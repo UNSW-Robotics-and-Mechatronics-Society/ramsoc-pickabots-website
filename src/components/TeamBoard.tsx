@@ -37,7 +37,22 @@ const DIVISION_TABS: { key: DivisionView; label: string }[] = [
 
 type RankedTeam = TeamLeaderboardEntry & { rank: number }
 
-/** Teams ranked by RamCoins bet on them, knocked-out teams greyed at the bottom. */
+// The three bands the board is ordered into (see computeTeamsLeaderboard's
+// sort). 'ranked' is the leaderboard proper; the other two are greyed tails,
+// each introduced by its own divider. A team nobody has voted on sits in
+// 'unvoted' whatever its bracket status — one vote is what promotes it up.
+type Tier = 'ranked' | 'knocked-out' | 'unvoted'
+
+const tierOf = (t: TeamLeaderboardEntry): Tier =>
+  t.votes === 0 ? 'unvoted' : t.eliminated ? 'knocked-out' : 'ranked'
+
+const TIER_DIVIDER: Record<Tier, string | null> = {
+  ranked: null,
+  'knocked-out': '◆ Knocked Out ◆',
+  unvoted: '◆ No Votes Yet ◆',
+}
+
+/** Teams ranked by RamCoins bet on them; knocked-out then un-voted-on teams greyed at the bottom. */
 export default function TeamBoard({ teams }: { teams: TeamLeaderboardEntry[] }) {
   const [division, setDivision] = useState<DivisionView>('all')
   const [selected, setSelected] = useState<TeamLedgerTarget | null>(null)
@@ -135,21 +150,26 @@ export default function TeamBoard({ teams }: { teams: TeamLeaderboardEntry[] }) 
           </div>
         )}
         {visible.map((t, i) => {
-          const isTop3 = t.rank <= 3 && !t.eliminated
+          const tier = tierOf(t)
+          const greyed = tier !== 'ranked'
+          const isTop3 = t.rank <= 3 && !greyed
           const st = STATUS_STYLE[t.status]
-          // Header for the greyed-out tail, shown once at the first knocked-out row.
-          const startsKnockedOut = t.eliminated && !visible[i - 1]?.eliminated
+          // Each tail's header, shown once at the row the tier changes on — so a
+          // filtered view that opens mid-tail still gets its label.
+          const divider = tier !== (i > 0 ? tierOf(visible[i - 1]) : 'ranked')
+            ? TIER_DIVIDER[tier]
+            : null
 
           return (
             <Fragment key={t.id}>
-              {startsKnockedOut && (
+              {divider && (
                 <div style={{
                   display: 'flex', alignItems: 'center', gap: 8, padding: '14px 4px 4px',
                   fontSize: '0.42rem', fontWeight: 900, letterSpacing: 3,
                   color: 'rgba(255,255,255,0.25)', textTransform: 'uppercase',
                 }}>
                   <span style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }}/>
-                  ◆ Knocked Out ◆
+                  {divider}
                   <span style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }}/>
                 </div>
               )}
@@ -167,7 +187,7 @@ export default function TeamBoard({ teams }: { teams: TeamLeaderboardEntry[] }) 
                   border: `1px solid ${isTop3 ? 'rgba(255,107,0,0.28)' : 'rgba(255,255,255,0.07)'}`,
                   borderRadius: 10,
                   boxShadow: isTop3 ? '0 0 20px rgba(255,107,0,0.1)' : '0 2px 12px rgba(0,0,0,0.5)',
-                  opacity: t.eliminated ? 0.45 : 1,
+                  opacity: greyed ? 0.45 : 1,
                 }}
               >
                 {/* Grain */}

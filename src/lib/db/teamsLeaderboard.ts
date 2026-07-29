@@ -3,7 +3,7 @@ import { unstable_cache } from "next/cache";
 import supabase from "@/lib/supabase";
 import { getBracketState } from "./bracket";
 import { fromDbCategory } from "./division";
-import { getTokensByName, roundLabel } from "./teamLedger";
+import { getVoteStatsByName, roundLabel } from "./teamLedger";
 import { type BracketMatch, type Division, winner, stageRank, wildcardLbRound, wildcardTeamNames } from "@/lib/mock-data";
 import type { TeamLeaderboardEntry, TeamStatusKind } from "@/lib/types";
 
@@ -18,6 +18,7 @@ type EntryInput = {
   division: Division | null;
   category: string | null;
   tokens: number;
+  votes: number;
   teamMatches: BracketMatch[];
   // Brought back through a wildcard box. Such a team has 2+ losses on record,
   // so without this it would read as knocked out while it's actually playing.
@@ -28,7 +29,7 @@ type EntryInput = {
 };
 
 function buildEntry({
-  id, name, kind, division, category, tokens, teamMatches, wildcard, wildcardRank,
+  id, name, kind, division, category, tokens, votes, teamMatches, wildcard, wildcardRank,
 }: EntryInput): TeamLeaderboardEntry {
   let wins = 0;
   let losses = 0;
@@ -104,18 +105,18 @@ function buildEntry({
   }
 
   return {
-    id, name, kind, division, category, tokens, wins, losses, winRate,
+    id, name, kind, division, category, tokens, votes, wins, losses, winRate,
     status, statusLabel,
     eliminated: status === "knocked-out",
   };
 }
 
 async function computeTeamsLeaderboard(): Promise<TeamLeaderboardEntry[]> {
-  const [{ data: teamRows, error: tErr }, { data: specialRows, error: sErr }, tokensByName, { matches, teamCounts }] =
+  const [{ data: teamRows, error: tErr }, { data: specialRows, error: sErr }, statsByName, { matches, teamCounts }] =
     await Promise.all([
       supabase.from("teams").select("id, name, category"),
       supabase.from("special_teams").select("id, name, category"),
-      getTokensByName(),
+      getVoteStatsByName(),
       getBracketState(),
     ]);
   if (tErr) throw new Error(`Failed to load teams: ${tErr.message}`);
@@ -141,13 +142,15 @@ async function computeTeamsLeaderboard(): Promise<TeamLeaderboardEntry[]> {
   for (const t of teamRows ?? []) {
     const name = t.name as string;
     const division = fromDbCategory(t.category as string);
+    const stats = statsByName.get(name);
     entries.push(buildEntry({
       id: `regular:${division}:${name}`,
       name,
       kind: "regular",
       division,
       category: null,
-      tokens: tokensByName.get(name) ?? 0,
+      tokens: stats?.tokens ?? 0,
+      votes: stats?.votes ?? 0,
       // Scoped to the team's own division, so a name reused across the two
       // brackets doesn't pick up the other one's results.
       teamMatches: matches.filter(m =>
@@ -160,13 +163,15 @@ async function computeTeamsLeaderboard(): Promise<TeamLeaderboardEntry[]> {
   for (const t of specialRows ?? []) {
     const name = t.name as string;
     const category = t.category as string;
+    const stats = statsByName.get(name);
     entries.push(buildEntry({
       id: `special:${category}:${name}`,
       name,
       kind: "special",
       division: null,
       category,
-      tokens: tokensByName.get(name) ?? 0,
+      tokens: stats?.tokens ?? 0,
+      votes: stats?.votes ?? 0,
       teamMatches: matches.filter(m => m.slotA.teamName === name || m.slotB.teamName === name),
       wildcard: false, // special teams never enter the bracket, so never a wildcard
       // Never in a bracket, so there's no wildcard round for them to be knocked
@@ -175,10 +180,16 @@ async function computeTeamsLeaderboard(): Promise<TeamLeaderboardEntry[]> {
     }));
   }
 
-  // Ranked by coins attracted. Knocked-out teams sink below everyone still
-  // alive — they keep their relative order down there, forming the greyed
-  // "knocked out" tail the UI renders under its own divider.
+  // Ranked by coins attracted, in three tiers, each rendered under its own
+  // divider and greyed from the second down (see TeamBoard):
+  //   1. voted-on and still alive — the leaderboard proper
+  //   2. voted-on but knocked out
+  //   3. nobody has voted on them yet — no ranking signal at all, so they sit
+  //      below even the knocked-out tail until their first vote lands, which
+  //      promotes them into tier 1 or 2 on the next refresh.
+  // Within every tier: most coins first, then alphabetical.
   entries.sort((a, b) =>
+    Number(a.votes === 0) - Number(b.votes === 0) ||
     Number(a.eliminated) - Number(b.eliminated) ||
     b.tokens - a.tokens ||
     a.name.localeCompare(b.name));

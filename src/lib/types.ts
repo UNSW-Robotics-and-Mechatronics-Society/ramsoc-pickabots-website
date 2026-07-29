@@ -98,6 +98,7 @@ export interface TeamLeaderboardEntry {
   division: 'standards' | 'open' | null // regular teams only
   category: string | null               // special teams only
   tokens: number                        // total RamCoins bet on this team, win or lose
+  votes: number                         // 0 → greyed, sunk below even the knocked-out tail
   wins: number
   losses: number
   winRate: number
