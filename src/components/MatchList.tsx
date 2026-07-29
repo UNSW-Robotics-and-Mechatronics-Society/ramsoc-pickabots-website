@@ -97,11 +97,19 @@ export default function MatchList({ matches, teamCounts, schedules, exhibitionSc
   const rowH = MATCH_H * CARD_SCALE
   const cardW = ROUND_W * CARD_SCALE
 
-  // Time shown per row: rings run the same slot cadence, so a row's time is
-  // taken from whichever ring has an entry at that index.
+  // Left-column row label. Rings usually run in step, so a row normally has one
+  // time worth labelling — but they are independent queues and DO drift apart
+  // (a completed match stays frozen at the time it played, a hand-set time is
+  // pinned, a ring added mid-event starts from "now" — see retimeRings), so the
+  // label is only shown when every ring's entry at this index agrees. Each card
+  // always carries its own exact start time, which is what the admin panel's
+  // per-ring time axis shows.
   const timeForRow = (i: number): number | null => {
-    for (const c of ringCols) if (c.ring[i]) return c.ring[i].startMinute
-    return null
+    const minutes = ringCols
+      .map(c => c.ring[i]?.startMinute)
+      .filter((m): m is number => m !== undefined)
+    if (minutes.length === 0) return null
+    return minutes.every(m => m === minutes[0]) ? minutes[0] : null
   }
 
   const headerCell: CSSProperties = {
@@ -146,7 +154,7 @@ export default function MatchList({ matches, teamCounts, schedules, exhibitionSc
               const match = entry ? matchById.get(entry.matchId) : undefined
               return (
                 <div key={`c-${ri}-${i}`} style={{ height: rowH, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  {match ? (
+                  {entry && match ? (
                     <div
                       ref={el => { matchRefs.current[match.id] = el }}
                       style={{ width: cardW, height: rowH }}
@@ -154,6 +162,9 @@ export default function MatchList({ matches, teamCounts, schedules, exhibitionSc
                       <div style={{ transform: `scale(${CARD_SCALE})`, transformOrigin: 'top left', width: ROUND_W, height: MATCH_H }}>
                         <MatchCard
                           match={match}
+                          // This ring's own slot time — never the row label, which
+                          // is blank whenever the rings have drifted apart.
+                          time={formatTime(entry.startMinute)}
                           dimmed={isMatchDimmed(match, filterSet)}
                           selected={isMatchSelected(match, filterSet)}
                           defaults={slotDefaults.get(match.id)}
