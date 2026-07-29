@@ -46,16 +46,28 @@ function estimateCostAud(recipients: number, parts: number): number {
   return recipients * Math.max(parts, 1) * SMS_COST_AUD;
 }
 
+type SmsSenderMode = "senderid" | "number";
+
 type ConfigResponse = {
   smsUpNextTemplate: string;
   smsUpNextDefault: string;
   smsNotifyLead?: number;
   allIn?: boolean;
   autoSmsEnabled?: boolean;
+  smsSenderMode?: SmsSenderMode;
+  smsSenderNumber?: string;
 };
 
 type ConfigPutResponse =
-  | { ok: true; smsUpNextTemplate: string; smsNotifyLead: number; allIn?: boolean; autoSmsEnabled?: boolean }
+  | {
+      ok: true;
+      smsUpNextTemplate: string;
+      smsNotifyLead: number;
+      allIn?: boolean;
+      autoSmsEnabled?: boolean;
+      smsSenderMode?: SmsSenderMode;
+      smsSenderNumber?: string;
+    }
   | { error: string };
 
 const DIVISION_LABEL: Record<Division, string> = { standards: "Standards", open: "Open" };
@@ -120,6 +132,13 @@ export default function SettingsPanel({
   const [allInBusy, setAllInBusy]   = useState(false);
   const [autoSmsEnabled, setAutoSmsEnabled] = useState(true);
   const [autoSmsBusy, setAutoSmsBusy]       = useState(false);
+  const [senderMode, setSenderMode]         = useState<SmsSenderMode>("senderid");
+  const [senderModeBusy, setSenderModeBusy] = useState(false);
+  const [senderNumber, setSenderNumber]         = useState("");
+  const [savedSenderNumber, setSavedSenderNumber] = useState("");
+  const [senderNumberSaving, setSenderNumberSaving] = useState(false);
+  const [senderNumberError, setSenderNumberError]   = useState<string | null>(null);
+  const [senderNumberFlash, setSenderNumberFlash]   = useState(false);
   const [teamActionBusy, setTeamActionBusy] = useState(false);
   const [teamActionMsg, setTeamActionMsg]   = useState<string | null>(null);
   const [seedText, setSeedText]     = useState("");
@@ -184,6 +203,10 @@ export default function SettingsPanel({
       setSavedNotifyLead(lead);
       setAllIn(data.allIn ?? false);
       setAutoSmsEnabled(data.autoSmsEnabled ?? true);
+      setSenderMode(data.smsSenderMode ?? "senderid");
+      const number = data.smsSenderNumber ?? "";
+      setSenderNumber(number);
+      setSavedSenderNumber(number);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load settings");
     } finally {
@@ -330,6 +353,49 @@ export default function SettingsPanel({
       setAutoSmsEnabled(!next); // revert
     } finally {
       setAutoSmsBusy(false);
+    }
+  }
+
+  async function setSenderModeRemote(next: SmsSenderMode) {
+    const prev = senderMode;
+    setSenderModeBusy(true);
+    setSenderMode(next); // optimistic
+    try {
+      const res = await fetch("/api/admin/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ smsSenderMode: next }),
+      });
+      const data = (await res.json()) as ConfigPutResponse;
+      if (!res.ok || "error" in data) throw new Error("error" in data ? data.error : `Save failed (${res.status})`);
+      setSenderMode(data.smsSenderMode ?? next);
+    } catch {
+      setSenderMode(prev); // revert
+    } finally {
+      setSenderModeBusy(false);
+    }
+  }
+
+  async function handleSaveSenderNumber() {
+    setSenderNumberSaving(true);
+    setSenderNumberError(null);
+    try {
+      const res = await fetch("/api/admin/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ smsSenderNumber: senderNumber }),
+      });
+      const data = (await res.json()) as ConfigPutResponse;
+      if (!res.ok || "error" in data) throw new Error("error" in data ? data.error : `Save failed (${res.status})`);
+      const number = data.smsSenderNumber ?? senderNumber;
+      setSenderNumber(number);
+      setSavedSenderNumber(number);
+      setSenderNumberFlash(true);
+      setTimeout(() => setSenderNumberFlash(false), 2000);
+    } catch (err) {
+      setSenderNumberError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSenderNumberSaving(false);
     }
   }
 
@@ -707,6 +773,74 @@ export default function SettingsPanel({
                 >
                   {autoSmsEnabled ? "AUTO TEXTS: ON" : "AUTO TEXTS: OFF"}
                 </button>
+              </div>
+
+              <div className="mt-3 border-t border-white/10 pt-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-xs text-foreground">Send from</p>
+                    <p className="text-[0.65rem] text-foreground/40">
+                      Use the RAMSOC sender ID (one-way, no reply) once it&rsquo;s registered, or a
+                      real mobile number (two-way) in the meantime.
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 overflow-hidden rounded-lg border border-white/15">
+                    <button
+                      disabled={senderModeBusy}
+                      onClick={() => setSenderModeRemote("senderid")}
+                      className={cn(
+                        "px-2.5 py-1.5 text-xs font-semibold transition-colors disabled:opacity-40",
+                        senderMode === "senderid"
+                          ? "bg-[#FF6B00]/25 text-[#FF6B00]"
+                          : "bg-white/5 text-foreground/50 hover:text-foreground/80",
+                      )}
+                    >
+                      Sender ID
+                    </button>
+                    <button
+                      disabled={senderModeBusy}
+                      onClick={() => setSenderModeRemote("number")}
+                      className={cn(
+                        "border-l border-white/15 px-2.5 py-1.5 text-xs font-semibold transition-colors disabled:opacity-40",
+                        senderMode === "number"
+                          ? "bg-[#FF6B00]/25 text-[#FF6B00]"
+                          : "bg-white/5 text-foreground/50 hover:text-foreground/80",
+                      )}
+                    >
+                      My Number
+                    </button>
+                  </div>
+                </div>
+
+                {senderMode === "number" && (
+                  <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                    <input
+                      type="tel"
+                      value={senderNumber}
+                      onChange={e => setSenderNumber(e.target.value)}
+                      placeholder="0412 345 678"
+                      className="w-36 rounded-lg border border-white/10 bg-white/8 px-2 py-1 text-xs text-foreground placeholder:text-foreground/25 outline-none focus:border-white/30"
+                    />
+                    <button
+                      onClick={handleSaveSenderNumber}
+                      disabled={senderNumberSaving || senderNumber === savedSenderNumber}
+                      className="rounded-lg border border-white/20 bg-white/5 px-2.5 py-1 text-xs text-foreground/70 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {senderNumberSaving ? "Saving…" : "Save number"}
+                    </button>
+                    <span
+                      className={cn(
+                        "text-[0.65rem] text-green-300 transition-opacity",
+                        senderNumberFlash ? "opacity-100" : "opacity-0",
+                      )}
+                    >
+                      Saved ✓
+                    </span>
+                    {senderNumberError && (
+                      <span className="text-[0.65rem] text-red-300">{senderNumberError}</span>
+                    )}
+                  </div>
+                )}
               </div>
 
               {saveError && (

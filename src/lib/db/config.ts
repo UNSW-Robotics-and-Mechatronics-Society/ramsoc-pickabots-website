@@ -9,9 +9,16 @@ const SMS_UP_NEXT_KEY = "sms_up_next_template";
 const NOTIFY_LEAD_KEY = "sms_notify_lead";
 const ALL_IN_KEY = "all_in";
 const AUTO_SMS_KEY = "auto_sms_enabled";
+const SMS_SENDER_MODE_KEY = "sms_sender_mode";
+const SMS_SENDER_NUMBER_KEY = "sms_sender_number";
 
 /** Default: text captains when their team is this many matches from playing. */
 export const DEFAULT_NOTIFY_LEAD = 2;
+
+export type SmsSenderMode = "senderid" | "number";
+export const DEFAULT_SMS_SENDER_MODE: SmsSenderMode = "senderid";
+/** Fallback "from" number while the alphanumeric sender ID isn't registered yet. */
+export const DEFAULT_SMS_SENDER_NUMBER = "0435554607";
 
 async function getConfig(key: string): Promise<string | null> {
   const { data, error } = await supabase
@@ -103,4 +110,37 @@ export async function getAutoSmsEnabled(): Promise<boolean> {
 
 export async function setAutoSmsEnabled(value: boolean): Promise<void> {
   await setConfig(AUTO_SMS_KEY, value ? "true" : "false");
+}
+
+/**
+ * Which "from" texts are sent as: the alphanumeric sender ID (once
+ * registered) or a plain mobile number (two-way, usable immediately). See
+ * `resolveSmsFrom()` in `@/lib/sms.ts` for where this is applied.
+ */
+export async function getSmsSenderMode(): Promise<SmsSenderMode> {
+  try {
+    const raw = await getConfig(SMS_SENDER_MODE_KEY);
+    return raw === "number" ? "number" : DEFAULT_SMS_SENDER_MODE;
+  } catch (err) {
+    console.error("[config] getSmsSenderMode failed, defaulting to sender ID:", err);
+    return DEFAULT_SMS_SENDER_MODE;
+  }
+}
+
+export async function setSmsSenderMode(value: SmsSenderMode): Promise<void> {
+  await setConfig(SMS_SENDER_MODE_KEY, value);
+}
+
+/** The mobile number used as "from" when `getSmsSenderMode()` is `"number"`. */
+export async function getSmsSenderNumber(): Promise<string> {
+  try {
+    return (await getConfig(SMS_SENDER_NUMBER_KEY)) || DEFAULT_SMS_SENDER_NUMBER;
+  } catch (err) {
+    console.error("[config] getSmsSenderNumber failed, using default:", err);
+    return DEFAULT_SMS_SENDER_NUMBER;
+  }
+}
+
+export async function setSmsSenderNumber(value: string): Promise<void> {
+  await setConfig(SMS_SENDER_NUMBER_KEY, value.trim());
 }

@@ -1,4 +1,5 @@
 import "server-only";
+import { getSmsSenderMode, getSmsSenderNumber } from "@/lib/db/config";
 
 // ─────────────────────────────────────────────────────────────────────────
 //  SMS adapter — provider-agnostic seam.
@@ -17,6 +18,11 @@ import "server-only";
 //    CLICKSEND_API_KEY    ClickSend API key
 //    SMS_SENDER           sender ID shown on recipients' phones (default RAMSOC,
 //                         max 11 chars, letters/digits, no spaces)
+//
+//  The "from" shown to recipients can also be switched to a real mobile
+//  number instead of the sender ID — e.g. while RAMSOC isn't registered yet —
+//  via the "Send from" toggle in Settings (see resolveSmsFrom() below and
+//  `getSmsSenderMode()`/`getSmsSenderNumber()` in `@/lib/db/config`).
 // ─────────────────────────────────────────────────────────────────────────
 
 export type SmsMessage = {
@@ -42,6 +48,26 @@ export function smsSender(): string {
 /** True when provider credentials are configured; false ⇒ sends are skipped (dry-run). */
 export function smsConfigured(): boolean {
   return Boolean(process.env.CLICKSEND_USERNAME && process.env.CLICKSEND_API_KEY);
+}
+
+/**
+ * The "from" value actually used on outbound sends: either the alphanumeric
+ * sender ID (`smsSender()`), or — while that's still being registered — a
+ * real mobile number, per the admin-editable toggle in Settings. Falls back
+ * to the sender ID if the configured number doesn't look valid.
+ */
+async function resolveSmsFrom(): Promise<string> {
+  try {
+    const mode = await getSmsSenderMode();
+    if (mode === "number") {
+      const number = await getSmsSenderNumber();
+      const normalised = normaliseAuMobile(number);
+      if (normalised) return normalised;
+    }
+  } catch (err) {
+    console.error("[sms] resolveSmsFrom failed, falling back to sender ID:", err);
+  }
+  return smsSender();
 }
 
 /**
@@ -91,7 +117,7 @@ export async function sendManySms(messages: SmsMessage[]): Promise<SmsResult[]> 
     ];
   }
 
-  const from = smsSender();
+  const from = await resolveSmsFrom();
   const auth = Buffer.from(
     `${process.env.CLICKSEND_USERNAME}:${process.env.CLICKSEND_API_KEY}`,
   ).toString("base64");
