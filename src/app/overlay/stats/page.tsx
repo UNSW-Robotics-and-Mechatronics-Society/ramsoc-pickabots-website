@@ -96,13 +96,17 @@ export default async function StatsOverlay({ searchParams }: Props) {
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             {teams.map((t, i) => {
               const meta = t.division ? DIVISION_META[t.division] : null;
+              // Greyed on the same rule as the public board: knocked out, or
+              // nobody has voted on them yet (those sort to the very bottom, so
+              // they only reach this top-N slice on a quiet board).
+              const greyed = t.eliminated || t.votes === 0;
               return (
                 <div key={t.id} style={{
                   display: "flex", alignItems: "center", gap: 14,
                   background: PLATE_BG, border: `1px solid ${PLATE_BORDER}`,
                   borderLeft: `4px solid ${meta?.color ?? GOLD}`,
                   padding: "8px 16px",
-                  opacity: t.eliminated ? 0.55 : 1,
+                  opacity: greyed ? 0.55 : 1,
                 }}>
                   <span style={{
                     fontFamily: FONT_DISPLAY, fontSize: "1rem", minWidth: 34,
@@ -121,7 +125,7 @@ export default async function StatsOverlay({ searchParams }: Props) {
                   </span>
                   <span style={{
                     fontSize: "0.6rem", fontWeight: 800, letterSpacing: 1.5, textTransform: "uppercase",
-                    color: t.eliminated ? "rgba(255,255,255,0.45)" : (meta?.color ?? GOLD),
+                    color: greyed ? "rgba(255,255,255,0.45)" : (meta?.color ?? GOLD),
                     minWidth: 92, textAlign: "right",
                   }}>
                     {t.statusLabel}

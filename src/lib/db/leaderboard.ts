@@ -13,7 +13,16 @@ export type LeaderboardEntry = {
 async function computeLeaderboard(): Promise<LeaderboardEntry[]> {
   const [{ data: users, error: uErr }, { data: votes, error: vErr }, { data: matches, error: mErr }] =
     await Promise.all([
-      supabase.from("users").select("id, display_name, tokens").order("tokens", { ascending: false }),
+      // Onboarded players only. A `users` row is provisioned the moment any
+      // signed-in client hits GET /api/user (and by place_vote/beg), which
+      // happens before — or entirely without — finishing onboarding, so the
+      // table is full of untouched 100-token rows that would otherwise pad the
+      // board with dead ranks and push real players down.
+      supabase
+        .from("users")
+        .select("id, display_name, tokens")
+        .eq("onboarded", true)
+        .order("tokens", { ascending: false }),
       supabase.from("votes").select("user_id, side, match_id"),
       supabase.from("matches").select("id, winner_side"),
     ]);

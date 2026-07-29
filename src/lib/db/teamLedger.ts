@@ -65,13 +65,18 @@ function poolFor(category: string): TeamLedgerPool {
   return category as TeamLedgerPool;
 }
 
-// Total tokens bet per team name, as a serializable entry list. Cached (short
-// TTL) so many concurrent team-modal opens — each ranks the team against its
-// pool by tokens bet — collapse to one scan of matches+votes instead of one
+export type TeamVoteStats = {
+  tokens: number; // total RamCoins bet on the team
+  votes: number;  // how many votes those coins came from
+};
+
+// Coins bet AND vote count per team name, as a serializable entry list. Cached
+// (short TTL) so many concurrent team-modal opens — each ranks the team against
+// its pool by tokens bet — collapse to one scan of matches+votes instead of one
 // per open. Returns entries rather than a Map because unstable_cache persists
 // its result across requests and can't serialize a Map.
-const getTokenTotalEntries = unstable_cache(
-  async (): Promise<[string, number][]> => {
+const getVoteStatEntries = unstable_cache(
+  async (): Promise<[string, TeamVoteStats][]> => {
     const [{ data: matchRows, error: mErr }, { data: voteRows, error: vErr }] = await Promise.all([
       supabase.from("matches").select("id, left_name, right_name"),
       supabase.from("votes").select("match_id, side, amount"),
@@ -80,23 +85,31 @@ const getTokenTotalEntries = unstable_cache(
     if (vErr) throw new Error(`Failed to load votes: ${vErr.message}`);
 
     const matchById = new Map((matchRows ?? []).map(m => [m.id as string, m]));
-    const totals = new Map<string, number>();
+    const totals = new Map<string, TeamVoteStats>();
     for (const v of voteRows ?? []) {
       const m = matchById.get(v.match_id as string);
       if (!m) continue;
       const name = v.side === "left" ? (m.left_name as string) : (m.right_name as string);
-      totals.set(name, (totals.get(name) ?? 0) + (v.amount as number));
+      const stats = totals.get(name) ?? { tokens: 0, votes: 0 };
+      stats.tokens += v.amount as number;
+      stats.votes += 1;
+      totals.set(name, stats);
     }
     return Array.from(totals);
   },
-  ["team-token-totals"],
+  ["team-vote-stats"],
   { revalidate: 10, tags: ["tokens"] },
 );
 
 // Exported so the teams leaderboard ranks on exactly the same totals this
-// modal shows — one team's "RamCoins Attracted" can't disagree with its row.
+// modal shows — one team's "RamCoins Attracted" can't disagree with its row —
+// and so it can tell a team nobody has voted on from one that's merely last.
+export async function getVoteStatsByName(): Promise<Map<string, TeamVoteStats>> {
+  return new Map(await getVoteStatEntries());
+}
+
 export async function getTokensByName(): Promise<Map<string, number>> {
-  return new Map(await getTokenTotalEntries());
+  return new Map((await getVoteStatEntries()).map(([name, s]) => [name, s.tokens]));
 }
 
 export async function getTeamLedger(name: string, divisionHint?: Division): Promise<TeamLedger | null> {

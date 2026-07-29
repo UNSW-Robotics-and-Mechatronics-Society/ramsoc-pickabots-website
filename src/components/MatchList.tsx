@@ -50,6 +50,11 @@ type Props = {
 export default function MatchList({ matches, teamCounts, schedules, exhibitionSchedule }: Props) {
   useRealtimeRefresh(['bracket_matches', 'bracket_config', 'bracket_schedule'])
   const [viewMode, setViewMode] = useState<ViewMode>('standards')
+  // Finished matches are hidden by default so the list opens on what's still
+  // to come — the toggle brings the day's history back. Off = hidden, matching
+  // the pill convention used by every other control in this header (lit = the
+  // thing named on the pill is showing).
+  const [showPrevMatches, setShowPrevMatches] = useState(false)
   const [selectedTeam, setSelectedTeam] = useState<string | null>(null)
   const matchRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const zoomPanRef = useRef<BracketZoomPanHandle>(null)
@@ -80,9 +85,25 @@ export default function MatchList({ matches, teamCounts, schedules, exhibitionSc
   // Bracket view: this division's rings only, never exhibition ones (those
   // get their own tab instead of mixing into a division's view). Exhibition
   // view: the single shared exhibition ring set.
-  const ringCols = isExhibition
+  const allRingCols = isExhibition
     ? exhibitionSchedule.rings.map((ring, i) => ({ ring, label: `Exhibition ${i + 1}` }))
     : schedules[viewMode as Division].rings.map((ring, i) => ({ ring, label: `Ring ${i + 1}` }))
+
+  // "Prev Matches" off (the default) drops finished matches from each ring's
+  // queue. The queue is COMPACTED rather than left with holes, because the
+  // table is row-index based (row i = every ring's i-th entry) — filtering in
+  // place would render blank rows where the completed matches used to be.
+  //
+  // 'completed' is the only status hidden: skipped matches and byes never reach
+  // a ring at all (see rollSchedule's schedulable), and the status read here is
+  // the same post-applyScheduleStatus one the cards render, so what's hidden
+  // always agrees with what a visible card would have said.
+  const isDone = (matchId: string) => matchById.get(matchId)?.status === 'completed'
+  const hiddenCount = allRingCols.reduce((n, c) => n + c.ring.filter(e => isDone(e.matchId)).length, 0)
+  const ringCols = showPrevMatches
+    ? allRingCols
+    : allRingCols.map(c => ({ ...c, ring: c.ring.filter(e => !isDone(e.matchId)) }))
+
   const nRings = ringCols.length
   const maxLen = ringCols.reduce((mx, c) => Math.max(mx, c.ring.length), 0)
   const isEmpty = maxLen === 0
@@ -193,12 +214,30 @@ export default function MatchList({ matches, teamCounts, schedules, exhibitionSc
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', gap: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             {(['standards', 'open', 'exhibition'] as ViewMode[]).map(v => (
               <button key={v} onClick={() => setViewMode(v)} style={pillStyle(viewMode === v)}>
                 {v === 'standards' ? 'Standard' : v === 'open' ? 'Open' : 'Exhibition'}
               </button>
             ))}
+
+            {/* Divider — Prev Matches sits next to Exhibition but is a filter,
+                not a fourth view mode, so it reads as its own control. */}
+            <div style={{ width: 1, height: 14, background: 'rgba(255,255,255,0.15)', margin: '0 2px' }} />
+
+            {/* The count while hidden is what makes the default state legible —
+                otherwise a list that opens with the morning's matches already
+                dropped just looks short. */}
+            <button
+              onClick={() => setShowPrevMatches(v => !v)}
+              aria-pressed={showPrevMatches}
+              title={showPrevMatches
+                ? 'Hide matches that have already finished'
+                : 'Show matches that have already finished'}
+              style={pillStyle(showPrevMatches)}
+            >
+              Prev Matches{!showPrevMatches && hiddenCount > 0 ? ` (${hiddenCount})` : ''}
+            </button>
           </div>
 
           <button onClick={() => zoomPanRef.current?.resetView()} style={{ ...pillStyle(false), marginLeft: 'auto' }}>
@@ -225,10 +264,19 @@ export default function MatchList({ matches, teamCounts, schedules, exhibitionSc
       <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
         {isEmpty ? (
           <div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center' }}>
-            <p style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.3)' }}>No matches scheduled</p>
+            {/* Everything scheduled is done and hidden — say so, rather than
+                claiming nothing was ever scheduled. */}
+            <p style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.3)', textAlign: 'center', padding: '0 24px' }}>
+              {hiddenCount > 0
+                ? 'All matches here are finished — turn on Prev Matches to see them'
+                : 'No matches scheduled'}
+            </p>
           </div>
         ) : (
-          <BracketZoomPan ref={zoomPanRef} key={viewMode} fitAxis="width" momentum>
+          // showPrevMatches is part of the key so toggling refits the canvas:
+          // the content's height changes a lot, and a stale fit would leave the
+          // remaining matches parked off-screen.
+          <BracketZoomPan ref={zoomPanRef} key={`${viewMode}-${showPrevMatches}`} fitAxis="width" momentum>
             {tableContent}
           </BracketZoomPan>
         )}
