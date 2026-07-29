@@ -52,6 +52,17 @@ const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
 const obs = new OBSWebSocket();
 let obsConnected = false;
 
+// Exactly ONE reconnect may ever be scheduled. Both the connect-failure path
+// and the ConnectionClosed event used to schedule their own retry — and a
+// failed connect fires ConnectionClosed too, so each failure spawned TWO new
+// attempts: a geometric storm that eventually drowned the event loop (seen
+// live: relay heartbeating but not processing, then fully wedged).
+let reconnectTimer = null;
+function scheduleReconnect(delayMs) {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => { reconnectTimer = null; void connectObs(); }, delayMs);
+}
+
 async function connectObs() {
   try {
     await obs.connect(OBS_URL, OBS_PASSWORD || undefined);
@@ -61,15 +72,29 @@ async function connectObs() {
   } catch (err) {
     obsConnected = false;
     log(`OBS connect failed (${err.message ?? err}) — retrying in 5s. Is OBS open with the WebSocket server enabled?`);
-    setTimeout(connectObs, 5000);
+    scheduleReconnect(5000);
   }
 }
 
 obs.on("ConnectionClosed", () => {
   if (obsConnected) log("OBS connection closed — reconnecting…");
   obsConnected = false;
-  setTimeout(connectObs, 3000);
+  scheduleReconnect(3000);
 });
+
+// An 'error' event with no listener KILLS a Node process — and obs-websocket-js
+// emits one when OBS goes away abruptly (crash, force-close). Observed in the
+// field: OBS closed at end of day → relay died instead of riding its own
+// reconnect loop. Log and let ConnectionClosed drive the reconnect.
+obs.on("ConnectionError", (err) => {
+  log("OBS connection error:", err?.message ?? err);
+});
+
+// Last-resort safety nets: during a live event the relay must degrade (log,
+// keep heartbeating, keep reconnecting), never exit. Anything reaching here
+// is a bug to fix later — but not at the cost of losing stream control now.
+process.on("uncaughtException", (err) => log("UNCAUGHT (surviving):", err?.stack ?? err));
+process.on("unhandledRejection", (err) => log("UNHANDLED REJECTION (surviving):", err?.stack ?? err));
 
 // Live state pushes on OBS's own events, so a scene switched at the OBS PC
 // itself (not via the panel) still updates the panel/overlays immediately.

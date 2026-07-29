@@ -101,10 +101,19 @@ export default async function NowBattlingOverlay({ searchParams }: Props) {
             <span style={{ color: GOLD }}>Ring {ring}</span>
           </div>
 
-          {/* Name plates + score */}
-          <div style={{ display: "flex", alignItems: "stretch", gap: 0 }}>
-            <div style={{ ...namePlate, clipPath: "polygon(0 0, 100% 0, calc(100% - 16px) 100%, 0 100%)", textAlign: "right", paddingRight: 44 }}>
-              {left}
+          {/* Name plates + score. A 1fr/auto/1fr grid over the full frame
+              width keeps the VS block LOCKED to screen centre — with a plain
+              flex row, unequal name lengths shoved the whole bout sideways
+              and the VS wandered shot-to-shot. Plates grow outward from the
+              centre instead. */}
+          <div style={{
+            display: "grid", gridTemplateColumns: "1fr auto 1fr",
+            alignItems: "stretch", width: "96vw",
+          }}>
+            <div style={{ display: "flex", justifyContent: "flex-end", minWidth: 0 }}>
+              <div style={{ ...namePlate, clipPath: "polygon(0 0, 100% 0, calc(100% - 16px) 100%, 0 100%)", textAlign: "right", paddingRight: 44 }}>
+                {left}
+              </div>
             </div>
             <div style={{
               display: "flex", alignItems: "center", gap: 10, zIndex: 1,
@@ -121,8 +130,10 @@ export default async function NowBattlingOverlay({ searchParams }: Props) {
               </span>
               {typeof scoreB === "number" && <span style={scoreChip}>{scoreB}</span>}
             </div>
-            <div style={{ ...namePlate, clipPath: "polygon(16px 0, 100% 0, 100% 100%, 0 100%)", paddingLeft: 44 }}>
-              {right}
+            <div style={{ display: "flex", justifyContent: "flex-start", minWidth: 0 }}>
+              <div style={{ ...namePlate, clipPath: "polygon(16px 0, 100% 0, 100% 100%, 0 100%)", paddingLeft: 44 }}>
+                {right}
+              </div>
             </div>
           </div>
 
