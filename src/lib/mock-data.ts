@@ -401,26 +401,33 @@ export function findTeamTargetMatch(pool: BracketMatch[], teamName: string): Bra
 }
 
 /**
- * True if `name` is already placed in some other match in this division.
+ * True when the only thing an edit changed is WHO is standing in a slot — a
+ * manual team swap (a no-show replaced mid-event, a wrongly drawn team fixed) —
+ * as opposed to a score, status, target-score or voting-toggle edit. Scores stay
+ * as recorded, so this is a substitution of the occupant and nothing else.
  *
- * Wildcard boxes are exempt: the team you put in one is by definition already
- * in the bracket (in the matches it was knocked out of), so the usual duplicate
- * guard would make picking anyone impossible. The exemption covers the box
- * itself and the losers-bracket slot it feeds.
+ * Both admin editors route a swap AWAY from applyStatusChange. That function is
+ * right for every other edit: it writes advancement when a match completes and
+ * retracts it when the winner changes. But its retraction resets an already-
+ * played downstream match to 'todo' with both scores zeroed (see clearSlot), so
+ * putting a swap through it would cost the day's logged results — the admin
+ * fixes one slot and loses the matches that came after it. A swap therefore
+ * writes just that slot: nothing else in the tree moves.
+ *
+ * Which also means duplicates are allowed, deliberately. Swapping two teams is
+ * done one slot at a time, so the halfway state always has a team standing in
+ * two places, and the uniqueness guard this replaced silently reverted the edit
+ * instead of letting the admin finish.
  */
-export function isTeamNameTaken(
-  matches: BracketMatch[],
-  division: Division,
-  excludeMatchId: string,
-  name: string,
-): boolean {
-  const target = matches.find(m => m.id === excludeMatchId);
-  if (target && target.side === 'wildcard') return false;
-  return matches.some(m =>
-    m.id !== excludeMatchId &&
-    m.division === division &&
-    (m.slotA.teamName === name || m.slotB.teamName === name),
-  );
+export function isTeamSwapOnly(prev: BracketMatch, next: BracketMatch): boolean {
+  return prev.id === next.id
+    && prev.status      === next.status
+    && prev.targetScore === next.targetScore
+    && prev.votingOpen  === next.votingOpen
+    && prev.slotA.score === next.slotA.score
+    && prev.slotB.score === next.slotB.score
+    && (prev.slotA.teamName !== next.slotA.teamName
+      || prev.slotB.teamName !== next.slotB.teamName);
 }
 
 /** A single slot somewhere in the bracket tree. */
