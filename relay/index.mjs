@@ -52,6 +52,17 @@ const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
 const obs = new OBSWebSocket();
 let obsConnected = false;
 
+// Exactly ONE reconnect may ever be scheduled. Both the connect-failure path
+// and the ConnectionClosed event used to schedule their own retry — and a
+// failed connect fires ConnectionClosed too, so each failure spawned TWO new
+// attempts: a geometric storm that eventually drowned the event loop (seen
+// live: relay heartbeating but not processing, then fully wedged).
+let reconnectTimer = null;
+function scheduleReconnect(delayMs) {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => { reconnectTimer = null; void connectObs(); }, delayMs);
+}
+
 async function connectObs() {
   try {
     await obs.connect(OBS_URL, OBS_PASSWORD || undefined);
@@ -61,14 +72,14 @@ async function connectObs() {
   } catch (err) {
     obsConnected = false;
     log(`OBS connect failed (${err.message ?? err}) — retrying in 5s. Is OBS open with the WebSocket server enabled?`);
-    setTimeout(connectObs, 5000);
+    scheduleReconnect(5000);
   }
 }
 
 obs.on("ConnectionClosed", () => {
   if (obsConnected) log("OBS connection closed — reconnecting…");
   obsConnected = false;
-  setTimeout(connectObs, 3000);
+  scheduleReconnect(3000);
 });
 
 // An 'error' event with no listener KILLS a Node process — and obs-websocket-js
