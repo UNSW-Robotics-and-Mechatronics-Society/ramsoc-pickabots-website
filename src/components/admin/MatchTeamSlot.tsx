@@ -11,9 +11,9 @@ import { formatTime, parseTimeInput } from "@/lib/schedule";
 export const MATCH_DRAG_TYPE = "application/match-id";
 
 // ── TimeCell — click a match's scheduled time to edit it inline ───────────────
-// Shared by MatchesPanel (axis labels) and AdminBracket (on each card) so
-// editing a time behaves identically — same click-to-edit affordance, same
-// "1:05pm"/"13:05" parsing — no matter which admin view it's edited from.
+// Shown on each card in both MatchesPanel and AdminBracket so editing a time
+// behaves identically — same click-to-edit affordance, same "1:05pm"/"13:05"
+// parsing — no matter which admin view it's edited from.
 export type TimeCellProps = {
   minute: number;
   onCommit: (minute: number) => void;
