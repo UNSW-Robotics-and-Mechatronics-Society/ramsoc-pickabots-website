@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { findProfileByEmail, getTeamForProfile } from "@/lib/db/profiles";
-import { getUpcomingMatchesForTeam } from "@/lib/db/teamLedger";
+import { getTeamLedger, getUpcomingMatchesForTeam } from "@/lib/db/teamLedger";
 
 // GET /api/my-team — the signed-in player's linked team (if any, set during
 // onboarding — see OnboardingFlow/TeamStep) and its upcoming match times.
@@ -20,8 +20,19 @@ export async function GET() {
     const membership = profile ? await getTeamForProfile(profile.id) : null;
     if (!membership) return NextResponse.json({ team: null, matches: [] });
 
-    const matches = await getUpcomingMatchesForTeam(membership.team.name, membership.team.division);
-    return NextResponse.json({ team: membership.team, matches });
+    const [matches, ledger] = await Promise.all([
+      getUpcomingMatchesForTeam(membership.team.name, membership.team.division),
+      getTeamLedger(membership.team.name, membership.team.division),
+    ]);
+    return NextResponse.json({
+      team: membership.team,
+      matches,
+      pastMatches: ledger?.pastMatches ?? [],
+      wins: ledger?.wins ?? 0,
+      losses: ledger?.losses ?? 0,
+      winRate: ledger?.winRate ?? 0,
+      eliminated: ledger?.eliminated ?? null,
+    });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Failed to load team" },

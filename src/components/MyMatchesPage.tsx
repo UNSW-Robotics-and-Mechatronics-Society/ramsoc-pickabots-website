@@ -13,11 +13,41 @@ type UpcomingTeamMatch = {
   isExhibition: boolean
 }
 
+type PastTeamMatch = {
+  matchId: string
+  opponentName: string
+  teamScore: number
+  opponentScore: number
+  won: boolean
+  roundLabel: string
+}
+
 const DIVISION_COLOR: Record<Division, string> = { standards: '#FF6B00', open: '#4cff00' }
 
-type Props = { team: Team | null; matches: UpcomingTeamMatch[] }
+type Props = {
+  team: Team | null
+  matches: UpcomingTeamMatch[]
+  pastMatches: PastTeamMatch[]
+  wins: number
+  losses: number
+  winRate: number
+}
 
-export default function MyMatchesPage({ team, matches }: Props) {
+function StatTile({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div className="glass" style={{
+      flex: 1, minWidth: 0, padding: '10px 8px', borderRadius: 10,
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+    }}>
+      <span style={{ fontSize: '0.42rem', fontWeight: 900, letterSpacing: 2, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase' }}>
+        {label}
+      </span>
+      <span style={{ fontSize: '0.8rem', fontWeight: 900, color, letterSpacing: 0.5 }}>{value}</span>
+    </div>
+  )
+}
+
+export default function MyMatchesPage({ team, matches, pastMatches, wins, losses, winRate }: Props) {
   // Ring/schedule edits (admin) and match results both change when a team's
   // upcoming slot or opponent shifts — same table set MatchList subscribes to.
   useRealtimeRefresh(['bracket_matches', 'bracket_config', 'bracket_schedule'])
@@ -109,6 +139,53 @@ export default function MyMatchesPage({ team, matches }: Props) {
               }}>
                 {m.time ?? 'TBD'}
               </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {team && (wins > 0 || losses > 0) && (
+        <div style={{ display: 'flex', gap: 8 }}>
+          <StatTile label="Win Rate" value={`${winRate}%`} color="#fff" />
+          <StatTile label="Record" value={`${wins}W / ${losses}L`} color="#fff" />
+        </div>
+      )}
+
+      {team && pastMatches.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{
+            fontSize: '0.48rem', fontWeight: 900, color: 'rgba(255,255,255,0.35)',
+            textTransform: 'uppercase', letterSpacing: 4,
+          }}>
+            Past Matches
+          </div>
+          {pastMatches.map(m => (
+            <div
+              key={m.matchId}
+              className="glass"
+              style={{
+                borderRadius: 14, padding: '12px 16px',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <div style={{
+                  fontSize: '0.8rem', fontWeight: 900, color: '#fff', letterSpacing: 0.5,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>
+                  vs {m.opponentName}
+                </div>
+                <div style={{ fontSize: '0.5rem', color: 'rgba(255,255,255,0.4)', marginTop: 3 }}>
+                  {m.roundLabel} · {m.teamScore}–{m.opponentScore}
+                </div>
+              </div>
+              <span style={{
+                flexShrink: 0, fontSize: '0.5rem', fontWeight: 900, letterSpacing: 1, padding: '3px 9px',
+                borderRadius: 999, color: m.won ? '#4ADE80' : '#ff6666',
+                background: m.won ? 'rgba(76,222,128,0.12)' : 'rgba(255,60,60,0.1)',
+              }}>
+                {m.won ? 'WON' : 'LOST'}
+              </span>
             </div>
           ))}
         </div>

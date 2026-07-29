@@ -1,7 +1,7 @@
 import { currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { findProfileByEmail, getTeamForProfile } from "@/lib/db/profiles";
-import { getUpcomingMatchesForTeam } from "@/lib/db/teamLedger";
+import { getTeamLedger, getUpcomingMatchesForTeam } from "@/lib/db/teamLedger";
 import MyMatchesPage from "@/components/MyMatchesPage";
 
 export const dynamic = "force-dynamic";
@@ -18,9 +18,22 @@ export default async function MyMatches() {
   const membership = profile ? await getTeamForProfile(profile.id) : null;
 
   if (!membership) {
-    return <MyMatchesPage team={null} matches={[]} />;
+    return <MyMatchesPage team={null} matches={[]} pastMatches={[]} wins={0} losses={0} winRate={0} />;
   }
 
-  const matches = await getUpcomingMatchesForTeam(membership.team.name, membership.team.division);
-  return <MyMatchesPage team={membership.team} matches={matches} />;
+  const [matches, ledger] = await Promise.all([
+    getUpcomingMatchesForTeam(membership.team.name, membership.team.division),
+    getTeamLedger(membership.team.name, membership.team.division),
+  ]);
+
+  return (
+    <MyMatchesPage
+      team={membership.team}
+      matches={matches}
+      pastMatches={ledger?.pastMatches ?? []}
+      wins={ledger?.wins ?? 0}
+      losses={ledger?.losses ?? 0}
+      winRate={ledger?.winRate ?? 0}
+    />
+  );
 }
