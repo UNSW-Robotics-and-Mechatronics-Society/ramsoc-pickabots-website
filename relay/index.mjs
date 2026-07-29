@@ -71,6 +71,20 @@ obs.on("ConnectionClosed", () => {
   setTimeout(connectObs, 3000);
 });
 
+// An 'error' event with no listener KILLS a Node process — and obs-websocket-js
+// emits one when OBS goes away abruptly (crash, force-close). Observed in the
+// field: OBS closed at end of day → relay died instead of riding its own
+// reconnect loop. Log and let ConnectionClosed drive the reconnect.
+obs.on("ConnectionError", (err) => {
+  log("OBS connection error:", err?.message ?? err);
+});
+
+// Last-resort safety nets: during a live event the relay must degrade (log,
+// keep heartbeating, keep reconnecting), never exit. Anything reaching here
+// is a bug to fix later — but not at the cost of losing stream control now.
+process.on("uncaughtException", (err) => log("UNCAUGHT (surviving):", err?.stack ?? err));
+process.on("unhandledRejection", (err) => log("UNHANDLED REJECTION (surviving):", err?.stack ?? err));
+
 // Live state pushes on OBS's own events, so a scene switched at the OBS PC
 // itself (not via the panel) still updates the panel/overlays immediately.
 obs.on("CurrentProgramSceneChanged", () => void pushState());
