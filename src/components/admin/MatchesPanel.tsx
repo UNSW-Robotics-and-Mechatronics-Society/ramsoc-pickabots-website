@@ -343,6 +343,11 @@ export default function MatchesPanel({
   // tabs — mirrors the public voting page/match list split, so exhibition
   // matches never mix into the bracket-round view here either.
   const [mode, setMode] = useState<MatchesMode>('bracket');
+  // Finished matches are hidden by default, same as the public match list — the
+  // panel opens on what's still to run, and the toggle brings the day's history
+  // back. Off = hidden, matching the toolbar convention that a lit control means
+  // the thing it names is showing.
+  const [showPrevMatches, setShowPrevMatches] = useState(false);
   // Exhibition mode shows the one shared list regardless of which division
   // is globally selected; bracket mode stays scoped to just that division.
   const divMatches = mode === 'exhibition'
@@ -478,6 +483,16 @@ export default function MatchesPanel({
   const isEmpty = mode === 'exhibition'
     ? shownEntries.length === 0 && exhibitionSchedule.rings.length === 0
     : shownEntries.length === 0;
+
+  // "Prev Matches" off (the default) drops finished matches from each ring.
+  // 'completed' is the only status hidden: skipped matches and byes never reach
+  // a ring at all (see rollSchedule's schedulable). The status read here is the
+  // same one the card renders, so what's hidden always agrees with what a
+  // visible card would have said. isEmpty above stays deliberately unfiltered —
+  // hiding everything should leave the ring columns standing (each explaining
+  // itself, see renderRingColumn) rather than blanking the whole panel.
+  const isDone = (matchId: string) => matchById.get(matchId)?.status === 'completed';
+  const hiddenCount = shownEntries.filter(e => isDone(e.matchId)).length;
   // Still needed by the Match/Gap inputs below (they rewrite the schedule's
   // times) — they just no longer drive any pixel geometry.
   const activeMatchMinutes = mode === 'exhibition' ? exhibitionSchedule.matchMinutes : schedule.matchMinutes;
@@ -492,6 +507,16 @@ export default function MatchesPanel({
     label: string,
     opts?: { onAddMatch?: () => void; onRemoveRing?: () => void; accent?: boolean },
   ) {
+    // Sorted by start time, then filtered — a flex column, so dropping a
+    // finished match just closes the gap; nothing to compact by hand.
+    const visible = [...ring]
+      .sort((a, b) => a.startMinute - b.startMinute)
+      .filter(e => showPrevMatches || !isDone(e.matchId));
+    // Distinguish "everything here is finished and hidden" from a ring that has
+    // genuinely never had matches — otherwise the toggle's effect looks like a
+    // bug on a ring that's simply done for the day.
+    const allHidden = visible.length === 0 && ring.length > 0;
+
     return (
       <div key={key} className="flex shrink-0 flex-col border-l border-white/5">
         <div
@@ -521,13 +546,13 @@ export default function MatchesPanel({
             )}
           </div>
         </div>
-        {/* This ring's matches, stacked in start-time order. The sort is purely
-            presentational — every write below is keyed by match id (swap, time
-            edit/reset, remove), so the stored queue order is untouched. Ties
-            (which shouldn't happen within one ring) keep queue order, since
+        {/* This ring's matches, stacked in start-time order. Sort and filter are
+            purely presentational — every write below is keyed by match id (swap,
+            time edit/reset, remove), so the stored queue order is untouched.
+            Ties (which shouldn't happen within one ring) keep queue order, since
             Array#sort is stable. */}
         <div className="flex flex-col px-1 pt-3" style={{ width: RING_W, gap: BOX_GAP }}>
-          {[...ring].sort((a, b) => a.startMinute - b.startMinute).map(entry => {
+          {visible.map(entry => {
             const match = matchById.get(entry.matchId);
             if (!match) return null;
             return (
@@ -553,13 +578,16 @@ export default function MatchesPanel({
 
           {/* A stacked column collapses to nothing when empty — without this a
               freshly added exhibition ring would show a bare header with no
-              indication that its "+" is what fills it. */}
-          {ring.length === 0 && (
+              indication that its "+" is what fills it, and a ring whose matches
+              are all finished would look broken rather than done. */}
+          {visible.length === 0 && (
             <div
-              className="flex items-center justify-center rounded-md border border-dashed border-white/15 text-[0.55rem] text-foreground/30"
+              className="flex items-center justify-center px-2 text-center rounded-md border border-dashed border-white/15 text-[0.55rem] text-foreground/30"
               style={{ height: CARD_H }}
             >
-              {opts?.onAddMatch ? 'No matches — use + above' : 'No matches'}
+              {allHidden
+                ? `All ${ring.length} done — show Prev Matches`
+                : opts?.onAddMatch ? 'No matches — use + above' : 'No matches'}
             </div>
           )}
         </div>
@@ -609,6 +637,28 @@ export default function MatchesPanel({
             </button>
           ))}
         </div>
+
+        {/* Prev Matches — sits next to the mode tabs but is a filter, not a
+            third mode, so the divider keeps it separate. Never collapses at
+            narrow widths (unlike Match/Gap below): with finished matches hidden
+            by default, the control that explains why has to stay reachable.
+            The count is what makes the default state legible — otherwise a list
+            that opens with the morning's matches already dropped just looks short. */}
+        <div className="h-3 w-px shrink-0 bg-white/15" />
+        <button
+          type="button"
+          onClick={() => setShowPrevMatches(v => !v)}
+          aria-pressed={showPrevMatches}
+          title={showPrevMatches
+            ? 'Hide matches that have already finished'
+            : 'Show matches that have already finished'}
+          className={cn(
+            "shrink-0 whitespace-nowrap rounded px-2 py-0.5 text-[0.6rem] font-medium uppercase tracking-wide transition-colors",
+            showPrevMatches ? "bg-white/20 text-foreground" : "text-foreground/40 hover:text-foreground/70",
+          )}
+        >
+          Prev Matches{!showPrevMatches && hiddenCount > 0 ? ` (${hiddenCount})` : ''}
+        </button>
 
         {/* Ring count only means anything for bracket rings — exhibition ring
             count is managed directly via the +/✕ controls on each ring. */}
