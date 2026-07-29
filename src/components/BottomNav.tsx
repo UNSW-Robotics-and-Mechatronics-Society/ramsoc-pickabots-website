@@ -1,8 +1,10 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Coins, Trophy, Swords, CalendarClock, type LucideIcon } from "lucide-react";
+import { useUser } from "@clerk/nextjs";
+import { Coins, Trophy, Swords, CalendarClock, Users, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useAdminPanels } from "@/components/admin/AdminPanelContext";
 
@@ -19,9 +21,38 @@ const ITEMS: Item[] = [
   { href: "/matches", label: "Matches", Icon: CalendarClock },
 ];
 
+const MY_TEAM_ITEM: Item = { href: "/my-matches", label: "My Team", Icon: Users };
+
 export default function BottomNav() {
   const pathname = usePathname();
   const { bracketFullscreen } = useAdminPanels();
+  const { isSignedIn } = useUser();
+
+  // Only players who linked a competing team during onboarding (see
+  // TeamStep — spectators skip this) get the "My Team" tab; everyone else's
+  // nav stays exactly as it was. Checked once per sign-in rather than kept
+  // in sync live — a team link only ever happens during onboarding, which
+  // already hard-navigates afterwards.
+  const [hasTeam, setHasTeam] = useState(false);
+  useEffect(() => {
+    if (!isSignedIn) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setHasTeam(false);
+      return;
+    }
+    let cancelled = false;
+    fetch("/api/my-team")
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => {
+        if (!cancelled) setHasTeam(!!data?.team);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isSignedIn]);
+
+  const items = hasTeam ? [...ITEMS, MY_TEAM_ITEM] : ITEMS;
 
   // Hide on sign-in/sign-up/standby, on admin (admin has its own inline nav),
   // and while the bracket is in full-screen mode (which wants a bare canvas +
@@ -46,7 +77,7 @@ export default function BottomNav() {
   return (
     <nav className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
       <div className="glass-nav pointer-events-auto flex w-full max-w-md items-center justify-around gap-1 rounded-full px-3 py-2">
-        {ITEMS.map(({ href, label, Icon }) => {
+        {items.map(({ href, label, Icon }) => {
           const active = pathname.startsWith(href);
           return (
             <Link
