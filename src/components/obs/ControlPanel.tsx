@@ -128,6 +128,17 @@ export default function ControlPanel({ initialState, live }: Props) {
 
   const bigBtn = 'flex min-h-16 items-center justify-center gap-2 rounded-2xl border text-sm font-bold uppercase tracking-wider transition-colors active:scale-[0.98]'
 
+  // Which rings currently have a live bout, per the bracket — independent of
+  // which OBS scene is on air. Looked up by ring number (1..MAX_RINGS) across
+  // both divisions so a ring can be flagged "on" even if its division tab
+  // isn't the one currently showing.
+  const ringActiveMatch: Record<number, string | null> = {}
+  for (let n = 1; n <= MAX_RINGS; n++) {
+    ringActiveMatch[n] = live.standards.find(r => r.ring === n)?.active
+      ?? live.open.find(r => r.ring === n)?.active
+      ?? null
+  }
+
   return (
     <div className="flex flex-col gap-4 pb-8">
       <header className="flex items-center justify-between pt-1">
@@ -166,20 +177,29 @@ export default function ControlPanel({ initialState, live }: Props) {
       {/* ── Scenes ─────────────────────────────────────────── */}
       <section className="glass rounded-2xl p-3">
         <h2 className="mb-2 text-[0.6rem] font-bold uppercase tracking-[0.2em] text-foreground/60">Scene</h2>
+        <p className="mb-2 text-[0.55rem] leading-relaxed text-foreground/40">
+          <span className="text-emerald-400">●</span> ring has a live bout · dashed border = idle · orange fill = on air now
+        </p>
         <div className="grid grid-cols-2 gap-2">
-          {Array.from({ length: MAX_RINGS }, (_, i) => ringSceneName(i + 1)).map(scene => (
-            <button
-              key={scene}
-              onClick={() => send('set_scene', { scene }, `scene:${scene}`)}
-              disabled={busy === `scene:${scene}`}
-              className={cn(bigBtn,
-                s.currentScene === scene
-                  ? 'border-orange-400/70 bg-orange-500/25 text-orange-200'
-                  : 'border-white/15 bg-white/5 text-foreground/80 hover:bg-white/10')}
-            >
-              {scene}{spinner(`scene:${scene}`)}
-            </button>
-          ))}
+          {Array.from({ length: MAX_RINGS }, (_, i) => ({ ring: i + 1, scene: ringSceneName(i + 1) })).map(({ ring: n, scene }) => {
+            const matchOn = ringActiveMatch[n] != null
+            return (
+              <button
+                key={scene}
+                onClick={() => send('set_scene', { scene }, `scene:${scene}`)}
+                disabled={busy === `scene:${scene}`}
+                title={ringActiveMatch[n] ?? 'No live bout on this ring'}
+                className={cn(bigBtn,
+                  matchOn ? 'border-emerald-400/60' : 'border-dashed border-white/15',
+                  s.currentScene === scene
+                    ? 'bg-orange-500/25 text-orange-200 ring-2 ring-orange-400/60'
+                    : 'bg-white/5 text-foreground/80 hover:bg-white/10')}
+              >
+                <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', matchOn ? 'bg-emerald-400' : 'bg-white/20')} />
+                {scene}{spinner(`scene:${scene}`)}
+              </button>
+            )
+          })}
         </div>
         <h2 className="mb-2 mt-3 text-[0.6rem] font-bold uppercase tracking-[0.2em] text-foreground/60">Screens</h2>
         <div className="grid grid-cols-2 gap-2">
