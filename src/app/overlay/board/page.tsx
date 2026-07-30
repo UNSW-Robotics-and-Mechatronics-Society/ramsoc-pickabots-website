@@ -110,7 +110,7 @@ export default async function BoardOverlay({ searchParams }: Props) {
       <OverlayRefresh tables={["bracket_matches", "bracket_schedule", "votes", "matches"]} intervalMs={4000} />
       <div style={wide ? {
         position: "fixed", inset: 0, padding: 18,
-        display: "grid", gridTemplateColumns: "460px 460px 300px 1fr 400px", gap: 16,
+        display: "grid", gridTemplateColumns: "420px 420px 260px 1fr 310px", gap: 16,
         fontFamily: FONT_BODY,
       } : {
         position: "fixed", inset: 0, padding: 26,
@@ -193,17 +193,17 @@ export default async function BoardOverlay({ searchParams }: Props) {
               );
             })}
             {estFinish && (
-              <div style={{ marginTop: "auto", fontSize: "0.95rem", letterSpacing: 2, textTransform: "uppercase", color: "rgba(244,247,251,0.55)" }}>
-                Est. finish <span style={{ fontFamily: FONT_DISPLAY, color: GOLD, fontSize: "1.5rem", marginLeft: 10 }}>{estFinish}</span>
+              <div style={{ marginTop: "auto", fontSize: "0.85rem", letterSpacing: 2, textTransform: "uppercase", color: "rgba(244,247,251,0.55)", whiteSpace: "nowrap" }}>
+                Est. finish <span style={{ fontFamily: FONT_DISPLAY, color: GOLD, fontSize: wide ? "1.15rem" : "1.5rem", marginLeft: 8 }}>{estFinish}</span>
               </div>
             )}
           </div>
 
           {/* ② crowd favourites */}
           <div style={card}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={labStyle}>Crowd favourites · most coins backed</span>
-              <span style={{ display: "flex", gap: 22, fontSize: "0.9rem", letterSpacing: 1.5 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+              <span style={labStyle}>{wide ? "Crowd favourites" : "Crowd favourites · most coins backed"}</span>
+              <span style={{ display: "flex", gap: wide ? 14 : 22, fontSize: wide ? "0.75rem" : "0.9rem", letterSpacing: 1.5 }}>
                 <span><span style={{ color: DIVISION_META.standards.color }}>▮</span> Standard</span>
                 <span><span style={{ color: DIVISION_META.open.color }}>▮</span> Open</span>
               </span>
@@ -215,19 +215,19 @@ export default async function BoardOverlay({ searchParams }: Props) {
               {favourites.map(t => {
                 const meta = t.division ? DIVISION_META[t.division] : { color: GOLD };
                 return (
-                  <div key={t.id} style={{ display: "grid", gridTemplateColumns: "230px 1fr", gap: 16, alignItems: "center" }}>
+                  <div key={t.id} style={{ display: "grid", gridTemplateColumns: wide ? "140px 1fr" : "230px 1fr", gap: wide ? 10 : 16, alignItems: "center" }}>
                     <span style={{
-                      fontSize: "1.15rem", textAlign: "right",
+                      fontSize: wide ? "0.85rem" : "1.15rem", textAlign: "right",
                       whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                     }}>
                       {t.name}
                     </span>
-                    <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: wide ? 8 : 12, minWidth: 0 }}>
                       <div style={{
-                        width: `${Math.max(3, (t.tokens / maxTokens) * 78)}%`, height: 22,
-                        background: meta.color, borderRadius: "0 8px 8px 0",
+                        width: `${Math.max(3, (t.tokens / maxTokens) * (wide ? 62 : 78))}%`, height: wide ? 16 : 22,
+                        background: meta.color, borderRadius: "0 8px 8px 0", flexShrink: 0,
                       }} />
-                      <span style={{ fontSize: "1.05rem", fontWeight: 700, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+                      <span style={{ fontSize: wide ? "0.85rem" : "1.05rem", fontWeight: 700, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
                         {t.tokens.toLocaleString()} ⛁
                       </span>
                     </div>
@@ -240,7 +240,7 @@ export default async function BoardOverlay({ searchParams }: Props) {
           {/* ③ coins wagered hero + sparkline */}
           <div style={card}>
             <div style={labStyle}>Coins wagered today</div>
-            <div style={{ fontFamily: FONT_DISPLAY, fontSize: "3.2rem", lineHeight: 1.05, color: GOLD, fontVariantNumeric: "tabular-nums" }}>
+            <div style={{ fontFamily: FONT_DISPLAY, fontSize: wide ? "2.3rem" : "3.2rem", lineHeight: 1.05, color: GOLD, fontVariantNumeric: "tabular-nums" }}>
               {wagers.totalWagered.toLocaleString()} ⛁
             </div>
             {points.length > 1 && (
