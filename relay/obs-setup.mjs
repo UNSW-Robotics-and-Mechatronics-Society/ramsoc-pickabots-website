@@ -13,9 +13,11 @@ await obs.connect(process.env.OBS_WS_URL || "ws://127.0.0.1:4455", process.env.O
 const { currentSceneCollectionName } = await obs.call("GetSceneCollectionList");
 console.log("scene collection:", currentSceneCollectionName);
 
+// Every scene the control panel can target (SCREEN_SCENES in src/lib/obs.ts).
 const SCENES = [
   "Ring 1", "Ring 2", "Ring 3", "Ring 4", "Ring 5", "Ring 6",
-  "Sumobots", "Intermission", "Bracket", "Standings", "Leaderboard", "Standby",
+  "Sumobots", "Intermission", "Bracket", "Standings", "Leaderboard",
+  "Results", "All Rings", "Vote", "Commentary", "Standby", "Blank",
 ];
 
 const existing = new Set((await obs.call("GetSceneList")).scenes.map(s => s.sceneName));
@@ -95,26 +97,53 @@ await browserSource("Intermission", "overlay-upcoming", `${BASE}/overlay/upcomin
 await browserSource("Bracket", "overlay-bracket", `${BASE}/overlay/bracket`);
 await browserSource("Standings", "overlay-stats", `${BASE}/overlay/stats?top=8`);
 await browserSource("Leaderboard", "overlay-leaderboard", `${BASE}/overlay/leaderboard?top=10`);
+await browserSource("Results", "overlay-results", `${BASE}/overlay/results`);
+await browserSource("Vote", "overlay-vote", `${BASE}/overlay/vote`);
+
+// Commentary: the phone camera full-frame + the KPI side banner on top.
+await mediaSource("Commentary", "feed-phone", "rtmp://localhost:1935/phone");
+await browserSource("Commentary", "overlay-kpi", `${BASE}/overlay/kpi`);
+
+// All Rings: 2x2 multiview. The info board takes the bottom-right quadrant;
+// the three camera quadrants are physical devices, added by hand (see docs).
+await browserSource("All Rings", "overlay-board", `${BASE}/overlay/board`);
+{
+  const items = await obs.call("GetSceneItemList", { sceneName: "All Rings" });
+  const board = items.sceneItems.find(i => i.sourceName === "overlay-board");
+  if (board) {
+    await obs.call("SetSceneItemTransform", {
+      sceneName: "All Rings",
+      sceneItemId: board.sceneItemId,
+      sceneItemTransform: {
+        boundsType: "OBS_BOUNDS_SCALE_INNER",
+        boundsWidth: 960, boundsHeight: 540,
+        positionX: 960, positionY: 540,
+      },
+    });
+    console.log("board overlay placed in All Rings bottom-right quadrant");
+  }
+}
 
 // Standby gets a text placeholder (swap in a real image later — see guide).
 if (!inputNames.has("standby-text")) {
-  await obs.call("CreateInput", {
-    sceneName: "Standby",
-    inputName: "standby-text",
-    inputKind: "text_gdiplus_v3",
-    inputSettings: {
-      text: "SUMOBOTS 2026\n\nBack shortly",
-      font: { face: "Arial", size: 96, style: "Bold" },
-      align: "center",
-    },
-  }).catch(async () => {
-    // older text input kind fallback
-    await obs.call("CreateInput", {
-      sceneName: "Standby", inputName: "standby-text", inputKind: "text_gdiplus_v2",
-      inputSettings: { text: "SUMOBOTS 2026\n\nBack shortly", font: { face: "Arial", size: 96, style: "Bold" } },
-    });
-  });
-  console.log("standby text source created");
+  // GDI+ text only exists on Windows; macOS/Linux OBS uses FreeType 2.
+  const settings = {
+    text: "SUMOBOTS 2026\n\nBack shortly",
+    font: { face: "Arial", size: 96, style: "Bold" },
+    align: "center",
+  };
+  const kinds = process.platform === "win32"
+    ? ["text_gdiplus_v3", "text_gdiplus_v2"]
+    : ["text_ft2_source_v2", "text_ft2_source"];
+  let created = false;
+  for (const inputKind of kinds) {
+    try {
+      await obs.call("CreateInput", { sceneName: "Standby", inputName: "standby-text", inputKind, inputSettings: settings });
+      created = true;
+      break;
+    } catch { /* try the next kind */ }
+  }
+  console.log(created ? "standby text source created" : "WARN: no text input kind available — add Standby text by hand");
 }
 
 // Land on the title card, and clean up OBS's default empty scene if present.
