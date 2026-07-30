@@ -100,6 +100,24 @@ targets, with every overlay browser source wired:
 
 **Scene names must never be edited** — the panel targets them by exact name.
 
+### Finals day: only one or two physical rings
+
+The script still builds all six ring scenes — the unused ones are harmless,
+just ignore them. What matters is the **division mapping**: the overlay's ring
+number is the ring column in the `/admin` schedule *for that division*, not
+the physical ring.
+
+- `Ring 1` = standard division ring 1 → put the main ring's camera here and
+  cut to it for **standard** finals matches
+- `Ring 4` = **open** division ring 1 → add the *same camera source* (Add
+  Existing) to this scene too, and cut to it for **open** finals matches —
+  same picture, but the lower-third shows the open-division bout
+- Second physical ring (if any): its camera goes in `Ring 2` (standard) and
+  `Ring 5` (open ring 2), same trick
+
+So even with one ring, scene switching between `Ring 1`/`Ring 4` is how the
+stream flips between the two divisions' lower-thirds.
+
 Overlays update live via Supabase Realtime; add once, never touch. If a
 browser source ever shows the wrong page, *rewrite its URL with `?v=2`
 appended* — OBS's "refresh" button reloads the wrong page.
