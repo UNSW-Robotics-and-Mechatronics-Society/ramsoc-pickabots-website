@@ -122,6 +122,16 @@ await browserSource("IT Cam", "overlay-camlabel-it", `${BASE}/overlay/cam-label?
 await mediaSource("Commentary", "feed-phone", "rtmp://localhost:1935/phone");
 await browserSource("Commentary", "overlay-kpi", `${BASE}/overlay/kpi`);
 
+// Commentator cams: same KPI side banner as Commentary, reused (not
+// duplicated) on top of each operator's own phone feed.
+for (const scene of ["Dash Cam", "Nirvan Cam", "Arjun Cam"]) {
+  const items = await obs.call("GetSceneItemList", { sceneName: scene }).catch(() => ({ sceneItems: [] }));
+  if (!items.sceneItems.some(i => i.sourceName === "overlay-kpi")) {
+    await obs.call("CreateSceneItem", { sceneName: scene, sourceName: "overlay-kpi" }).catch(() => {});
+    console.log("added overlay-kpi to", scene);
+  }
+}
+
 // All Rings: 2x2 multiview. The info board takes the bottom-right quadrant;
 // the three camera quadrants are physical devices, added by hand (see docs).
 await browserSource("All Rings", "overlay-board", `${BASE}/overlay/board`);
