@@ -1,7 +1,11 @@
 'use client'
 
 import { Fragment, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { type BracketMatch, type Division, type TeamCount, findTeamTargetMatch, computeSlotDefaults, isFinalsMatch } from '@/lib/mock-data'
+import {
+  type BracketMatch, type Division, type TeamCount,
+  findTeamTargetMatch, computeSlotDefaults, isFinalsMatch,
+  wbRoundsFor, lbRoundsFor, wbRoundLabel, lbRoundLabel,
+} from '@/lib/mock-data'
 import {
   type MatchSchedule, type ExhibitionSchedule, type FinalsSchedule,
   formatTime, applyScheduleStatus,
@@ -23,11 +27,48 @@ import FinalsDayBanner from './FinalsDayBanner'
 // wrapping while the right-aligned time still sits close to its own card
 // (rather than drifting toward the ring on its left).
 const TIME_W  = 56
+// Wide enough for the longest label without wrapping — "Standards Quarters"
+// and "Standards Bronze" are the two that set it.
+const LABEL_W = 104
 const COL_GAP = 10
 const ROW_GAP = 8
 // Fixed card scale, applied uniformly regardless of viewport — the zoom
 // canvas (not this constant) is what makes cards bigger/smaller on screen.
 const CARD_SCALE = 1.5
+
+// Medal colours for the two matches that decide a placing. Bronze is the
+// classic metal; gold is the same #FFD700 used by the Finals Day banner and the
+// bracket's finals box, so the three read as one thing across the site.
+const BRONZE = '#CD7F32'
+const GOLD   = '#FFD700'
+
+const DIVISION_LABEL: Record<Division, string> = { standards: 'Standards', open: 'Open' }
+
+/**
+ * What this match IS, in words, for the label column left of each card.
+ *
+ * Finals name their division because the Finals Day ring interleaves both (see
+ * FinalsSchedule) — "Semi 1" alone wouldn't say whose. Bracket rounds don't:
+ * their tab already scopes them to one division, so a prefix would just repeat
+ * the tab on every row.
+ */
+function matchTitle(m: BracketMatch, teamCounts: Record<Division, TeamCount>): string {
+  const div = DIVISION_LABEL[m.division]
+  if (m.side === 'finals-semi')  return `${div} Semi ${m.matchNumber}`
+  if (m.side === 'finals-third') return `${div} Bronze`
+  if (m.side === 'finals-final') return `${div} Final`
+  if (m.side === 'exhibition')   return 'Exhibition'
+  const total = m.side === 'winners' ? wbRoundsFor(teamCounts[m.division]) : lbRoundsFor(teamCounts[m.division])
+  const round = m.side === 'winners' ? wbRoundLabel(m.round, total) : lbRoundLabel(m.round, total)
+  return `${round} · M${m.matchNumber}`
+}
+
+/** Bronze-medal and grand-final matches get their metal; everything else is plain. */
+function matchTitleAccent(m: BracketMatch): string | null {
+  if (m.side === 'finals-final') return GOLD
+  if (m.side === 'finals-third') return BRONZE
+  return null
+}
 
 function pillStyle(active: boolean): CSSProperties {
   return {
@@ -166,16 +207,16 @@ export default function MatchList({ matches, teamCounts, schedules, exhibitionSc
   const tableContent = (
     <div style={{
       display: 'grid',
-      gridTemplateColumns: `repeat(${nRings}, ${TIME_W}px ${cardW}px)`,
+      gridTemplateColumns: `repeat(${nRings}, ${TIME_W}px ${LABEL_W}px ${cardW}px)`,
       columnGap: COL_GAP, rowGap: ROW_GAP,
       alignItems: 'center', padding: '4px 16px 24px',
     }}>
       {/* Header row — pans/zooms with the rest of the content, same as the
           bracket page's "Winners Bracket" / "Ring 1" labels (nothing here
           is pinned to the viewport; the camera is what moves instead). Each
-          label spans its ring's time + card columns. */}
+          label spans its ring's time + name + card columns. */}
       {ringCols.map((c, ri) => (
-        <div key={`h-${ri}`} style={{ ...headerCell, gridColumn: 'span 2' }}>{c.label}</div>
+        <div key={`h-${ri}`} style={{ ...headerCell, gridColumn: 'span 3' }}>{c.label}</div>
       ))}
 
       {/* One row per slot index */}
@@ -201,6 +242,38 @@ export default function MatchList({ matches, teamCounts, schedules, exhibitionSc
                     color: 'rgba(255,215,0,0.75)',
                   }}>
                     {entry && match ? formatTime(entry.startMinute) : ''}
+                  </div>
+
+                  {/* What the match IS. Sits between the time and the card so a
+                      row reads left to right as "when — what — who". */}
+                  <div style={{
+                    height: rowH, display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+                    paddingRight: 8, minWidth: 0,
+                  }}>
+                    {entry && match && (() => {
+                      const accent = matchTitleAccent(match)
+                      return (
+                        <span style={{
+                          fontSize: '0.58rem', fontWeight: 900, letterSpacing: 1,
+                          textTransform: 'uppercase', textAlign: 'right', whiteSpace: 'nowrap',
+                          overflow: 'hidden', textOverflow: 'ellipsis',
+                          color: accent ?? 'rgba(255,255,255,0.5)',
+                          // The medal matches get a tinted plate as well as the
+                          // colour — on a dark background a hue shift alone is
+                          // easy to miss while scanning a long column.
+                          ...(accent ? {
+                            padding: '3px 8px',
+                            borderRadius: 999,
+                            background: `color-mix(in srgb, ${accent} 14%, transparent)`,
+                            border: `1px solid color-mix(in srgb, ${accent} 38%, transparent)`,
+                            textShadow: `0 0 12px color-mix(in srgb, ${accent} 45%, transparent)`,
+                          } : {}),
+                          opacity: isMatchDimmed(match, filterSet) ? 0.3 : 1,
+                        }}>
+                          {matchTitle(match, teamCounts)}
+                        </span>
+                      )
+                    })()}
                   </div>
 
                   <div style={{ height: rowH, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

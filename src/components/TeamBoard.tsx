@@ -69,8 +69,11 @@ type RankedTeam = TeamLeaderboardEntry & { rank: number }
 // 'unvoted' whatever its bracket status — one vote is what promotes it up.
 type Tier = 'ranked' | 'knocked-out' | 'unvoted'
 
+// `forcedAlive` (an admin marking a team still-in by hand) exempts it from the
+// un-voted-on tail — mirrors computeTeamsLeaderboard's sort, which must agree
+// with this or rows land under the wrong divider.
 const tierOf = (t: TeamLeaderboardEntry): Tier =>
-  t.votes === 0 ? 'unvoted' : t.eliminated ? 'knocked-out' : 'ranked'
+  t.votes === 0 && !t.forcedAlive ? 'unvoted' : t.eliminated ? 'knocked-out' : 'ranked'
 
 const TIER_DIVIDER: Record<Tier, string | null> = {
   ranked: null,
