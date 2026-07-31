@@ -33,3 +33,10 @@ paths:
   room2:
   room3:
   phone:
+  # Operator phone cams — each pushes to its owner's first name and shows
+  # full-frame on the matching "<Name> Cam" scene (CAMERA_SCENES in
+  # src/lib/obs.ts, scenes built by obs-setup.mjs).
+  victor:
+  arjun:
+  nirvan:
+  dash:

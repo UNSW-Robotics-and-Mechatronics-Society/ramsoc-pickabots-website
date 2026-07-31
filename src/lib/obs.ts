@@ -38,6 +38,14 @@ export const SCREEN_SCENES = ["Sumobots", "Intermission", "Bracket", "Standings"
 export const INTERMISSION_SCENE = SCREEN_SCENES[0];
 
 /**
+ * Full-frame phone-camera scenes, one per operator's phone. Each phone pushes
+ * RTMP to the MediaMTX path of the same (lowercase) first name — e.g. Victor's
+ * phone → rtmp://<obs-host>:1935/victor — and the scene shows that feed
+ * full-frame. Created by relay/obs-setup.mjs; names must match OBS exactly.
+ */
+export const CAMERA_SCENES = ["Victor Cam", "Arjun Cam", "Nirvan Cam", "Dash Cam"] as const;
+
+/**
  * How stale relay_seen_at may be before the panel calls the relay dead.
  * The relay heartbeats every 10s; 25s = one missed beat's grace, so a single
  * dropped write doesn't flap the indicator.

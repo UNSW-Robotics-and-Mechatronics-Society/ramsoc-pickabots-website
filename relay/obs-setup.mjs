@@ -18,7 +18,12 @@ const SCENES = [
   "Ring 1", "Ring 2", "Ring 3", "Ring 4", "Ring 5", "Ring 6",
   "Sumobots", "Intermission", "Bracket", "Standings", "Leaderboard",
   "Results", "All Rings", "Vote", "Commentary", "Standby", "Blank",
+  "Victor Cam", "Arjun Cam", "Nirvan Cam", "Dash Cam",
 ];
+
+// Operator phone cams: full-frame scene per phone, fed by the MediaMTX path
+// of the owner's lowercase first name (paths declared in mediamtx.yml).
+const PHONE_CAMS = ["Victor", "Arjun", "Nirvan", "Dash"];
 
 const existing = new Set((await obs.call("GetSceneList")).scenes.map(s => s.sceneName));
 for (const sceneName of SCENES) {
@@ -99,6 +104,10 @@ await browserSource("Standings", "overlay-stats", `${BASE}/overlay/stats?top=8`)
 await browserSource("Leaderboard", "overlay-leaderboard", `${BASE}/overlay/leaderboard?top=10`);
 await browserSource("Results", "overlay-results", `${BASE}/overlay/results`);
 await browserSource("Vote", "overlay-vote", `${BASE}/overlay/vote`);
+
+for (const name of PHONE_CAMS) {
+  await mediaSource(`${name} Cam`, `feed-${name.toLowerCase()}`, `rtmp://localhost:1935/${name.toLowerCase()}`);
+}
 
 // Commentary: the phone camera full-frame + the KPI side banner on top.
 await mediaSource("Commentary", "feed-phone", "rtmp://localhost:1935/phone");

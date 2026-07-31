@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { Radio, Circle, Camera, RotateCcw, Wifi, WifiOff, MonitorX, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh'
-import { type ObsAction, type ObsState, SCREEN_SCENES, relayIsFresh, ringSceneName } from '@/lib/obs'
+import { type ObsAction, type ObsState, CAMERA_SCENES, SCREEN_SCENES, relayIsFresh, ringSceneName } from '@/lib/obs'
 import { MAX_RINGS } from '@/lib/schedule'
 import type { Division } from '@/lib/mock-data'
 
@@ -216,6 +216,32 @@ export default function ControlPanel({ initialState, live }: Props) {
               {scene}{spinner(`scene:${scene}`)}
             </button>
           ))}
+        </div>
+        <h2 className="mb-2 mt-3 text-[0.6rem] font-bold uppercase tracking-[0.2em] text-foreground/60">Phone cams</h2>
+        <div className="grid grid-cols-2 gap-2">
+          {CAMERA_SCENES.map(scene => {
+            // Feed light: the MediaMTX path is the lowercase first name of the
+            // scene ("Victor Cam" → "victor"), so we can show whether that
+            // phone is actually pushing before cutting to it.
+            const feed = scene.split(' ')[0].toLowerCase()
+            const live = s.feedStatus[feed] === true
+            return (
+              <button
+                key={scene}
+                onClick={() => send('set_scene', { scene }, `scene:${scene}`)}
+                disabled={busy === `scene:${scene}`}
+                title={live ? 'Feed receiving' : 'Feed offline — scene will be black'}
+                className={cn(bigBtn,
+                  live ? 'border-emerald-400/60' : 'border-dashed border-white/15',
+                  s.currentScene === scene
+                    ? 'bg-orange-500/25 text-orange-200 ring-2 ring-orange-400/60'
+                    : 'bg-white/5 text-foreground/80 hover:bg-white/10')}
+              >
+                <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', live ? 'bg-emerald-400' : 'bg-white/20')} />
+                {scene}{spinner(`scene:${scene}`)}
+              </button>
+            )
+          })}
         </div>
       </section>
 
