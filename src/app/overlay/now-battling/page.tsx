@@ -2,7 +2,7 @@ import { getBracketState } from "@/lib/db/bracket";
 import { getObsState } from "@/lib/db/obs";
 import { getOddsForBracketMatch, type OverlayOdds } from "@/lib/db/overlayOdds";
 import { ringLiveView, MAX_RINGS } from "@/lib/schedule";
-import { type Division } from "@/lib/mock-data";
+import { type Division, isFinalsMatch } from "@/lib/mock-data";
 import OverlayRefresh from "@/components/obs/OverlayRefresh";
 import { DIVISION_META, GOLD, PLATE_BG, PLATE_BORDER, FONT_DISPLAY, FONT_BODY } from "@/components/obs/overlayTheme";
 
@@ -13,15 +13,17 @@ export const dynamic = "force-dynamic";
 type Props = { searchParams: Promise<{ ring?: string; division?: string }> };
 
 /**
- * "Now Battling" lower-third — one per ring scene in OBS:
- *   /overlay/now-battling?ring=3            (standard division, ring 3)
- *   /overlay/now-battling?ring=1&division=open
+ * "Now Battling" lower-third — sits on the ring's camera scene in OBS:
+ *   /overlay/now-battling?ring=1
  *
- * Shows the match currently ON that ring (bracket-derived, same rule as the
- * admin/public views), the score, and the up-next line for the same ring.
- * The control panel's manual override replaces the names when active for
- * this ring (or for all rings). Renders nothing at all when the ring is idle
- * and no override applies — an empty transparent source, not an empty box.
+ * Shows the match currently ON the ring, its score, and the up-next line.
+ * Prefers whichever finals match the admin has marked active/next (Finals
+ * Day: all eight matches share the one physical ring and are admin-driven
+ * end to end — see schedule.ts) over the bracket-derived ring view, which
+ * only reflects the (now-finished) division prelim rounds. The control
+ * panel's manual override replaces the names when active for this ring (or
+ * for all rings). Renders nothing at all when the ring is idle and no
+ * override applies — an empty transparent source, not an empty box.
  */
 export default async function NowBattlingOverlay({ searchParams }: Props) {
   const params = await searchParams;
@@ -29,8 +31,21 @@ export default async function NowBattlingOverlay({ searchParams }: Props) {
   const division: Division = params.division === "open" ? "open" : "standards";
 
   const [obs, bracket] = await Promise.all([getObsState(), getBracketState()]);
+
+  // Finals Day: all eight matches share the single physical ring and are
+  // admin-controlled end to end rather than ring-position derived (see
+  // schedule.ts), so ringLiveView never surfaces them. Prefer whichever
+  // finals match the admin has marked active/next over the bracket-derived
+  // ring view, which only ever reflects the (now-finished) prelim rounds.
+  const finalsMatches = bracket.matches.filter(isFinalsMatch);
+  const finalsActive = finalsMatches.find(m => m.status === "active") ?? null;
+  const finalsNext = finalsMatches.find(m => m.status === "next") ?? null;
+
   const view = ringLiveView(bracket.matches, bracket.schedules[division]);
-  const entry = view[ring - 1] ?? { active: null, next: null };
+  const bracketEntry = view[ring - 1] ?? { active: null, next: null };
+  const entry = finalsActive || finalsNext
+    ? { active: finalsActive, next: finalsNext }
+    : bracketEntry;
 
   const overridden = obs.overrideActive && (obs.overrideRing === 0 || obs.overrideRing === ring);
 
@@ -45,7 +60,7 @@ export default async function NowBattlingOverlay({ searchParams }: Props) {
   const scoreB = !overridden ? entry.active?.slotB.score : undefined;
   const target = !overridden ? entry.active?.targetScore : undefined;
 
-  const meta = DIVISION_META[division];
+  const meta = DIVISION_META[entry.active?.division ?? division];
   const show = overridden || !!entry.active;
 
   const namePlate: React.CSSProperties = {

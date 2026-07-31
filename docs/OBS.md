@@ -105,15 +105,18 @@ Two things DO deserve a real in-venue test:
 
 ## 3. Scenes
 
-Create one scene per ring, named **exactly** `Ring 1` … `Ring 6` (the control
-panel targets scenes by these names — see `ringSceneName` in `src/lib/obs.ts`),
-and put each ring's camera source in its scene.
+Create one scene per ring, named **exactly** `Ring 1` (the event now runs a
+single physical ring — see `MAX_RINGS` in `src/lib/schedule.ts` — so the
+control panel only offers this one; the multi-ring `Ring 2`…`Ring 6` scenes
+from the prelim-round setup are no longer used), and put the ring's camera
+source in its scene.
 
 Then create the "screen" scenes — full-frame boards to cut to between
 matches, one browser source each (URLs in §4): `Sumobots` (title card),
-`Intermission`, `Bracket`, `Standings`, `Leaderboard`, plus the local-image
-`Standby` (see §6b). The panel has a button for each; any you don't create
-simply fail the switch (logged by the relay) and can be ignored.
+`Intermission`, `Bracket`, `Finals`, `Standings`, `Leaderboard`, plus the
+local-image `Standby` (see §6b). The panel has a button for each; any you
+don't create simply fail the switch (logged by the relay) and can be
+ignored.
 
 ## 4. Browser sources (the overlays)
 
@@ -123,12 +126,13 @@ deployed site, e.g. `https://pickabots.ramsocunsw.org`.
 
 | Overlay | URL | Add to | Size | Position |
 |---|---|---|---|---|
-| Now Battling lower-third (with live betting odds) | `BASE/overlay/now-battling?ring=N` (add `&division=open` for open-division rings) | each `Ring N` scene | 1920×1080 | full canvas |
+| Now Battling lower-third (with live betting odds) | `BASE/overlay/now-battling?ring=1` | `Ring 1` scene | 1920×1080 | full canvas |
+| Finals Day running order | `BASE/overlay/finals` | `Finals` | 1920×1080 | full canvas (renders centered) |
 | Up-next list | `BASE/overlay/upcoming?count=5` | `Intermission` (or any) | 1920×1080 | full canvas (renders top-right) |
 | Bracket | `BASE/overlay/bracket` / `?division=open` | `Bracket` | 1920×1080 | full canvas |
 | Team standings / day stats | `BASE/overlay/stats?top=8` | `Standings` | 1920×1080 | full canvas (renders centered) |
 | Player leaderboard (RAM coins) | `BASE/overlay/leaderboard?top=10` | `Leaderboard` | 1920×1080 | full canvas (renders centered) |
-| Title card (logo + SUMOBOTS 2026) | `BASE/overlay/title` (`?year=` to change) | `Sumobots` | 1920×1080 | full canvas (paints its own background) |
+| Title card (logo + SUMOBOTS 2026 FINAL) | `BASE/overlay/title` (`?year=` to change, `?final=0` to drop the FINAL line) | `Sumobots` | 1920×1080 | full canvas (paints its own background) |
 | KPI side banner (played / remaining / est. finish / coins wagered / bettors) | `BASE/overlay/kpi` (`?side=left`) | any camera scene | 1920×1080 | full canvas (renders mid-right edge) |
 
 The lower-third's odds strip appears automatically while its match has a live
@@ -143,14 +147,16 @@ subscriptions warm across scene cuts.
 The lower-third renders *nothing* when its ring is idle, so it can stay in the
 scene permanently.
 
-### Which division is a ring?
+### Ring 1 on Finals Day
 
-Ring numbers in overlay URLs are per **division schedule** (the admin page's
-Ring 1…N for Standard, and Ring 1…N for Open). If, say, physical rings 1–3 run
-Standard and 4–6 run Open, the browser sources are:
-
-- Scene `Ring 4` → `BASE/overlay/now-battling?ring=1&division=open`
-- Scene `Ring 5` → `BASE/overlay/now-battling?ring=2&division=open`, etc.
+`/overlay/now-battling?ring=1` shows whichever finals match the admin has
+marked **active** (falling back to whichever is marked **next**) ahead of
+the ordinary bracket-derived match for that ring — all eight Finals Day
+matches (both divisions' semis, bronze bouts and the two finals) share the
+one physical ring and are admin-controlled end to end from the Finals tab
+(see `schedule.ts`), so nothing here is derived from ring position. No
+`division` param is needed for it; the match's own division drives its
+colour and label.
 
 ## 5. The control panel
 
