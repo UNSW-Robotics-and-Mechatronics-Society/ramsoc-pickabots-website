@@ -125,6 +125,21 @@ export async function boostPlayer(clerkUserId: string, amount: number): Promise<
 }
 
 /**
+ * Add `amount` tokens to EVERY player at once (negative deducts). Returns how
+ * many players were adjusted.
+ *
+ * Delegates to the grant_tokens_all RPC (0024) rather than reading and writing
+ * each balance: one atomic `tokens = tokens + amount` can't clobber a token
+ * change from a vote landing mid-grant, which a read-then-write loop would.
+ * Balances floor at 0, matching boostPlayer.
+ */
+export async function grantTokensToAllPlayers(amount: number): Promise<number> {
+  const { data, error } = await supabase.rpc("grant_tokens_all", { p_amount: amount });
+  if (error) throw new Error(`Failed to grant RamCoin: ${error.message}`);
+  return (data as number | null) ?? 0;
+}
+
+/**
  * Kick a player from pickabots: deletes their pickabots-local `users` row
  * (which cascades to their bets/votes via FK). This does NOT touch the shared
  * `profiles`/`team_members` tables, so their sumobots registration is intact —

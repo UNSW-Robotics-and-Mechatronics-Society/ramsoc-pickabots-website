@@ -18,6 +18,14 @@ import type { TeamCount } from "@/lib/mock-data";
 import Ring from "@/components/Ring";
 import type { Match, Vote, VoteStandings } from "@/lib/types";
 import { DEFAULT_SMS_UP_NEXT } from "@/lib/sms-template";
+import {
+  DEFAULT_BEG_THRESHOLD,
+  DEFAULT_BEG_MAX_AWARD,
+  clampBegThreshold,
+  clampBegMaxAward,
+  begCeilingFor,
+  begMinAwardFor,
+} from "@/lib/beg-config";
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Mock fetch shim — installed once at module scope. Intercepts the handful of
@@ -135,10 +143,19 @@ const begMock: { mode: BegMockMode } = { mode: "eligible" };
 
 /** Mutable holder so the Settings panel mock can echo back saved values
  *  across GET/PUT calls (a const object property, per the React Compiler
- *  restriction on reassigning module-level `let`s from a component). */
-const smsConfigMock: { template: string; notifyLead: number } = {
+ *  restriction on reassigning module-level `let`s from a component).
+ *  The beg limits are shared with the /api/beg mock below, so saving them in the
+ *  Settings panel shows up in the beg dial — same coupling as production. */
+const adminConfigMock: {
+  template: string;
+  notifyLead: number;
+  begThreshold: number;
+  begMaxAward: number;
+} = {
   template: DEFAULT_SMS_UP_NEXT,
   notifyLead: 2,
+  begThreshold: DEFAULT_BEG_THRESHOLD,
+  begMaxAward: DEFAULT_BEG_MAX_AWARD,
 };
 
 const MOCK_BROADCAST_RESULTS = Array.from({ length: 10 }, (_, i) => ({
@@ -148,12 +165,21 @@ const MOCK_BROADCAST_RESULTS = Array.from({ length: 10 }, (_, i) => ({
 }));
 
 function begState() {
+  // Mirrors the real API: the threshold and bullseye award are whatever the
+  // admin saved, and the ceiling + edge award are derived from them.
+  const threshold = adminConfigMock.begThreshold;
+  const maxAward = adminConfigMock.begMaxAward;
+  const limits = {
+    threshold,
+    maxAward,
+    minAward: begMinAwardFor(maxAward),
+    ceiling: begCeilingFor(threshold, maxAward),
+  };
   switch (begMock.mode) {
     case "cooldown":
       return {
         tokens: 4,
-        threshold: 10,
-        ceiling: 25,
+        ...limits,
         begsUsed: 1,
         begsAllowed: 2,
         cooldownRemaining: 2,
@@ -163,8 +189,7 @@ function begState() {
     case "spent":
       return {
         tokens: 4,
-        threshold: 10,
-        ceiling: 25,
+        ...limits,
         begsUsed: 2,
         begsAllowed: 2,
         cooldownRemaining: null,
@@ -174,8 +199,7 @@ function begState() {
     default:
       return {
         tokens: 4,
-        threshold: 10,
-        ceiling: 25,
+        ...limits,
         begsUsed: 0,
         begsAllowed: 2,
         cooldownRemaining: null,
@@ -206,23 +230,27 @@ if (typeof window !== "undefined" && !(window as unknown as { __devGalleryFetchP
         contacts: MOCK_CONTACTS,
         sender: "RAMSOC",
         smsConfigured: true,
-        upNextTemplate: smsConfigMock.template,
+        upNextTemplate: adminConfigMock.template,
       });
     }
 
     // GET /api/admin/config
     if (method === "GET" && /\/api\/admin\/config$/.test(url)) {
       return jsonResponse({
-        smsUpNextTemplate: smsConfigMock.template,
+        smsUpNextTemplate: adminConfigMock.template,
         smsUpNextDefault: DEFAULT_SMS_UP_NEXT,
-        smsNotifyLead: smsConfigMock.notifyLead,
+        smsNotifyLead: adminConfigMock.notifyLead,
+        begThreshold: adminConfigMock.begThreshold,
+        begMaxAward: adminConfigMock.begMaxAward,
       });
     }
 
     // PUT /api/admin/config
     if (method === "PUT" && /\/api\/admin\/config$/.test(url)) {
-      let template = smsConfigMock.template;
-      let notifyLead = smsConfigMock.notifyLead;
+      let template = adminConfigMock.template;
+      let notifyLead = adminConfigMock.notifyLead;
+      let begThreshold = adminConfigMock.begThreshold;
+      let begMaxAward = adminConfigMock.begMaxAward;
       try {
         const body = JSON.parse((init?.body as string) ?? "{}");
         if (typeof body.smsUpNextTemplate === "string") {
@@ -231,14 +259,28 @@ if (typeof window !== "undefined" && !(window as unknown as { __devGalleryFetchP
         if (typeof body.smsNotifyLead === "number" && Number.isFinite(body.smsNotifyLead)) {
           notifyLead = body.smsNotifyLead;
         } else if (body.smsNotifyLead === undefined) {
-          notifyLead = smsConfigMock.notifyLead ?? 2;
+          notifyLead = adminConfigMock.notifyLead ?? 2;
+        }
+        if (typeof body.begThreshold === "number" && Number.isFinite(body.begThreshold)) {
+          begThreshold = clampBegThreshold(body.begThreshold);
+        }
+        if (typeof body.begMaxAward === "number" && Number.isFinite(body.begMaxAward)) {
+          begMaxAward = clampBegMaxAward(body.begMaxAward);
         }
       } catch {
         // ignore malformed body
       }
-      smsConfigMock.template = template;
-      smsConfigMock.notifyLead = notifyLead;
-      return jsonResponse({ ok: true, smsUpNextTemplate: template, smsNotifyLead: notifyLead });
+      adminConfigMock.template = template;
+      adminConfigMock.notifyLead = notifyLead;
+      adminConfigMock.begThreshold = begThreshold;
+      adminConfigMock.begMaxAward = begMaxAward;
+      return jsonResponse({
+        ok: true,
+        smsUpNextTemplate: template,
+        smsNotifyLead: notifyLead,
+        begThreshold,
+        begMaxAward,
+      });
     }
 
     // GET /api/admin/broadcast

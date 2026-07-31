@@ -11,7 +11,7 @@ import ComicFlash, { useComicFlash } from './ComicFlash'
 import Toast, { useToast, WinLossToast, useWinLossToast } from './Toast'
 import BegDial from './BegDial'
 import RamCoin from './RamCoin'
-import { BEG_THRESHOLD } from '@/lib/beg-config'
+import { DEFAULT_BEG_THRESHOLD } from '@/lib/beg-config'
 import { hasSeenResult, markResultsSeen } from '@/lib/seenResults'
 import type { Match, Vote, VoteStandings, VoteWithResult } from '@/lib/types'
 
@@ -35,6 +35,8 @@ interface ModalCtx {
 type CompFilter = 'standard' | 'open' | 'exhibition' | 'finals'
 
 type BegBannerState = {
+  /** Admin-set balance you must be under to beg — the banner's cutoff. */
+  threshold: number
   begsUsed: number
   begsAllowed: number
   cooldownRemaining: number | null
@@ -401,9 +403,11 @@ export default function VotePage() {
 
       <main style={{ padding: '14px 16px 88px', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
-        {/* Beg for tokens — shown only when running low. Subline surfaces begs
-            remaining + any cooldown so players see their status before opening. */}
-        {tokens !== null && tokens < BEG_THRESHOLD && (() => {
+        {/* Beg for tokens — shown only when running low, using the admin's
+            current cutoff (the built-in default until /api/beg answers). Subline
+            surfaces begs remaining + any cooldown so players see their status
+            before opening. */}
+        {tokens !== null && tokens < (begState?.threshold ?? DEFAULT_BEG_THRESHOLD) && (() => {
           const remaining = begState ? Math.max(0, begState.begsAllowed - begState.begsUsed) : null
           const subline =
             begState?.reason === 'no_begs_left'

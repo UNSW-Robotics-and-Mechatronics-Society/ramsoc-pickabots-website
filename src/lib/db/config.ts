@@ -1,6 +1,12 @@
 import "server-only";
 import supabase from "@/lib/supabase";
 import { DEFAULT_SMS_UP_NEXT } from "@/lib/sms-template";
+import {
+  DEFAULT_BEG_THRESHOLD,
+  clampBegThreshold,
+  DEFAULT_BEG_MAX_AWARD,
+  clampBegMaxAward,
+} from "@/lib/beg-config";
 
 // Admin-editable key/value config (see migration 0009). Read/written via the
 // service key only.
@@ -12,6 +18,8 @@ const AUTO_SMS_KEY = "auto_sms_enabled";
 const SMS_SENDER_MODE_KEY = "sms_sender_mode";
 const SMS_SENDER_NUMBER_KEY = "sms_sender_number";
 const FINALS_DAY_KEY = "finals_day";
+const BEG_THRESHOLD_KEY = "beg_threshold";
+const BEG_MAX_AWARD_KEY = "beg_max_award";
 const TEAM_STATUS_OVERRIDE_KEY = "team_status_overrides";
 
 /** Default: text captains when their team is this many matches from playing. */
@@ -115,6 +123,51 @@ export async function getFinalsDay(): Promise<boolean> {
 
 export async function setFinalsDay(value: boolean): Promise<void> {
   await setConfig(FINALS_DAY_KEY, value ? "true" : "false");
+}
+
+/**
+ * The balance a player must be STRICTLY under to beg for RamCoin — i.e. how
+ * broke "broke" is. Raise it to let players top up sooner (a generous safety
+ * net), drop it to make begging a last resort. Clamped to
+ * [BEG_THRESHOLD_MIN, BEG_THRESHOLD_MAX]; every other beg rule (lifetime cap,
+ * cooldown, no-live-vote, the award ceiling) is unchanged by it.
+ */
+export async function getBegThreshold(): Promise<number> {
+  try {
+    const raw = await getConfig(BEG_THRESHOLD_KEY);
+    return raw === null ? DEFAULT_BEG_THRESHOLD : clampBegThreshold(parseInt(raw, 10));
+  } catch (err) {
+    // Never let a config read failure break the beg dial — fall back to the
+    // built-in threshold.
+    console.error("[config] getBegThreshold failed, using default:", err);
+    return DEFAULT_BEG_THRESHOLD;
+  }
+}
+
+export async function setBegThreshold(value: number): Promise<void> {
+  await setConfig(BEG_THRESHOLD_KEY, String(clampBegThreshold(value)));
+}
+
+/**
+ * What a dead-centre beg pays out. The band edge still pays BEG_MIN_AWARD (or
+ * this, whichever is smaller), and everything between scales linearly — see
+ * `awardForAccuracy`. Also sets the award ceiling with the threshold, so raising
+ * it makes begging more generous at both ends.
+ */
+export async function getBegMaxAward(): Promise<number> {
+  try {
+    const raw = await getConfig(BEG_MAX_AWARD_KEY);
+    return raw === null ? DEFAULT_BEG_MAX_AWARD : clampBegMaxAward(parseInt(raw, 10));
+  } catch (err) {
+    // Never let a config read failure break the beg dial — fall back to the
+    // built-in award.
+    console.error("[config] getBegMaxAward failed, using default:", err);
+    return DEFAULT_BEG_MAX_AWARD;
+  }
+}
+
+export async function setBegMaxAward(value: number): Promise<void> {
+  await setConfig(BEG_MAX_AWARD_KEY, String(clampBegMaxAward(value)));
 }
 
 /**

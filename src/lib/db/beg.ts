@@ -1,21 +1,33 @@
 import "server-only";
 import supabase from "@/lib/supabase";
 import {
-  BEG_THRESHOLD,
-  BEG_CEILING,
   BEG_COOLDOWN_MATCHES,
   BEG_MAX_TOTAL,
   awardForAccuracy,
+  begCeilingFor,
+  begMinAwardFor,
 } from "@/lib/beg-config";
+import { getBegThreshold, getBegMaxAward } from "@/lib/db/config";
 
 // Server-authoritative "beg for tokens" logic. The client only ever reports a
 // dial accuracy (0..1); the server owns eligibility, the cooldown, the lifetime
 // cap, the award math and the ceiling — so a tampered client can at most claim
 // a perfect dial, still bounded by every rule below.
+//
+// The "how broke is broke" threshold and the bullseye award are both
+// admin-tunable (see getBegThreshold / getBegMaxAward); they're read here on
+// every call so a mid-event change takes effect immediately, and echoed back in
+// BegState so the UI never has to guess them.
 
 export type BegState = {
   tokens: number;
+  /** Live admin-set balance you must be under to beg (config `beg_threshold`). */
   threshold: number;
+  /** Live admin-set bullseye payout (config `beg_max_award`). */
+  maxAward: number;
+  /** What a hit at the very edge of the band pays — derived from `maxAward`. */
+  minAward: number;
+  /** Highest balance a beg can leave you on — `threshold` + `maxAward`. */
   ceiling: number;
   begsUsed: number;
   begsAllowed: number;
@@ -77,7 +89,13 @@ async function loadUser(userId: string): Promise<UserBegRow | null> {
   };
 }
 
-function evaluate(user: UserBegRow, completed: number, hasActiveVote: boolean): BegState {
+function evaluate(
+  user: UserBegRow,
+  completed: number,
+  hasActiveVote: boolean,
+  threshold: number,
+  maxAward: number,
+): BegState {
   const begsUsed = user.beg_count;
   const matchesSince =
     user.last_beg_match_count === null ? Infinity : completed - user.last_beg_match_count;
@@ -85,15 +103,17 @@ function evaluate(user: UserBegRow, completed: number, hasActiveVote: boolean): 
     matchesSince >= BEG_COOLDOWN_MATCHES ? null : BEG_COOLDOWN_MATCHES - matchesSince;
 
   let reason: BegState["reason"] = "ok";
-  if (user.tokens >= BEG_THRESHOLD) reason = "not_broke";
+  if (user.tokens >= threshold) reason = "not_broke";
   else if (hasActiveVote) reason = "active_vote";
   else if (begsUsed >= BEG_MAX_TOTAL) reason = "no_begs_left";
   else if (cooldownRemaining !== null) reason = "cooldown";
 
   return {
     tokens: user.tokens,
-    threshold: BEG_THRESHOLD,
-    ceiling: BEG_CEILING,
+    threshold,
+    maxAward,
+    minAward: begMinAwardFor(maxAward),
+    ceiling: begCeilingFor(threshold, maxAward),
     begsUsed,
     begsAllowed: BEG_MAX_TOTAL,
     cooldownRemaining,
@@ -103,25 +123,27 @@ function evaluate(user: UserBegRow, completed: number, hasActiveVote: boolean): 
 }
 
 export async function getBegState(userId: string): Promise<BegState> {
-  const [user, completed, hasActiveVote] = await Promise.all([
+  const [user, completed, hasActiveVote, threshold, maxAward] = await Promise.all([
     loadUser(userId),
     countCompletedMatches(),
     userHasActiveVote(userId),
+    getBegThreshold(),
+    getBegMaxAward(),
   ]);
   if (!user) {
     // No pickabots users row yet → treat as a fresh player at the default 100.
-    return {
-      tokens: 100,
-      threshold: BEG_THRESHOLD,
-      ceiling: BEG_CEILING,
-      begsUsed: 0,
-      begsAllowed: BEG_MAX_TOTAL,
-      cooldownRemaining: null,
-      eligible: false,
-      reason: "not_broke",
-    };
+    // Still "not broke" unless the admin has set the threshold above the
+    // starting balance, in which case a fresh player is eligible like anyone
+    // else at 100.
+    return evaluate(
+      { tokens: 100, beg_count: 0, last_beg_match_count: null },
+      completed,
+      hasActiveVote,
+      threshold,
+      maxAward,
+    );
   }
-  return evaluate(user, completed, hasActiveVote);
+  return evaluate(user, completed, hasActiveVote, threshold, maxAward);
 }
 
 export type BegResult =
@@ -134,19 +156,21 @@ export type BegResult =
  * the beg. Returns the granted amount + new balance, or an error + fresh state.
  */
 export async function attemptBeg(userId: string, accuracy: number): Promise<BegResult> {
-  const [user, completed, hasActiveVote] = await Promise.all([
+  const [user, completed, hasActiveVote, threshold, maxAward] = await Promise.all([
     loadUser(userId),
     countCompletedMatches(),
     userHasActiveVote(userId),
+    getBegThreshold(),
+    getBegMaxAward(),
   ]);
 
   // Materialise a row for a brand-new player so we can persist beg state.
   const effectiveUser: UserBegRow = user ?? { tokens: 100, beg_count: 0, last_beg_match_count: null };
-  const state = evaluate(effectiveUser, completed, hasActiveVote);
+  const state = evaluate(effectiveUser, completed, hasActiveVote, threshold, maxAward);
   if (!state.eligible) {
     const msg =
       state.reason === "not_broke"
-        ? `You can only beg when you have fewer than ${BEG_THRESHOLD} tokens.`
+        ? `You can only beg when you have fewer than ${state.threshold} tokens.`
         : state.reason === "active_vote"
           ? "You can't beg while you have a vote on a live match — wait for it to finish."
           : state.reason === "no_begs_left"
@@ -156,8 +180,8 @@ export async function attemptBeg(userId: string, accuracy: number): Promise<BegR
   }
 
   const safeAccuracy = Math.max(0, Math.min(1, Number.isFinite(accuracy) ? accuracy : 0));
-  const skill = awardForAccuracy(safeAccuracy);
-  const room = Math.max(0, BEG_CEILING - effectiveUser.tokens);
+  const skill = awardForAccuracy(safeAccuracy, state.maxAward);
+  const room = Math.max(0, state.ceiling - effectiveUser.tokens);
   const awarded = Math.min(skill, room);
   const newTokens = effectiveUser.tokens + awarded;
   const newBegCount = effectiveUser.beg_count + 1;
