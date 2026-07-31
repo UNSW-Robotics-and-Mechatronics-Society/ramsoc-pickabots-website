@@ -2,7 +2,7 @@ import "server-only";
 import supabase from "@/lib/supabase";
 import { type Division } from "@/lib/mock-data";
 import { getBracketState } from "./bracket";
-import { isByeMatch, estimatedFinishMinute, formatFinishTime } from "@/lib/schedule";
+import { countsTowardTotals, estimatedFinishMinute, formatFinishTime } from "@/lib/schedule";
 
 export type Kpis = {
   onboardedPlayers: number;
@@ -91,7 +91,9 @@ const DIVISIONS: Division[] = ["standards", "open"];
 async function getMatchProgress(): Promise<{ matchesDone: number; matchesTotal: number; estimatedFinishTime: string | null }> {
   const state = await getBracketState();
 
-  const countable = state.matches.filter(m => m.status !== "skipped" && !isByeMatch(m));
+  // One definition of "a match", shared with both OBS overlays — see
+  // countsTowardTotals.
+  const countable = state.matches.filter(countsTowardTotals);
   const matchesDone = countable.filter(m => m.status === "completed").length;
   const matchesTotal = countable.length;
 

@@ -879,6 +879,30 @@ export function isByeMatch(m: { status?: string; slotA?: { teamName?: string }; 
   return m.status === 'completed' && aEmpty !== bEmpty;
 }
 
+/**
+ * Whether a match counts towards "matches played / still to play" — the single
+ * definition behind the admin KPI bar and both OBS overlays, which each used to
+ * carry their own and so reported different totals for the same event.
+ *
+ * Counted: every bracket game (winners, losers, finals) AND exhibition bouts —
+ * an ad-hoc match still occupies a ring and still has to be run.
+ *
+ * Not counted:
+ *  - wildcard boxes, which are holding slots outside the tree, never played;
+ *  - skipped matches, which the admin has taken off the day entirely;
+ *  - byes, where a team advanced without anyone playing (see isByeMatch).
+ */
+export function countsTowardTotals(m: {
+  side?: string;
+  status?: string;
+  slotA?: { teamName?: string };
+  slotB?: { teamName?: string };
+}): boolean {
+  if (m.side === 'wildcard') return false;
+  if (m.status === 'skipped') return false;
+  return !isByeMatch(m);
+}
+
 export function defaultScheduleOrder(
   matches: Array<{ id: string; division: string; side: string; round: number; matchNumber: number; status?: string; slotA?: { teamName?: string }; slotB?: { teamName?: string } }>,
   division: string,

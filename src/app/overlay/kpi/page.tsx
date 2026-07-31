@@ -1,6 +1,6 @@
 import { getBracketState } from "@/lib/db/bracket";
 import { getWagerTotals } from "@/lib/db/overlayOdds";
-import { estimatedFinishMinute, formatFinishTime } from "@/lib/schedule";
+import { countsTowardTotals, estimatedFinishMinute, formatFinishTime } from "@/lib/schedule";
 import OverlayRefresh from "@/components/obs/OverlayRefresh";
 import { GOLD, PLATE_BG, PLATE_BORDER, FONT_DISPLAY, FONT_BODY } from "@/components/obs/overlayTheme";
 
@@ -27,12 +27,11 @@ export default async function KpiOverlay({ searchParams }: Props) {
 
   const [bracket, wagers] = await Promise.all([getBracketState(), getWagerTotals()]);
 
-  // Same "real games" definition as /overlay/stats: wildcards are holding
-  // boxes, exhibitions aren't tournament matches.
-  const real = bracket.matches.filter(m => m.side !== "wildcard" && m.side !== "exhibition");
-  const played = real.filter(m => m.status === "completed").length;
-  const skipped = real.filter(m => m.status === "skipped").length;
-  const remaining = real.length - played - skipped;
+  // One definition of "a match", shared with the admin KPI bar and
+  // /overlay/stats — see countsTowardTotals.
+  const countable = bracket.matches.filter(countsTowardTotals);
+  const played = countable.filter(m => m.status === "completed").length;
+  const remaining = countable.length - played;
 
   // Estimated finish: the latest slot still to be played across every ring —
   // both divisions, the exhibition rings and Finals Day — plus one match
@@ -46,10 +45,10 @@ export default async function KpiOverlay({ searchParams }: Props) {
   );
   const estFinish = finishMinute === null ? null : formatFinishTime(finishMinute);
 
-  if (real.length === 0) return null;
+  if (countable.length === 0) return null;
 
   const kpis: Kpi[] = [
-    { label: "Matches today", value: `${played}`, sub: `of ${played + remaining}` },
+    { label: "Matches today", value: `${played}`, sub: `of ${countable.length}` },
     { label: "Still to play", value: `${remaining}` },
     ...(estFinish ? [{ label: "Est. finish", value: estFinish, accent: true }] : []),
     { label: "Coins wagered", value: `${wagers.totalWagered.toLocaleString()} ⛁`, accent: true },

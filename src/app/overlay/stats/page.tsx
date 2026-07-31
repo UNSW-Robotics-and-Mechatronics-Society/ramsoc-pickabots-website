@@ -1,5 +1,6 @@
 import { getBracketState } from "@/lib/db/bracket";
 import { getTeamsLeaderboard } from "@/lib/db/teamsLeaderboard";
+import { countsTowardTotals } from "@/lib/schedule";
 import OverlayRefresh from "@/components/obs/OverlayRefresh";
 import { DIVISION_META, GOLD, PLATE_BG, PLATE_BORDER, FONT_DISPLAY, FONT_BODY } from "@/components/obs/overlayTheme";
 
@@ -21,15 +22,19 @@ export default async function StatsOverlay({ searchParams }: Props) {
 
   const [bracket, leaderboard] = await Promise.all([getBracketState(), getTeamsLeaderboard()]);
 
-  // Wildcards are holding boxes, not games; exhibition bouts aren't
-  // tournament matches. "Remaining" counts real bracket games not yet
-  // resolved — including ones whose teams aren't decided yet.
-  const real = bracket.matches.filter(m => m.side !== "wildcard" && m.side !== "exhibition");
+  // One definition of "a match", shared with the admin KPI bar and
+  // /overlay/kpi — see countsTowardTotals. "Remaining" counts everything not
+  // yet resolved, including matches whose teams aren't decided yet.
+  //
+  // Exhibition bouts count, and land under the division on their row. That
+  // field is vestigial for them (see BracketSide's 'exhibition' note), but it's
+  // the only division they have, and putting them somewhere keeps the two
+  // columns summing to the event-wide total the other two surfaces show.
+  const countable = bracket.matches.filter(countsTowardTotals);
   const byDivision = (["standards", "open"] as const).map(d => {
-    const ms = real.filter(m => m.division === d);
+    const ms = countable.filter(m => m.division === d);
     const played = ms.filter(m => m.status === "completed").length;
-    const skipped = ms.filter(m => m.status === "skipped").length;
-    return { division: d, played, remaining: ms.length - played - skipped };
+    return { division: d, played, remaining: ms.length - played };
   });
 
   const teams = leaderboard.filter(t => t.kind === "regular").slice(0, top);
