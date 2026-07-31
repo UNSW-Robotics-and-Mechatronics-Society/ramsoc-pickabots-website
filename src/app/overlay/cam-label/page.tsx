@@ -21,9 +21,9 @@ export default async function CamLabelOverlay({ searchParams }: Props) {
     }}>
       <div style={{
         background: PLATE_BG, border: `1px solid ${PLATE_BORDER}`,
-        borderLeft: `3px solid ${GOLD}`,
-        padding: "8px 20px", borderRadius: 6,
-        fontFamily: FONT_DISPLAY, fontSize: "1.1rem", letterSpacing: "0.15em",
+        borderLeft: `4px solid ${GOLD}`,
+        padding: "14px 32px", borderRadius: 8,
+        fontFamily: FONT_DISPLAY, fontSize: "2rem", letterSpacing: "0.15em",
         color: "#f4f7fb", textTransform: "uppercase",
         textShadow: "0 2px 8px rgba(0,0,0,0.8)",
       }}>
