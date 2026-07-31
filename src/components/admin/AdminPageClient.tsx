@@ -6,8 +6,9 @@ import {
   generateDoubleElimBracket, transferBracket, completeRound1Byes,
 } from "@/lib/mock-data";
 import {
-  type ConcurrentRings, type MatchSchedule, type ExhibitionSchedule,
-  generateSchedule, applyScheduleStatus, rollSchedule, rollExhibitionSchedule, START_MINUTE, MAX_RINGS,
+  type ConcurrentRings, type MatchSchedule, type ExhibitionSchedule, type FinalsSchedule,
+  generateSchedule, applyScheduleStatus, applyFinalsScheduleStatus, rollSchedule,
+  rollExhibitionSchedule, rollFinalsSchedule, START_MINUTE, MAX_RINGS,
 } from "@/lib/schedule";
 import {
   type SeedConflict, type AutoFillMode, computeSeedConflicts, describeSeedConflicts, round1Pairs,
@@ -79,6 +80,7 @@ type BracketSavePayload = {
   teamCounts?: Partial<Record<Division, TeamCount>>;
   schedules?: Record<Division, MatchSchedule>;
   exhibitionSchedule?: ExhibitionSchedule;
+  finalsSchedule?: FinalsSchedule;
   clearCaptainNotified?: Division[];
 };
 
@@ -117,6 +119,11 @@ function exhibitionKey(e: ExhibitionSchedule): string {
   return [e.matchMinutes, e.gapMinutes, ringsKey(e.rings)].join(':');
 }
 
+/** Same shape as exhibitionKey — the Finals Day ring is stored alongside it. */
+function finalsKey(f: FinalsSchedule): string {
+  return [f.matchMinutes, f.gapMinutes, ringsKey(f.rings)].join(':');
+}
+
 // A single parsed row of the "Import seeds" CSV. Shared shape between the
 // Settings panel (which parses the file) and the import handler here (which
 // matches names against the team list).
@@ -143,9 +150,11 @@ type InitialBracket = {
   teamCounts: Record<Division, TeamCount>;
   schedules: Record<Division, MatchSchedule>;
   exhibitionSchedule: ExhibitionSchedule;
+  /** The single shared Finals Day ring — see FinalsSchedule. */
+  finalsSchedule: FinalsSchedule;
 };
 
-/** The four pieces of bracket state a save covers. Same shape as InitialBracket
+/** The pieces of bracket state a save covers. Same shape as InitialBracket
  *  — named separately because it's passed around as a point-in-time snapshot. */
 type BracketSnapshot = InitialBracket;
 
@@ -183,6 +192,7 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
   const [errorDialog, setErrorDialog] = useState<{ title: string; message: string } | null>(null);
   const [schedules,    setSchedules] = useState<Record<Division, MatchSchedule>>(initialBracket.schedules);
   const [exhibitionSchedule, setExhibitionSchedule] = useState<ExhibitionSchedule>(initialBracket.exhibitionSchedule);
+  const [finalsSchedule, setFinalsSchedule] = useState<FinalsSchedule>(initialBracket.finalsSchedule);
 
   // ── save pipeline ────────────────────────────────────────────────────────────
   // Saves are DIFFED, not wholesale: an ordinary edit sends only the match rows
@@ -200,8 +210,8 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
 
   // Mirror of the current state, so the saver and the realtime merge always read
   // the latest values instead of whatever a stale closure captured.
-  const latest = useRef({ matches, teamCounts, schedules, exhibitionSchedule });
-  latest.current = { matches, teamCounts, schedules, exhibitionSchedule };
+  const latest = useRef({ matches, teamCounts, schedules, exhibitionSchedule, finalsSchedule });
+  latest.current = { matches, teamCounts, schedules, exhibitionSchedule, finalsSchedule };
 
   // What we believe the server currently holds — the baseline every diff is
   // taken against. Updated on a successful save and when a remote change is
@@ -211,6 +221,7 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
     teamCounts: { ...initialBracket.teamCounts },
     schedulesKey: schedulesKey(initialBracket.schedules),
     exhibitionKey: exhibitionKey(initialBracket.exhibitionSchedule),
+    finalsKey: finalsKey(initialBracket.finalsSchedule),
   });
 
   const pendingFull = useRef<{ clearCaptainNotified?: Division[] } | null>(null);
@@ -242,7 +253,8 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
       || dirtyMatchIds(snapshot).size > 0
       || resizedDivisions(snapshot).length > 0
       || schedulesKey(snapshot.schedules) !== saved.current.schedulesKey
-      || exhibitionKey(snapshot.exhibitionSchedule) !== saved.current.exhibitionKey;
+      || exhibitionKey(snapshot.exhibitionSchedule) !== saved.current.exhibitionKey
+      || finalsKey(snapshot.finalsSchedule) !== saved.current.finalsKey;
   }
 
   function scheduleSave(delay = SAVE_DEBOUNCE_MS) {
@@ -265,6 +277,7 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
         teamCounts: cur.teamCounts,
         schedules: cur.schedules,
         exhibitionSchedule: cur.exhibitionSchedule,
+        finalsSchedule: cur.finalsSchedule,
         ...(full.clearCaptainNotified ? { clearCaptainNotified: full.clearCaptainNotified } : {}),
       };
     } else {
@@ -272,7 +285,8 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
       const resized           = resizedDivisions(cur);
       const schedulesChanged  = schedulesKey(cur.schedules) !== saved.current.schedulesKey;
       const exhibitionChanged = exhibitionKey(cur.exhibitionSchedule) !== saved.current.exhibitionKey;
-      if (dirty.size === 0 && resized.length === 0 && !schedulesChanged && !exhibitionChanged) {
+      const finalsChanged     = finalsKey(cur.finalsSchedule) !== saved.current.finalsKey;
+      if (dirty.size === 0 && resized.length === 0 && !schedulesChanged && !exhibitionChanged && !finalsChanged) {
         setSaveStatus('saved');
         return;
       }
@@ -285,9 +299,14 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
           : {}),
         // Schedules are one JSON blob per division, so they can only be sent
         // whole — ring/time edits stay last-write-wins at division granularity.
-        // The exhibition copy rides along because it's mirrored into the same rows.
-        ...(schedulesChanged || exhibitionChanged
-          ? { schedules: cur.schedules, exhibitionSchedule: cur.exhibitionSchedule }
+        // The exhibition and finals copies ride along because they're mirrored
+        // into the same rows — sending schedules without them would blank them.
+        ...(schedulesChanged || exhibitionChanged || finalsChanged
+          ? {
+              schedules: cur.schedules,
+              exhibitionSchedule: cur.exhibitionSchedule,
+              finalsSchedule: cur.finalsSchedule,
+            }
           : {}),
       };
     }
@@ -314,6 +333,7 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
       if (body.teamCounts) Object.assign(saved.current.teamCounts, body.teamCounts);
       if (body.schedules)                        saved.current.schedulesKey  = schedulesKey(body.schedules);
       if (body.exhibitionSchedule)               saved.current.exhibitionKey = exhibitionKey(body.exhibitionSchedule);
+      if (body.finalsSchedule)                   saved.current.finalsKey     = finalsKey(body.finalsSchedule);
 
       pendingFull.current = null;
       retries.current = 0;
@@ -338,7 +358,7 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
     if (isFirstRender.current) { isFirstRender.current = false; return; }
     if (hasUnsavedWork(latest.current)) scheduleSave();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matches, teamCounts, schedules, exhibitionSchedule]);
+  }, [matches, teamCounts, schedules, exhibitionSchedule, finalsSchedule]);
 
   // Last line of defence for Fix 4: don't let a closing tab take an unsaved
   // result with it.
@@ -450,6 +470,10 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
       if (exhibitionKey(latest.current.exhibitionSchedule) === saved.current.exhibitionKey) {
         saved.current.exhibitionKey = exhibitionKey(remote.exhibitionSchedule);
         setExhibitionSchedule(remote.exhibitionSchedule);
+      }
+      if (finalsKey(latest.current.finalsSchedule) === saved.current.finalsKey) {
+        saved.current.finalsKey = finalsKey(remote.finalsSchedule);
+        setFinalsSchedule(remote.finalsSchedule);
       }
     }
   }
@@ -760,11 +784,17 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
   // schedule order determines everything else. Exhibition matches are exempt
   // (see applyScheduleStatus) — their status is entirely admin-controlled
   // via the dropdown, so `matches` already reflects it with no derivation.
+  // Finals matches are exempt from the per-division passes (they sit on the one
+  // shared Finals Day ring, not in either division's rings), so their
+  // active/next is derived from that ring instead — same rule, one ring.
   const effectiveMatches = useMemo(
-    () => (['standards', 'open'] as Division[]).reduce(
-      (acc, d) => applyScheduleStatus(acc, schedules[d], d), matches,
+    () => applyFinalsScheduleStatus(
+      (['standards', 'open'] as Division[]).reduce(
+        (acc, d) => applyScheduleStatus(acc, schedules[d], d), matches,
+      ),
+      finalsSchedule,
     ),
-    [matches, schedules],
+    [matches, schedules, finalsSchedule],
   );
 
   // ── bracket size change ──────────────────────────────────────────────────────
@@ -1104,6 +1134,9 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
     // empties every exhibition ring's contents while keeping the ring
     // columns themselves — same as the per-division behavior this replaced.
     setExhibitionSchedule(prev => rollExhibitionSchedule(prev, regenerated));
+    // The regenerated bracket has fresh (empty) finals matches, so the ring keeps
+    // its eight slots and its times while every result in it is cleared.
+    setFinalsSchedule(prev => rollFinalsSchedule(prev, regenerated));
 
     try {
       const res = await fetch('/api/admin/reset-all', { method: 'POST' });
@@ -1162,14 +1195,17 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
           matches={effectiveMatches}
           division={division}
           teamCount={teamCounts[division]}
+          teamCounts={teamCounts}
           schedule={schedules[division]}
           exhibitionSchedule={exhibitionSchedule}
+          finalsSchedule={finalsSchedule}
           teams={teams}
           specialTeams={specialTeams}
           onScheduleChange={s =>
             setSchedules(prev => ({ ...prev, [division]: s }))
           }
           onExhibitionScheduleChange={setExhibitionSchedule}
+          onFinalsScheduleChange={setFinalsSchedule}
           onMatchesChange={commitMatches}
         />
       ),
@@ -1226,7 +1262,7 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
           so it can't drift out of step with what's actually pending. */}
       <SaveBadge
         status={
-          saveStatus === 'saved' && hasUnsavedWork({ matches, teamCounts, schedules, exhibitionSchedule })
+          saveStatus === 'saved' && hasUnsavedWork({ matches, teamCounts, schedules, exhibitionSchedule, finalsSchedule })
             ? 'pending'
             : saveStatus
         }

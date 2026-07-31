@@ -1,5 +1,6 @@
 import { getLeaderboard } from '@/lib/db/leaderboard'
 import { getTeamsLeaderboard } from '@/lib/db/teamsLeaderboard'
+import { getFinalsDay } from '@/lib/db/config'
 import LeaderboardPage from '@/components/LeaderboardPage'
 
 export const dynamic = 'force-dynamic'
@@ -7,7 +8,7 @@ export const dynamic = 'force-dynamic'
 export default async function Page() {
   // Both boards are fetched up front so the Players/Teams toggle is instant —
   // it's a client-side switch, not a navigation.
-  const [players, teams] = await Promise.all([getLeaderboard(), getTeamsLeaderboard()])
+  const [players, teams, finalsDay] = await Promise.all([getLeaderboard(), getTeamsLeaderboard(), getFinalsDay()])
   // Registered teams that never made it into a bracket — status 'unentered',
   // labelled "Not Drawn" (see buildEntry in db/teamsLeaderboard) — are left off
   // the public board: they hold no slot in either draw, so they have no matches,
@@ -18,5 +19,5 @@ export default async function Page() {
   // Live updates are driven from inside LeaderboardPage via useRealtimeRefresh
   // (subscribed to the game tables only, so standings move after each game
   // rather than on every bet). Both fetches are cached and invalidated on save.
-  return <LeaderboardPage players={players} teams={drawnTeams} />
+  return <LeaderboardPage players={players} teams={drawnTeams} finalsDay={finalsDay} />
 }

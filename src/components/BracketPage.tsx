@@ -13,6 +13,7 @@ import BracketZoomPan, { type BracketZoomPanHandle, type FocusTarget } from './B
 import { ROUND_W, CONN_W, SLOT_H, MatchCard, WildcardRow } from './BracketMatchCard'
 import TeamFilterBar from './TeamFilterBar'
 import TeamLedgerModal from './TeamLedgerModal'
+import FinalsDayBanner from './FinalsDayBanner'
 
 const PODIUM_W = 130
 // Deliberately large — an obvious visual break between the Winners and
@@ -135,7 +136,14 @@ const FILTERS: { value: BracketView; label: string }[] = [
   { value: 'finals', label: 'Finals' },
 ]
 
-type Props = { matches: BracketMatch[]; teamCounts: Record<Division, TeamCount>; schedules: Record<Division, MatchSchedule> }
+type Props = {
+  matches: BracketMatch[]
+  teamCounts: Record<Division, TeamCount>
+  schedules: Record<Division, MatchSchedule>
+  /** Finals Day setting (see getFinalsDay) — opens the page on the Finals view
+   *  and shows the gold banner. The other views stay selectable. */
+  finalsDay?: boolean
+}
 
 // A single round (Winners or Losers, whichever the current side-filter
 // means) or "finals" (Grand Final + 3rd place + podium, for Winners/All/
@@ -151,10 +159,12 @@ function computeDefaultRound(byRound: BracketMatch[][], roundsCount: number): Ro
   return 1 // nothing active yet (e.g. tournament hasn't started) — default to the first round
 }
 
-export default function BracketPage({ matches, teamCounts, schedules }: Props) {
+export default function BracketPage({ matches, teamCounts, schedules, finalsDay = false }: Props) {
   useRealtimeRefresh(['bracket_matches', 'bracket_config', 'bracket_schedule'])
   const [division, setDivision] = useState<Division>('standards')
-  const [view, setView]         = useState<BracketView>('all')
+  // Finals Day opens straight on the Finals box — the only thing playing that
+  // day. Initial value only: switching views afterwards works as normal.
+  const [view, setView]         = useState<BracketView>(finalsDay ? 'finals' : 'all')
   const [selectedTeam, setSelectedTeam] = useState<string | null>(null)
   function handleTeamClick(name: string) { setSelectedTeam(name) }
   // Full-screen lives in the shared app context (not local state) so it can
@@ -515,6 +525,8 @@ export default function BracketPage({ matches, teamCounts, schedules }: Props) {
         <div style={{ fontSize: '1.6rem', fontWeight: 900, letterSpacing: 4, color: '#FF6B00', textTransform: 'uppercase', textShadow: '0 0 24px rgba(255,107,0,0.5), 0 0 48px rgba(255,60,0,0.2)' }}>
           BRACKET
         </div>
+
+        {finalsDay && <FinalsDayBanner />}
 
         {/* Division toggle on the left; Full Screen + Reset on the right,
             all on one line. */}

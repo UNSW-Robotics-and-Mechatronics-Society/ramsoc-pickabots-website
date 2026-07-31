@@ -37,14 +37,15 @@ const STATUS_BORDER: Record<MatchStatus, string> = {
   next:      'border-yellow-400 shadow-[0_0_10px_rgba(250,204,21,0.45)]',
   active:    'border-green-400 shadow-[0_0_12px_rgba(74,222,128,0.5)]',
   completed: 'border-white/25 opacity-70',
-  skipped:   'border-red-400 shadow-[0_0_10px_rgba(248,113,113,0.45)]',
+  // Light red — a match that will never be played, not an error condition.
+  skipped:   'border-red-300 bg-red-300/[0.07] shadow-[0_0_10px_rgba(252,165,165,0.3)] opacity-80',
 };
 const STATUS_LABEL: Record<MatchStatus, string> = {
   todo: 'To Do', next: 'Next', active: 'Active', completed: 'Done', skipped: 'Skip',
 };
 const STATUS_TEXT: Record<MatchStatus, string> = {
   todo: 'text-foreground', next: 'text-yellow-400', active: 'text-green-400',
-  completed: 'text-white/50', skipped: 'text-red-400',
+  completed: 'text-white/50', skipped: 'text-red-300',
 };
 
 const AUTO_COMPLETE_FROM: MatchStatus[] = ['todo', 'next', 'active'];

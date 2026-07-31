@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getBrowserSupabase } from '@/lib/supabase-browser'
 import Header from './Header'
+import FinalsDayBanner from './FinalsDayBanner'
 import Ring, { COMP_META } from './Ring'
 import NextMatchCard from './NextMatchCard'
 import VoteModal from './VoteModal'
@@ -41,6 +42,7 @@ export default function VotePage() {
   const [ringCounts, setRingCounts] = useState<Record<'standard' | 'open', number> | null>(null)
   const [tokens, setTokens]     = useState<number | null>(null)
   const [allIn, setAllIn]       = useState(false)
+  const [finalsDay, setFinalsDay] = useState(false)
   const [votes, setVotes]       = useState<Record<string, Vote>>({})
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState<string | null>(null)
@@ -116,6 +118,7 @@ export default function VotePage() {
         if (userData._supabaseError) console.error('[VotePage] Supabase error:', userData._supabaseError)
         setTokens(userData.tokens)
         setAllIn(!!userData.allIn)
+        setFinalsDay(!!userData.finalsDay)
 
         const votesByMatch: Record<string, Vote> = {}
         for (const v of votesData) {
@@ -207,6 +210,7 @@ export default function VotePage() {
           const u = await userRes.json()
           setTokens(u.tokens)
           setAllIn(!!u.allIn)
+          setFinalsDay(!!u.finalsDay)
         }
       }
       if (wonOrLost) {
@@ -347,6 +351,12 @@ export default function VotePage() {
   return (
     <>
       <Header tokens={tokens ?? 0} loading={loading} />
+
+      {finalsDay && (
+        <div style={{ padding: '10px 16px 0' }}>
+          <FinalsDayBanner />
+        </div>
+      )}
 
       <main style={{ padding: '14px 16px 88px', display: 'flex', flexDirection: 'column', gap: 14 }}>
 

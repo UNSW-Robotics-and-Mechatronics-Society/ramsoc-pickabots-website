@@ -156,7 +156,7 @@ export default async function NowBattlingOverlay({ searchParams }: Props) {
                 }}>
                   <span>{odds.pctLeft}%</span>
                   <span>
-                    {odds.totalPool.toLocaleString()} ⛁ · {odds.votes} bet{odds.votes === 1 ? "" : "s"}
+                    {odds.totalPool.toLocaleString()} ⛁ · {odds.votes} vote{odds.votes === 1 ? "" : "s"}
                     {odds.votingOpen ? " · voting open" : ""}
                   </span>
                   <span>{odds.pctRight}%</span>

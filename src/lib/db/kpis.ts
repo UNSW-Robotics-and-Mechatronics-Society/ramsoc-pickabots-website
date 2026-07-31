@@ -2,7 +2,7 @@ import "server-only";
 import supabase from "@/lib/supabase";
 import { type Division } from "@/lib/mock-data";
 import { getBracketState } from "./bracket";
-import { isByeMatch, formatTime, type RingMatch } from "@/lib/schedule";
+import { isByeMatch, estimatedFinishMinute, formatFinishTime } from "@/lib/schedule";
 
 export type Kpis = {
   onboardedPlayers: number;
@@ -95,36 +95,23 @@ async function getMatchProgress(): Promise<{ matchesDone: number; matchesTotal: 
   const matchesDone = countable.filter(m => m.status === "completed").length;
   const matchesTotal = countable.length;
 
-  // When each ring finishes = its LATEST slot by time + one match length. The
-  // latest slot is not the last one in the queue: a ring's queue is ordered by
-  // play position, not by clock time. retimeRings freezes a completed match at
-  // the time it actually played while the pending queue reflows around it, so
-  // marking a match Done out of queue order — routine at a live event — leaves
-  // an already-played slot sitting last. Reading that slot made the estimate
-  // jump BACKWARDS, reporting a finish time earlier than matches still to come.
-  const ringEnds: number[] = [];
-  function addRingEnds(rings: RingMatch[][], matchMinutes: number) {
-    for (const ring of rings) {
-      if (ring.length === 0) continue;
-      ringEnds.push(Math.max(...ring.map(e => e.startMinute)) + matchMinutes);
-    }
-  }
-  for (const division of DIVISIONS) {
-    const sched = state.schedules[division];
-    addRingEnds(sched.rings, sched.matchMinutes);
-  }
-  addRingEnds(state.exhibitionSchedule.rings, state.exhibitionSchedule.matchMinutes);
-
-  const lastEndMinute = ringEnds.length ? Math.max(...ringEnds) : null;
+  // Latest slot still to be played, across every ring the day runs on — see
+  // estimatedFinishMinute for why it's the latest by TIME and why already-played
+  // slots are ignored. Finals Day is included: its ring holds the last matches
+  // of the event, so leaving it out reported the day ending before the finals.
+  const lastEndMinute = estimatedFinishMinute(
+    [
+      ...DIVISIONS.map(d => state.schedules[d]),
+      state.exhibitionSchedule,
+      state.finalsSchedule,
+    ],
+    state.matches,
+  );
 
   return {
     matchesDone,
     matchesTotal,
-    // Past midnight, the bare clock time reads as EARLIER than the event's
-    // start ("12:30 AM" against a 1:00 PM start), so mark the day rollover.
-    estimatedFinishTime: lastEndMinute === null
-      ? null
-      : formatTime(lastEndMinute) + (lastEndMinute >= 24 * 60 ? ' +1d' : ''),
+    estimatedFinishTime: lastEndMinute === null ? null : formatFinishTime(lastEndMinute),
   };
 }
 

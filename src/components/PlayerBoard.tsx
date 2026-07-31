@@ -1,11 +1,11 @@
 'use client'
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import RamCoin from './RamCoin'
 import UserLedgerModal from './UserLedgerModal'
 import LeaderboardSearch from './LeaderboardSearch'
 import { usePickFilter } from '@/lib/pickFilter'
 
-export type LeaderboardEntry = { id: string; name: string; tokens: number; wins: number; losses: number }
+export type LeaderboardEntry = { id: string; name: string; tokens: number; wins: number; losses: number; votes: number }
 
 type Player = {
   id: string
@@ -14,9 +14,17 @@ type Player = {
   credits: number
   wins: number
   losses: number
+  /** No bets placed yet — greyed, and sunk below the ranked list. See `unvoted`. */
+  unvoted: boolean
 }
 
 const MEDAL = ['🥇', '🥈', '🥉']
+
+// The greyed tail's header. A player sits here until their first bet lands,
+// which moves them up into the board proper on the next refresh — the ordering
+// itself is done server-side (see computeLeaderboard's sort), so this only has
+// to draw the line where the tail starts.
+const UNVOTED_DIVIDER = '◆ No Votes Yet ◆'
 
 const GRAIN = `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)' opacity='1'/%3E%3C/svg%3E")`
 
@@ -24,6 +32,8 @@ const GRAIN = `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http:
 export default function PlayerBoard({ players }: { players: LeaderboardEntry[] }) {
   const [selected, setSelected] = useState<{ id: string; name: string; rank: number } | null>(null)
 
+  // `players` arrives already ordered — everyone who has bet first, the rest
+  // behind them — so this only numbers the rows it was given.
   const PLAYERS: Player[] = players.map((p, i) => ({
     id: p.id,
     rank: i + 1,
@@ -31,6 +41,7 @@ export default function PlayerBoard({ players }: { players: LeaderboardEntry[] }
     credits: p.tokens,
     wins: p.wins,
     losses: p.losses,
+    unvoted: p.votes === 0,
   }))
 
   // Filters the already-ranked list, so rows stay ordered most→least tokens and
@@ -84,12 +95,31 @@ export default function PlayerBoard({ players }: { players: LeaderboardEntry[] }
             {filter.picked.length ? 'Selected players are no longer ranked' : 'No players yet'}
           </div>
         )}
-        {visible.map(p => {
+        {visible.map((p, i) => {
           const winRate = p.wins + p.losses > 0 ? Math.round((p.wins / (p.wins + p.losses)) * 100) : 0
-          const isTop3  = p.rank <= 3
+          // A player in the greyed tail never takes the top-3 treatment, even
+          // when nobody has bet yet and they hold ranks 1-3 by balance alone.
+          const isTop3  = p.rank <= 3 && !p.unvoted
+          // The tail's header, drawn once at the row it starts on — compared
+          // against the previous VISIBLE row, so a filtered view that opens
+          // part-way into the tail still gets its label.
+          const startsTail = p.unvoted && !(i > 0 ? visible[i - 1].unvoted : false)
+
           return (
+            <Fragment key={p.id}>
+              {startsTail && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '14px 4px 4px',
+                  fontSize: '0.42rem', fontWeight: 900, letterSpacing: 3,
+                  color: 'rgba(255,255,255,0.25)', textTransform: 'uppercase',
+                }}>
+                  <span style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }}/>
+                  {UNVOTED_DIVIDER}
+                  <span style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }}/>
+                </div>
+              )}
+
             <button
-              key={p.id}
               onClick={() => setSelected({ id: p.id, name: p.name, rank: p.rank })}
               style={{
               position: 'relative', overflow: 'hidden',
@@ -102,6 +132,7 @@ export default function PlayerBoard({ players }: { players: LeaderboardEntry[] }
               border: `1px solid ${isTop3 ? 'rgba(255,107,0,0.28)' : 'rgba(255,255,255,0.07)'}`,
               borderRadius: 10,
               boxShadow: isTop3 ? '0 0 20px rgba(255,107,0,0.1)' : '0 2px 12px rgba(0,0,0,0.5)',
+              opacity: p.unvoted ? 0.45 : 1,
             }}>
               {/* Grain */}
               <div style={{
@@ -175,6 +206,7 @@ export default function PlayerBoard({ players }: { players: LeaderboardEntry[] }
                 {winRate}%
               </div>
             </button>
+            </Fragment>
           )
         })}
       </div>

@@ -1,4 +1,4 @@
-import { type BracketMatch, type Division, type MatchStatus } from "@/lib/mock-data";
+import { type BracketMatch, type Division, type MatchStatus, isFinalsMatch } from "@/lib/mock-data";
 import { type AutoFillMode } from "@/lib/seeds";
 
 // Widened from 4 to 6 for the live-streamed format — one OBS scene per ring
@@ -73,6 +73,60 @@ export type ExhibitionSchedule = {
 };
 
 /**
+ * Finals Day: a SINGLE ring shared by both divisions, holding each division's
+ * two semis, bronze-medal match and grand final — the last eight matches of the
+ * event, run one after another on one ring as their own day.
+ *
+ * Stored (like ExhibitionSchedule) as one shared copy rather than per division,
+ * because a ring that interleaves Standards and Open matches can't belong to
+ * either division's MatchSchedule. `rings` keeps the array-of-rings shape purely
+ * so it can reuse retimeRings; it always holds exactly one ring.
+ *
+ * Its CONTENTS are fixed — the eight matches are whatever the two brackets'
+ * finals are — but the ORDER is only seeded from the event format (see
+ * finalsRunningOrder) and can be reordered by hand from there, exactly like the
+ * bracket rings. Start times are editable and pin as usual.
+ */
+export type FinalsSchedule = {
+  rings: RingMatch[][];
+  matchMinutes: number;
+  gapMinutes: number;
+};
+
+/**
+ * The Finals Day running order, in the order the matches are played:
+ *
+ *   1. Standards Semi 1      5. Standards Bronze Medal
+ *   2. Standards Semi 2      6. Open Bronze Medal
+ *   3. Open Semi 1           7. Standards Final
+ *   4. Open Semi 2           8. Open Final
+ *
+ * Both divisions' semis run first so the two bronze/final pairs can follow with
+ * their teams already decided. This is the DEFAULT order — the same role
+ * defaultScheduleOrder plays for the bracket rings: it seeds a new ring and
+ * supplies matches that aren't on it yet, and a hand-reordered ring overrides it
+ * (see rollFinalsSchedule).
+ */
+const FINALS_RUNNING_ORDER: { division: Division; side: BracketMatch['side']; matchNumber: number }[] = [
+  { division: 'standards', side: 'finals-semi',  matchNumber: 1 },
+  { division: 'standards', side: 'finals-semi',  matchNumber: 2 },
+  { division: 'open',      side: 'finals-semi',  matchNumber: 1 },
+  { division: 'open',      side: 'finals-semi',  matchNumber: 2 },
+  { division: 'standards', side: 'finals-third', matchNumber: 1 },
+  { division: 'open',      side: 'finals-third', matchNumber: 1 },
+  { division: 'standards', side: 'finals-final', matchNumber: 1 },
+  { division: 'open',      side: 'finals-final', matchNumber: 1 },
+];
+
+/** Match ids for FINALS_RUNNING_ORDER, skipping any slot the bracket doesn't have. */
+export function finalsRunningOrder(matches: BracketMatch[]): string[] {
+  return FINALS_RUNNING_ORDER
+    .map(slot => matches.find(m =>
+      m.division === slot.division && m.side === slot.side && m.matchNumber === slot.matchNumber)?.id)
+    .filter((id): id is string => !!id);
+}
+
+/**
  * Derives active/next/todo statuses from the schedule for one division.
  * Each ring is independent: the first non-completed/non-skipped match in
  * that ring's own queue → active, the second → next. This guarantees at most
@@ -116,7 +170,13 @@ export function applyScheduleStatus(
     // Wildcard boxes are exempt for the same reason as exhibition matches:
     // they never occupy a ring (schedulable() also rejects them — slot B is
     // always empty), so ring position must not drive their status.
-    if (m.division !== division || m.side === 'exhibition' || m.side === 'wildcard') return m;
+    //
+    // Finals matches are exempt too: they live on the shared Finals Day ring
+    // (see FinalsSchedule), not in either division's rings, so their
+    // active/next comes from applyFinalsScheduleStatus instead. Without this
+    // they'd be force-reset to 'todo' here simply for being absent from these
+    // rings — undoing whatever the finals ring just derived.
+    if (m.division !== division || m.side === 'exhibition' || m.side === 'wildcard' || isFinalsMatch(m)) return m;
     if (m.status === 'completed' || m.status === 'skipped') return m;
 
     const newStatus: MatchStatus =
@@ -131,6 +191,51 @@ export function applyScheduleStatus(
       return { ...m, status: 'active', votingOpen: false };
     }
 
+    return m.status === newStatus ? m : { ...m, status: newStatus };
+  });
+}
+
+/**
+ * The Finals Day counterpart of applyScheduleStatus: the same
+ * first/second-ready-pending rule, applied to the one shared finals ring. At
+ * most one finals match is active and one is next across BOTH divisions, since
+ * they all run on the same physical ring.
+ *
+ * Only finals matches are touched; everything else is returned untouched so
+ * this can be composed with the per-division passes in any order.
+ */
+export function applyFinalsScheduleStatus(
+  matches: BracketMatch[],
+  schedule: FinalsSchedule,
+): BracketMatch[] {
+  const byId = new Map(matches.map(m => [m.id, m]));
+
+  const readyPending = schedule.rings.flat()
+    .map(e => e.matchId)
+    .filter(id => {
+      const m = byId.get(id);
+      // Same readiness rule as applyScheduleStatus — a finals match whose
+      // semi-finalists aren't decided yet holds its slot but stays 'todo'.
+      return m && m.status !== 'completed' && m.status !== 'skipped'
+        && !!m.slotA.teamName && !!m.slotB.teamName;
+    });
+  const activeId = readyPending[0];
+  const nextId   = readyPending[1];
+
+  return matches.map(m => {
+    if (!isFinalsMatch(m)) return m;
+    if (m.status === 'completed' || m.status === 'skipped') return m;
+
+    const newStatus: MatchStatus =
+      m.id === activeId ? 'active' :
+      m.id === nextId   ? 'next'   :
+      'todo';
+
+    // Same rule as applyScheduleStatus: becoming active always starts with
+    // voting closed, so the admin opens it deliberately.
+    if (newStatus === 'active' && m.status !== 'active') {
+      return { ...m, status: 'active', votingOpen: false };
+    }
     return m.status === newStatus ? m : { ...m, status: newStatus };
   });
 }
@@ -218,6 +323,61 @@ export function formatTime(minute: number): string {
   const period = h >= 12 ? 'PM' : 'AM';
   const displayH = h % 12 === 0 ? 12 : h % 12;
   return `${displayH}:${m.toString().padStart(2, '0')} ${period}`;
+}
+
+/**
+ * When the day is expected to end: the latest slot still TO BE PLAYED across
+ * every ring handed in — bracket rings per division, the shared exhibition
+ * rings and the Finals Day ring — plus one match length.
+ *
+ * Two things it deliberately does not do:
+ *
+ *  - It doesn't read each ring's LAST entry. A ring's queue is ordered by play
+ *    position, not by clock time: retimeRings freezes a completed match at the
+ *    time it actually played while the pending queue reflows around it, so
+ *    marking a match Done out of queue order — routine at a live event — leaves
+ *    an already-played slot sitting last, and the estimate jumps BACKWARDS.
+ *  - It ignores completed (and skipped) slots entirely. What has already been
+ *    played can't be when the day ENDS, and a match frozen at a hand-set or
+ *    placeholder time would otherwise drag the whole estimate to it.
+ *
+ * Falls back to the latest slot of any kind once nothing is left to play, so a
+ * finished event reports when it actually wrapped instead of blanking out.
+ * Null only when there are no slots at all.
+ *
+ * Shared by the admin KPI bar and the OBS KPI overlay so the two can't drift —
+ * they previously computed this two different ways and disagreed.
+ */
+export function estimatedFinishMinute(
+  schedules: Array<{ rings: RingMatch[][]; matchMinutes: number }>,
+  matches: Array<{ id: string; status: MatchStatus }>,
+): number | null {
+  const statusById = new Map(matches.map(m => [m.id, m.status]));
+  const max = (a: number | null, b: number) => (a === null ? b : Math.max(a, b));
+
+  let pendingEnd: number | null = null;
+  let anyEnd: number | null = null;
+  for (const schedule of schedules) {
+    for (const ring of schedule.rings) {
+      for (const entry of ring) {
+        const end = entry.startMinute + schedule.matchMinutes;
+        anyEnd = max(anyEnd, end);
+        const status = statusById.get(entry.matchId);
+        if (status === 'completed' || status === 'skipped') continue;
+        pendingEnd = max(pendingEnd, end);
+      }
+    }
+  }
+  return pendingEnd ?? anyEnd;
+}
+
+/**
+ * Renders an estimated finish. Past midnight the bare clock time reads as
+ * EARLIER than the event's start ("12:30 AM" against a 1:00 PM start), so the
+ * day rollover is marked.
+ */
+export function formatFinishTime(minute: number): string {
+  return formatTime(minute) + (minute >= 24 * 60 ? ' +1d' : '');
 }
 
 export function parseTimeInput(raw: string, fallback: number): number {
@@ -466,6 +626,7 @@ export function rollSchedule(
     if (!m || m.division !== division) return false;
     if (m.status === 'skipped') return false;
     if (m.side === 'exhibition') return false;                // exhibition matches live in their own rings, not bracket rings
+    if (isFinalsMatch(m)) return false;                       // finals play on the shared Finals Day ring (see FinalsSchedule)
     if (isByeMatch(m)) return false;                          // auto-completed bye, never played
     return !!m.slotA.teamName && !!m.slotB.teamName;          // both teams known = ready (completed real matches too)
   }
@@ -638,6 +799,63 @@ export function rollExhibitionSchedule(schedule: ExhibitionSchedule, matches: Br
   return { ...schedule, rings: retimeRings(kept, matches, base, slotDuration(schedule)) };
 }
 
+// ── Finals Day ring ──────────────────────────────────────────────────────────
+
+/**
+ * Rolling pass for the shared Finals Day ring. Unlike the bracket and exhibition
+ * rollers this REBUILDS the queue from finalsRunningOrder every time rather than
+ * preserving whatever order is stored: the running order is fixed by the event
+ * format, so there's nothing to preserve and no way for it to drift.
+ *
+ * What IS preserved is each slot's time — including hand-set pins — carried over
+ * by match id, so editing a finals start time survives the rebuild. Skipped
+ * matches drop out; times then reflow under the same shared rule as every other
+ * ring (see retimeRings).
+ */
+export function rollFinalsSchedule(schedule: FinalsSchedule, matches: BracketMatch[]): FinalsSchedule {
+  const skipped = new Set(matches.filter(m => m.status === 'skipped').map(m => m.id));
+  const existing = schedule.rings.flat();
+  const placed = new Set(existing.map(e => e.matchId));
+
+  const starts = existing.map(e => e.startMinute);
+  const base = starts.length ? Math.min(...starts) : START_MINUTE;
+
+  // finalsRunningOrder is the DEFAULT order, not an enforced one: it seeds an
+  // empty ring and supplies anything missing, but a stored order always wins.
+  // This roll runs on every READ, so rebuilding from the canonical order here
+  // would silently undo a hand-reordered ring on the next page load.
+  const canonical = finalsRunningOrder(matches);
+  const valid = new Set(canonical);
+
+  const kept = existing.filter(e => valid.has(e.matchId) && !skipped.has(e.matchId));
+  const appended = canonical
+    .filter(id => !placed.has(id) && !skipped.has(id))
+    .map(id => ({ matchId: id, startMinute: base }));
+  const ring: RingMatch[] = [...kept, ...appended];
+
+  // hasRecordedTime: an appended match has only the `base` placeholder above, so
+  // it must not be frozen there just for being completed (same guard
+  // rollSchedule uses for freshly appended matches).
+  return {
+    ...schedule,
+    rings: retimeRings([ring], matches, base, slotDuration(schedule), id => placed.has(id)),
+  };
+}
+
+/**
+ * Change the Finals Day ring's match length and/or gap — same rules as
+ * changeTimings (completed matches keep their exact time).
+ */
+export function changeFinalsTimings(
+  schedule: FinalsSchedule,
+  matches: BracketMatch[],
+  matchMinutes: number,
+  gapMinutes: number,
+): FinalsSchedule {
+  const { rings } = retimeSchedule({ ...schedule, matchMinutes, gapMinutes }, matches);
+  return { rings, matchMinutes, gapMinutes };
+}
+
 /**
  * Returns match IDs in tournament day order:
  *
@@ -670,9 +888,19 @@ export function defaultScheduleOrder(
    *  put the seed 1 v 2 match somewhere in the middle of the round. */
   autoFillMode: AutoFillMode = 'worst-plays-best',
 ): string[] {
-  // Skip bye matches (auto-completed, never played) so they don't clutter the
-  // schedule / match list.
-  const div = matches.filter(m => m.division === division && !isByeMatch(m));
+  // Matches that will never be played are left out entirely, so they don't
+  // clutter the schedule / match list: byes (auto-completed, nobody played
+  // them) and anything the admin marked skipped.
+  //
+  // Skipped has to be filtered HERE, not only in rollSchedule's schedulable().
+  // That check drops a skipped match from its ring in step 1, but step 3 then
+  // appends everything in this order that isn't currently placed — so a skipped
+  // match was dropped and immediately re-added at the BACK of a ring on every
+  // single roll. It reappeared on the match list, took a play-order number, and
+  // (being the last slot in its ring) became the match every "estimated finish"
+  // was computed from.
+  const div = matches.filter(m =>
+    m.division === division && !isByeMatch(m) && m.status !== 'skipped');
 
   // Expand from the center pair outward.  For N=8 → [4,5,3,6,2,7,1,8].
   function middleFirst(n: number): number[] {
@@ -704,11 +932,9 @@ export function defaultScheduleOrder(
     if (k <= W) ids.push(...roundIds('winners', k));
     if (k <= L) ids.push(...roundIds('losers',  k));
   }
-  ids.push(
-    ...div.filter(m => m.side === 'finals-semi').sort((a, b) => a.matchNumber - b.matchNumber).map(m => m.id),
-    ...div.filter(m => m.side === 'finals-third').map(m => m.id),
-    ...div.filter(m => m.side === 'finals-final').map(m => m.id),
-  );
-
+  // Finals matches are deliberately NOT appended: they play on the shared
+  // Finals Day ring in a fixed cross-division order (see finalsRunningOrder),
+  // not in this division's bracket rings. Leaving them here would have
+  // rollSchedule's "append still-upcoming" step put them straight back.
   return ids;
 }

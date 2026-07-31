@@ -1,6 +1,6 @@
 import { getBracketState } from "@/lib/db/bracket";
 import { getWagerTotals } from "@/lib/db/overlayOdds";
-import { formatTime } from "@/lib/schedule";
+import { estimatedFinishMinute, formatFinishTime } from "@/lib/schedule";
 import OverlayRefresh from "@/components/obs/OverlayRefresh";
 import { GOLD, PLATE_BG, PLATE_BORDER, FONT_DISPLAY, FONT_BODY } from "@/components/obs/overlayTheme";
 
@@ -34,25 +34,17 @@ export default async function KpiOverlay({ searchParams }: Props) {
   const skipped = real.filter(m => m.status === "skipped").length;
   const remaining = real.length - played - skipped;
 
-  // Estimated finish: the latest scheduled start across every ring (both
-  // divisions + exhibition rings), plus one match length. Rolls forward live
-  // as the admin's schedule rolls, so it self-corrects when the day slips.
-  let lastStart = -1;
-  let slotMinutes = 0;
-  const allSchedules = [
-    ...Object.values(bracket.schedules),
-    bracket.exhibitionSchedule,
-  ];
-  for (const sched of allSchedules) {
-    for (const ring of sched.rings) {
-      const last = ring[ring.length - 1];
-      if (last && last.startMinute > lastStart) {
-        lastStart = last.startMinute;
-        slotMinutes = sched.matchMinutes;
-      }
-    }
-  }
-  const estFinish = lastStart >= 0 ? formatTime(lastStart + slotMinutes) : null;
+  // Estimated finish: the latest slot still to be played across every ring —
+  // both divisions, the exhibition rings and Finals Day — plus one match
+  // length. Rolls forward live as the admin's schedule rolls, so it
+  // self-corrects when the day slips. Shares one implementation with the admin
+  // KPI bar (see estimatedFinishMinute); the two used to compute it separately
+  // and could disagree.
+  const finishMinute = estimatedFinishMinute(
+    [...Object.values(bracket.schedules), bracket.exhibitionSchedule, bracket.finalsSchedule],
+    bracket.matches,
+  );
+  const estFinish = finishMinute === null ? null : formatFinishTime(finishMinute);
 
   if (real.length === 0) return null;
 
@@ -61,7 +53,7 @@ export default async function KpiOverlay({ searchParams }: Props) {
     { label: "Still to play", value: `${remaining}` },
     ...(estFinish ? [{ label: "Est. finish", value: estFinish, accent: true }] : []),
     { label: "Coins wagered", value: `${wagers.totalWagered.toLocaleString()} ⛁`, accent: true },
-    { label: "Players betting", value: `${wagers.bettors}` },
+    { label: "Players voting", value: `${wagers.bettors}` },
   ];
 
   return (

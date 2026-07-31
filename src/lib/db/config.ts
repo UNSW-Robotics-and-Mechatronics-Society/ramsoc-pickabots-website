@@ -11,6 +11,7 @@ const ALL_IN_KEY = "all_in";
 const AUTO_SMS_KEY = "auto_sms_enabled";
 const SMS_SENDER_MODE_KEY = "sms_sender_mode";
 const SMS_SENDER_NUMBER_KEY = "sms_sender_number";
+const FINALS_DAY_KEY = "finals_day";
 
 /** Default: text captains when their team is this many matches from playing. */
 export const DEFAULT_NOTIFY_LEAD = 2;
@@ -87,6 +88,32 @@ export async function getAllIn(): Promise<boolean> {
 
 export async function setAllIn(value: boolean): Promise<void> {
   await setConfig(ALL_IN_KEY, value ? "true" : "false");
+}
+
+/**
+ * Finals Day mode. Switches the public site over to the last day of the event:
+ * the bracket page opens on its Finals view, the match list shows the Finals Day
+ * ring instead of the two division ladders, and every public page carries a gold
+ * "Finals Day" banner.
+ *
+ * Purely presentational — it does NOT decide where finals matches live. Those
+ * always sit on the shared Finals Day ring (see FinalsSchedule and
+ * rollSchedule's schedulable), flag or no flag, so turning it on never moves a
+ * match or rewrites a schedule.
+ */
+export async function getFinalsDay(): Promise<boolean> {
+  try {
+    return (await getConfig(FINALS_DAY_KEY)) === "true";
+  } catch (err) {
+    // Never let a config read failure break a public page — default to the
+    // normal (non-finals) presentation.
+    console.error("[config] getFinalsDay failed, defaulting to off:", err);
+    return false;
+  }
+}
+
+export async function setFinalsDay(value: boolean): Promise<void> {
+  await setConfig(FINALS_DAY_KEY, value ? "true" : "false");
 }
 
 /**
