@@ -193,7 +193,21 @@ async function execute(action, payload) {
     case "start_record": return obs.call("StartRecord");
     case "stop_record": return obs.call("StopRecord");
     case "start_replay_buffer": return obs.call("StartReplayBuffer");
-    case "save_replay_buffer": return obs.call("SaveReplayBuffer");
+    case "save_replay_buffer": {
+      await obs.call("SaveReplayBuffer");
+      // Point the "Replay" scene's media source at the clip that was just
+      // saved, so operators can cut straight to it — OBS needs a moment to
+      // finish writing the file before GetLastReplayBufferReplay resolves.
+      await new Promise(r => setTimeout(r, 500));
+      const { savedReplayPath } = await obs.call("GetLastReplayBufferReplay").catch(() => ({ savedReplayPath: null }));
+      if (savedReplayPath) {
+        await obs.call("SetInputSettings", {
+          inputName: "replay-clip",
+          inputSettings: { local_file: savedReplayPath },
+        }).catch(err => log("Failed to update replay-clip source:", err.message));
+      }
+      return;
+    }
     default:
       throw new Error(`Unknown action: ${action}`);
   }

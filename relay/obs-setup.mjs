@@ -22,7 +22,7 @@ const SCENES = [
   "Sumobots", "Intermission", "Bracket", "Finals", "Standings", "Leaderboard",
   "Results", "All Rings", "Vote", "Commentary", "Standby", "Blank",
   "Victor Cam", "Arjun Cam", "Nirvan Cam", "Dash Cam", "IT Cam",
-  "Rambo Returns",
+  "Rambo Returns", "Replay",
 ];
 
 // Operator phone cams: full-frame scene per phone, fed by the MediaMTX path
@@ -112,6 +112,21 @@ await browserSource("Leaderboard", "overlay-leaderboard", `${BASE}/overlay/leade
 await browserSource("Results", "overlay-results", `${BASE}/overlay/results`);
 await browserSource("Vote", "overlay-vote", `${BASE}/overlay/vote`);
 await browserSource("Rambo Returns", "overlay-rambo-returns", `${BASE}/overlay/rambo-returns`);
+
+// Replay: a local media source the relay repoints at the latest saved clip
+// every time "Save Instant Replay" fires (see index.mjs's save_replay_buffer
+// handler) — cut here to show it. Needs Settings -> Output -> Replay Buffer
+// enabled in OBS first (not scriptable — see docs).
+if (!inputNames.has("replay-clip")) {
+  await obs.call("CreateInput", {
+    sceneName: "Replay",
+    inputName: "replay-clip",
+    inputKind: "ffmpeg_source",
+    inputSettings: { is_local_file: true, local_file: "", restart_on_activate: true, clear_on_media_end: false },
+  });
+  inputNames.add("replay-clip");
+  console.log("media source created: replay-clip");
+}
 
 for (const name of PHONE_CAMS) {
   await mediaSource(`${name} Cam`, `feed-${name.toLowerCase()}`, `rtmp://localhost:1935/${name.toLowerCase()}`);
