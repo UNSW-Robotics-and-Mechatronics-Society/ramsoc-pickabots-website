@@ -3,11 +3,6 @@ import { useEffect, useRef, useState, useCallback, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Coins } from 'lucide-react'
 import RamCoin from './RamCoin'
-import {
-  BEG_MAX_AWARD,
-  BEG_MIN_AWARD,
-  BEG_CEILING,
-} from '@/lib/beg-config'
 
 // ── Types mirroring the API contract ──────────────────────────────────────────
 type BegReason = 'ok' | 'not_broke' | 'active_vote' | 'no_begs_left' | 'cooldown'
@@ -15,6 +10,10 @@ type BegReason = 'ok' | 'not_broke' | 'active_vote' | 'no_begs_left' | 'cooldown
 interface BegState {
   tokens: number
   threshold: number
+  /** Bullseye payout and its band-edge floor — both admin-set, so they come
+   *  from the server rather than from constants. */
+  maxAward: number
+  minAward: number
   ceiling: number
   begsUsed: number
   begsAllowed: number
@@ -255,10 +254,13 @@ export default function BegDial({ onClose, onAwarded }: BegDialProps) {
 
               <DialTrack pos={stoppedPos} band={band} frozen={frozen} needleRef={needleRef} />
 
+              {/* Payouts and the ceiling come from the server state, not
+                  constants: the admin sets the bullseye award and the threshold
+                  the ceiling is built from. */}
               <p className="text-center text-[0.6rem] font-black uppercase tracking-[0.2em] text-white/35">
-                Bullseye +{BEG_MAX_AWARD} · edge +{BEG_MIN_AWARD} · miss +0
+                Bullseye +{state.maxAward} · edge +{state.minAward} · miss +0
                 <br />
-                (capped so you can&apos;t exceed {BEG_CEILING})
+                (capped so you can&apos;t exceed {state.ceiling})
               </p>
 
               <button

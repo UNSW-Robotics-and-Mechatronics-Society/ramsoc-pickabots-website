@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { RotateCcw, Save, Send, Upload, AlertTriangle, Coins } from "lucide-react";
+import { RotateCcw, Save, Send, Upload, AlertTriangle, Coins, HandCoins } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { type Division, type TeamCount } from "@/lib/mock-data";
 import {
@@ -13,8 +13,23 @@ import {
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
 import AutoFillModePicker from "@/components/admin/AutoFillModePicker";
 import type { AutoFillMode } from "@/lib/seeds";
+import {
+  DEFAULT_BEG_THRESHOLD,
+  BEG_THRESHOLD_MIN,
+  BEG_THRESHOLD_MAX,
+  DEFAULT_BEG_MAX_AWARD,
+  BEG_MAX_AWARD_MIN,
+  BEG_MAX_AWARD_MAX,
+  begCeilingFor,
+  begMinAwardFor,
+} from "@/lib/beg-config";
 
 const DEFAULT_SMS_NOTIFY_LEAD = 2;
+
+// Pre-filled amount for the "give everyone RamCoin" top-up — the usual
+// mid-event handout, editable per run. MAX mirrors the API's own guard.
+const DEFAULT_TOKEN_GRANT = 500;
+const MAX_TOKEN_GRANT = 100_000;
 
 // One parsed row of the seed-import CSV. Structurally matches AdminPageClient's
 // SeedImportRow/SeedImportResult (the callback contract), kept local so this
@@ -57,6 +72,8 @@ type ConfigResponse = {
   smsSenderMode?: SmsSenderMode;
   smsSenderNumber?: string;
   finalsDay?: boolean;
+  begThreshold?: number;
+  begMaxAward?: number;
 };
 
 type ConfigPutResponse =
@@ -69,6 +86,8 @@ type ConfigPutResponse =
       smsSenderMode?: SmsSenderMode;
       smsSenderNumber?: string;
       finalsDay?: boolean;
+      begThreshold?: number;
+      begMaxAward?: number;
     }
   | { error: string };
 
@@ -106,6 +125,8 @@ function parseSeedCsv(text: string): { valid: SeedImportRow[]; invalid: { line: 
   return { valid, invalid };
 }
 
+type GrantTokensResponse = { ok: true; amount: number; players: number } | { error: string };
+
 type BroadcastCountsResponse = { total: number; withPhone: number };
 
 type BroadcastResultRow = {
@@ -134,6 +155,14 @@ export default function SettingsPanel({
   const [allInBusy, setAllInBusy]   = useState(false);
   const [finalsDay, setFinalsDay]         = useState(false);
   const [finalsDayBusy, setFinalsDayBusy] = useState(false);
+  // Beg limits — both held as strings so the fields can be cleared and retyped.
+  const [begInput, setBegInput]                 = useState(String(DEFAULT_BEG_THRESHOLD));
+  const [savedBegThreshold, setSavedBegThreshold] = useState(DEFAULT_BEG_THRESHOLD);
+  const [begAwardInput, setBegAwardInput]       = useState(String(DEFAULT_BEG_MAX_AWARD));
+  const [savedBegMaxAward, setSavedBegMaxAward] = useState(DEFAULT_BEG_MAX_AWARD);
+  const [begSaving, setBegSaving]               = useState(false);
+  const [begError, setBegError]                 = useState<string | null>(null);
+  const [begFlash, setBegFlash]                 = useState(false);
   const [autoSmsEnabled, setAutoSmsEnabled] = useState(true);
   const [autoSmsBusy, setAutoSmsBusy]       = useState(false);
   const [senderMode, setSenderMode]         = useState<SmsSenderMode>("senderid");
@@ -161,6 +190,11 @@ export default function SettingsPanel({
   const [confirmResetTokens, setConfirmResetTokens] = useState(false);
   const [confirmResetAll, setConfirmResetAll]       = useState(false);
   const [resetTokensMsg, setResetTokensMsg]         = useState<string | null>(null);
+  // Held as a string so the field can be cleared and retyped; parsed below.
+  const [grantInput, setGrantInput]     = useState(String(DEFAULT_TOKEN_GRANT));
+  const [grantBusy, setGrantBusy]       = useState(false);
+  const [confirmGrant, setConfirmGrant] = useState(false);
+  const [grantMsg, setGrantMsg]         = useState<string | null>(null);
   const seedFileRef = useRef<HTMLInputElement | null>(null);
   const [savedTemplate, setSavedTemplate] = useState("");
   const [defaultTemplate, setDefaultTemplate] = useState("");
@@ -207,6 +241,12 @@ export default function SettingsPanel({
       setSavedNotifyLead(lead);
       setAllIn(data.allIn ?? false);
       setFinalsDay(data.finalsDay ?? false);
+      const beg = data.begThreshold ?? DEFAULT_BEG_THRESHOLD;
+      setBegInput(String(beg));
+      setSavedBegThreshold(beg);
+      const begAward = data.begMaxAward ?? DEFAULT_BEG_MAX_AWARD;
+      setBegAwardInput(String(begAward));
+      setSavedBegMaxAward(begAward);
       setAutoSmsEnabled(data.autoSmsEnabled ?? true);
       setSenderMode(data.smsSenderMode ?? "senderid");
       const number = data.smsSenderNumber ?? "";
@@ -243,6 +283,35 @@ export default function SettingsPanel({
   const charCount = template.length;
   const parts = charCount === 0 ? 0 : Math.ceil(charCount / 160);
   const dirty = template !== savedTemplate || notifyLead !== savedNotifyLead;
+
+  // Empty / non-numeric input parses to NaN or 0 — both invalid, which just
+  // leaves the Give button disabled rather than nagging mid-type.
+  const grantAmount = Math.trunc(Number(grantInput));
+  const grantValid = Number.isFinite(grantAmount) && grantAmount > 0 && grantAmount <= MAX_TOKEN_GRANT;
+
+  // Same idiom: an empty/garbled field just leaves Save disabled. The ceiling and
+  // the band-edge award are both derived from these two numbers (see
+  // begCeilingFor / begMinAwardFor), so they're previewed live off whatever is
+  // typed rather than waiting for a save.
+  const begThreshold = Math.trunc(Number(begInput));
+  const begThresholdValid =
+    begInput.trim() !== "" &&
+    Number.isFinite(begThreshold) &&
+    begThreshold >= BEG_THRESHOLD_MIN &&
+    begThreshold <= BEG_THRESHOLD_MAX;
+  const begMaxAward = Math.trunc(Number(begAwardInput));
+  const begMaxAwardValid =
+    begAwardInput.trim() !== "" &&
+    Number.isFinite(begMaxAward) &&
+    begMaxAward >= BEG_MAX_AWARD_MIN &&
+    begMaxAward <= BEG_MAX_AWARD_MAX;
+  const begValid = begThresholdValid && begMaxAwardValid;
+  const begDirty =
+    begValid && (begThreshold !== savedBegThreshold || begMaxAward !== savedBegMaxAward);
+  const begPreviewThreshold = begThresholdValid ? begThreshold : savedBegThreshold;
+  const begPreviewAward = begMaxAwardValid ? begMaxAward : savedBegMaxAward;
+  const begCeiling = begCeilingFor(begPreviewThreshold, begPreviewAward);
+  const begEdgeAward = begMinAwardFor(begPreviewAward);
 
   const broadcastCharCount = broadcastBody.length;
   const broadcastParts = broadcastCharCount === 0 ? 0 : Math.ceil(broadcastCharCount / 160);
@@ -364,6 +433,37 @@ export default function SettingsPanel({
     }
   }
 
+  // Takes effect immediately for every player: /api/beg reads both numbers on
+  // each call, so a player already sitting under a raised threshold can beg on
+  // their next tap (and the "Down bad?" banner appears for them on their next
+  // refresh).
+  async function handleSaveBegLimits() {
+    if (!begValid) return;
+    setBegSaving(true);
+    setBegError(null);
+    try {
+      const res = await fetch("/api/admin/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ begThreshold, begMaxAward }),
+      });
+      const data = (await res.json()) as ConfigPutResponse;
+      if (!res.ok || "error" in data) throw new Error("error" in data ? data.error : `Save failed (${res.status})`);
+      const savedThreshold = data.begThreshold ?? begThreshold;
+      const savedAward = data.begMaxAward ?? begMaxAward;
+      setBegInput(String(savedThreshold));
+      setSavedBegThreshold(savedThreshold);
+      setBegAwardInput(String(savedAward));
+      setSavedBegMaxAward(savedAward);
+      setBegFlash(true);
+      setTimeout(() => setBegFlash(false), 2000);
+    } catch (err) {
+      setBegError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setBegSaving(false);
+    }
+  }
+
   async function toggleAutoSms() {
     const next = !autoSmsEnabled;
     setAutoSmsBusy(true);
@@ -436,6 +536,33 @@ export default function SettingsPanel({
       setResetTokensMsg("Every player reset to 100 RamCoin ✓");
     } catch (err) {
       setResetTokensMsg(err instanceof Error ? err.message : "Reset failed");
+    }
+  }
+
+  // Adds to every balance rather than overwriting it, so the standings order is
+  // preserved — see /api/admin/grant-tokens.
+  async function handleGrantTokens() {
+    setConfirmGrant(false);
+    if (!grantValid) return;
+    setGrantBusy(true);
+    setGrantMsg(null);
+    try {
+      const res = await fetch("/api/admin/grant-tokens", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: grantAmount }),
+      });
+      const data = (await res.json()) as GrantTokensResponse;
+      if (!res.ok || "error" in data) {
+        throw new Error("error" in data ? data.error : `Grant failed (${res.status})`);
+      }
+      setGrantMsg(
+        `+${data.amount} RamCoin to ${data.players} player${data.players === 1 ? "" : "s"} ✓`,
+      );
+    } catch (err) {
+      setGrantMsg(err instanceof Error ? err.message : "Grant failed");
+    } finally {
+      setGrantBusy(false);
     }
   }
 
@@ -1048,7 +1175,39 @@ export default function SettingsPanel({
             <div className="rounded-2xl border border-white/22 bg-[#0d1018] p-3">
               <h3 className="mb-2 text-xs font-medium text-foreground">Player Settings</h3>
 
-              <div className="flex flex-wrap items-center justify-between gap-2">
+              {/* Top-up — ADDS to every balance, so the standings order survives
+                  (unlike the flat reset below). */}
+              <div className="flex flex-wrap items-end justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-xs text-foreground">Give every player RamCoin</p>
+                  <p className="text-[0.65rem] text-foreground/40">
+                    Adds this amount on top of each player&rsquo;s current balance, so the
+                    leaderboard order is unchanged. Voting history is kept.
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <input
+                    type="number"
+                    min={1}
+                    max={MAX_TOKEN_GRANT}
+                    step={50}
+                    value={grantInput}
+                    onChange={e => { setGrantInput(e.target.value); setGrantMsg(null); }}
+                    className="w-20 rounded-lg border border-white/10 bg-white/8 px-2 py-1.5 text-center text-xs text-foreground outline-none focus:border-white/30"
+                  />
+                  <button
+                    onClick={() => setConfirmGrant(true)}
+                    disabled={grantBusy || !grantValid}
+                    className="flex items-center gap-1.5 rounded-lg border border-green-400/40 bg-green-400/15 px-3 py-1.5 text-xs font-medium text-green-300 transition-colors hover:bg-green-400/25 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <HandCoins size={12} />
+                    {grantBusy ? "Giving…" : "Give All"}
+                  </button>
+                </div>
+              </div>
+              {grantMsg && <p className="mt-1.5 text-[0.65rem] text-foreground/50">{grantMsg}</p>}
+
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3">
                 <div className="min-w-0">
                   <p className="text-xs text-foreground">Reset all players&rsquo; RamCoin</p>
                   <p className="text-[0.65rem] text-foreground/40">Sets every balance back to 100. Voting history and past results are kept.</p>
@@ -1108,6 +1267,85 @@ export default function SettingsPanel({
                   {allIn ? "ALL IN: ON" : "ALL IN: OFF"}
                 </button>
               </div>
+
+              {/* Begging — how broke a player has to be before the "Beg Rambo for
+                  RamCoins" dial unlocks, and what a dead-centre dial pays. Both
+                  live for everyone the moment they're saved. */}
+              <div className="mt-3 border-t border-white/10 pt-3">
+                <p className="text-xs text-foreground">Begging</p>
+                <p className="text-[0.65rem] text-foreground/40">
+                  Players can beg for RamCoin only while their balance is below the
+                  threshold. Raise it to hand out the safety net sooner, lower it to make
+                  begging a last resort. The bullseye is what a perfectly-timed dial pays.
+                </p>
+
+                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+                  <label className="flex items-center gap-1.5 text-[0.65rem] text-foreground/60">
+                    Unlocks under
+                    <input
+                      type="number"
+                      min={BEG_THRESHOLD_MIN}
+                      max={BEG_THRESHOLD_MAX}
+                      step={5}
+                      value={begInput}
+                      onChange={e => { setBegInput(e.target.value); setBegError(null); }}
+                      className={cn(
+                        "w-20 rounded-lg border bg-white/8 px-2 py-1.5 text-center text-xs text-foreground outline-none focus:border-white/30",
+                        begThresholdValid ? "border-white/10" : "border-amber-400/50",
+                      )}
+                    />
+                    RC
+                  </label>
+                  <label className="flex items-center gap-1.5 text-[0.65rem] text-foreground/60">
+                    Bullseye pays
+                    <input
+                      type="number"
+                      min={BEG_MAX_AWARD_MIN}
+                      max={BEG_MAX_AWARD_MAX}
+                      step={5}
+                      value={begAwardInput}
+                      onChange={e => { setBegAwardInput(e.target.value); setBegError(null); }}
+                      className={cn(
+                        "w-20 rounded-lg border bg-white/8 px-2 py-1.5 text-center text-xs text-foreground outline-none focus:border-white/30",
+                        begMaxAwardValid ? "border-white/10" : "border-amber-400/50",
+                      )}
+                    />
+                    RC
+                  </label>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={handleSaveBegLimits}
+                      disabled={begSaving || !begDirty}
+                      className="flex items-center gap-1.5 rounded-lg border border-[#FFD700]/40 bg-[#FFD700]/15 px-3 py-1.5 text-xs font-medium text-[#FFD700] transition-colors hover:bg-[#FFD700]/25 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <Save size={12} />
+                      {begSaving ? "Saving…" : "Save"}
+                    </button>
+                    <span
+                      className={cn(
+                        "text-[0.65rem] text-green-300 transition-opacity",
+                        begFlash ? "opacity-100" : "opacity-0",
+                      )}
+                    >
+                      Saved ✓
+                    </span>
+                  </div>
+                </div>
+
+                <p className="mt-1.5 text-[0.65rem] text-foreground/40">
+                  Bullseye +{begPreviewAward} · band edge +{begEdgeAward} · miss +0. A beg
+                  can&rsquo;t take anyone past {begCeiling} RamCoin (
+                  {begPreviewThreshold} + {begPreviewAward}), so every eligible player can
+                  still win the full bullseye.
+                </p>
+                {!begValid && (
+                  <p className="mt-1 text-[0.65rem] text-amber-300/80">
+                    {!begThresholdValid && `Threshold must be ${BEG_THRESHOLD_MIN}–${BEG_THRESHOLD_MAX}. `}
+                    {!begMaxAwardValid && `Bullseye must be ${BEG_MAX_AWARD_MIN}–${BEG_MAX_AWARD_MAX}.`}
+                  </p>
+                )}
+                {begError && <p className="mt-1 text-[0.65rem] text-red-300">{begError}</p>}
+              </div>
             </div>
 
             {/* ── Reset All — kept last, most destructive ─────────────────── */}
@@ -1152,6 +1390,16 @@ export default function SettingsPanel({
         >
           <AutoFillModePicker value={autoFillMode} onChange={setAutoFillMode} />
         </ConfirmDialog>
+      )}
+
+      {confirmGrant && (
+        <ConfirmDialog
+          title={`Give everyone ${grantAmount} RamCoin?`}
+          message={`Every player's balance goes up by ${grantAmount} RamCoin. Nobody's spot on the leaderboard changes, and voting history is kept. This can't be undone.`}
+          confirmLabel={`Give ${grantAmount}`}
+          onConfirm={handleGrantTokens}
+          onCancel={() => setConfirmGrant(false)}
+        />
       )}
 
       {confirmResetTokens && (
