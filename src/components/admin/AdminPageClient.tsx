@@ -7,7 +7,7 @@ import {
 } from "@/lib/mock-data";
 import {
   type ConcurrentRings, type MatchSchedule, type ExhibitionSchedule, type FinalsSchedule,
-  generateSchedule, applyScheduleStatus, applyFinalsScheduleStatus, rollSchedule,
+  generateSchedule, applyScheduleStatus, rollSchedule,
   rollExhibitionSchedule, rollFinalsSchedule, START_MINUTE, MAX_RINGS,
 } from "@/lib/schedule";
 import {
@@ -784,17 +784,15 @@ export default function AdminPageClient({ division, initialTeams, initialSpecial
   // schedule order determines everything else. Exhibition matches are exempt
   // (see applyScheduleStatus) — their status is entirely admin-controlled
   // via the dropdown, so `matches` already reflects it with no derivation.
-  // Finals matches are exempt from the per-division passes (they sit on the one
-  // shared Finals Day ring, not in either division's rings), so their
-  // active/next is derived from that ring instead — same rule, one ring.
+  // Finals matches are exempt too, for the same reason as exhibition ones: all
+  // eight share the single Finals Day ring, so deriving from ring position
+  // would make just one of them active and only that one biddable. Their status
+  // and bidding are set by hand per match instead (see the Finals tab).
   const effectiveMatches = useMemo(
-    () => applyFinalsScheduleStatus(
-      (['standards', 'open'] as Division[]).reduce(
-        (acc, d) => applyScheduleStatus(acc, schedules[d], d), matches,
-      ),
-      finalsSchedule,
+    () => (['standards', 'open'] as Division[]).reduce(
+      (acc, d) => applyScheduleStatus(acc, schedules[d], d), matches,
     ),
-    [matches, schedules, finalsSchedule],
+    [matches, schedules],
   );
 
   // ── bracket size change ──────────────────────────────────────────────────────

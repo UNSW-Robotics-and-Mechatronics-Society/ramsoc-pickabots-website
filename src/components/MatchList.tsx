@@ -4,7 +4,7 @@ import { Fragment, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { type BracketMatch, type Division, type TeamCount, findTeamTargetMatch, computeSlotDefaults, isFinalsMatch } from '@/lib/mock-data'
 import {
   type MatchSchedule, type ExhibitionSchedule, type FinalsSchedule,
-  formatTime, applyScheduleStatus, applyFinalsScheduleStatus,
+  formatTime, applyScheduleStatus,
 } from '@/lib/schedule'
 import { useTeamFilter, isMatchDimmed, isMatchSelected } from '@/lib/teamFilter'
 import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh'
@@ -89,12 +89,13 @@ export default function MatchList({ matches, teamCounts, schedules, exhibitionSc
   // exemption) so it shows exactly what the admin set.
   const divMatches = useMemo(() => {
     if (isExhibition) return matches.filter(m => m.side === 'exhibition')
-    // Finals: cross-division, with active/next derived from the one finals ring
-    // (applyFinalsScheduleStatus) rather than either division's rings.
-    if (isFinals) return applyFinalsScheduleStatus(matches, finalsSchedule).filter(isFinalsMatch)
+    // Finals: cross-division, and admin-controlled exactly like exhibition
+    // matches — all eight share one ring, so ring position can't say which is
+    // live; the admin sets each one's status by hand.
+    if (isFinals) return matches.filter(isFinalsMatch)
     const division = viewMode as Division
     return applyScheduleStatus(matches, schedules[division], division).filter(m => m.division === division)
-  }, [matches, schedules, finalsSchedule, viewMode, isExhibition, isFinals])
+  }, [matches, schedules, viewMode, isExhibition, isFinals])
   const matchById = useMemo(() => new Map(divMatches.map(m => [m.id, m])), [divMatches])
   // Feeder placeholder text for empty slots — bracket-round only; exhibition
   // matches have no feeders.

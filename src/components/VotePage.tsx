@@ -25,7 +25,14 @@ interface ModalCtx {
   compType: string
 }
 
-type CompFilter = 'standard' | 'open' | 'exhibition'
+/**
+ * 'finals' is the Finals Day card — both divisions' semis, bronze matches and
+ * finals. They share one physical ring and the admin can have any number of
+ * them open for bidding at once, so they can't be split across the division
+ * tabs the way earlier rounds are; they list together, each labelled with its
+ * division and round.
+ */
+type CompFilter = 'standard' | 'open' | 'exhibition' | 'finals'
 
 type BegBannerState = {
   begsUsed: number
@@ -50,6 +57,9 @@ export default function VotePage() {
   const [standings, setStandings] = useState<Record<string, VoteStandings>>({})
   const [selectedTeam, setSelectedTeam] = useState<{ name: string; division?: 'standards' | 'open' } | null>(null)
   const [filter, setFilter]     = useState<CompFilter>('standard')
+  // Set once the player picks a tab themselves, which stops the Finals Day
+  // auto-switch below from overriding their choice.
+  const pickedTabRef = useRef(false)
   const [begOpen, setBegOpen]   = useState(false)
   const [begState, setBegState] = useState<BegBannerState | null>(null)
 
@@ -80,6 +90,15 @@ export default function VotePage() {
   useEffect(() => { prevMatchesRef.current = matches },  [matches])
   useEffect(() => { votesRef.current = votes },          [votes])
   useEffect(() => { showWinLossRef.current = showWinLoss }, [showWinLoss])
+
+  // Finals Day opens the page on the Finals tab: the division ladders are
+  // finished by then, so landing on Standard would show nothing but TBD
+  // placeholders. The other tabs stay available — this only moves someone who
+  // hasn't chosen one yet, so switching back sticks. It can't be an initial
+  // state value: the flag arrives with the /api/user fetch, after first paint.
+  useEffect(() => {
+    if (finalsDay && !pickedTabRef.current) setFilter('finals')
+  }, [finalsDay])
 
   // Beg eligibility (remaining begs + cooldown) for the "Down bad?" banner.
   const refreshBeg = useCallback(async () => {
@@ -326,18 +345,21 @@ export default function VotePage() {
   // Every live match is biddable — no cap. The schedule makes at most one match
   // active per ring, so the count follows the ring count on its own, and the
   // rings that have no ready match yet get a "TBD" placeholder (see slotCount).
-  // Exhibition matches never mix into a division's view; they have their own tab.
+  // Exhibition matches never mix into a division's view; they have their own
+  // tab. Finals are kept out of the division tabs for the same reason — they
+  // carry their division's comp_type, but they belong to the Finals tab, which
+  // shows both divisions' together (see CompFilter).
   const activeMatches  = matches.filter(m => m.is_active && m.winner_side === null)
   const activeFiltered = filter === 'exhibition'
     ? activeMatches.filter(m => m.is_exhibition)
-    : activeMatches.filter(m => m.comp_type === filter && !m.is_exhibition)
+    : activeMatches.filter(m => m.comp_type === filter && !m.is_exhibition && !m.is_finals)
   const activeBossbots = activeMatches.filter(m => m.comp_type === 'bossbot' && !m.is_exhibition)
 
   // One slot per ring this division is running. Falls back to "just the live
   // matches" if the ring count hasn't loaded, and never drops below 1 so an
   // idle division still shows a placeholder rather than nothing at all.
   const slotCount = Math.max(
-    filter === 'exhibition' ? 0 : (ringCounts?.[filter] ?? 0),
+    filter === 'standard' || filter === 'open' ? (ringCounts?.[filter] ?? 0) : 0,
     activeFiltered.length,
     1,
   )
@@ -346,7 +368,15 @@ export default function VotePage() {
   const allNext     = matches.filter(m => !m.is_active && m.winner_side === null)
   const nextVisible = filter === 'exhibition'
     ? allNext.filter(m => m.is_exhibition)
-    : allNext.filter(m => m.comp_type === filter && !m.is_exhibition)
+    : allNext.filter(m => m.comp_type === filter && !m.is_exhibition && !m.is_finals)
+
+  // Finals Day: the whole card at once, in running order, rather than one slot
+  // per ring — all eight share a single ring, and the admin opens bidding on
+  // them individually, so there's no "the live one" to single out. Cards whose
+  // bidding is shut still show, read-only, so the crowd can see what's coming.
+  const finalsVisible = matches
+    .filter(m => m.is_finals && m.winner_side === null)
+    .sort((a, b) => (a.finals_order ?? 0) - (b.finals_order ?? 0))
 
   return (
     <>
@@ -402,12 +432,12 @@ export default function VotePage() {
           )
         })()}
 
-        {/* Standard / Open / Exhibition tab */}
+        {/* Standard / Open / Exhibition / Finals tab */}
         <div style={{ display: 'flex', gap: 6 }}>
-          {(['standard', 'open', 'exhibition'] as CompFilter[]).map(f => (
+          {(['standard', 'open', 'exhibition', 'finals'] as CompFilter[]).map(f => (
             <button
               key={f}
-              onClick={() => setFilter(f)}
+              onClick={() => { pickedTabRef.current = true; setFilter(f) }}
               style={{
                 padding: '6px 16px', borderRadius: 999, fontSize: '0.6rem', fontWeight: 900,
                 letterSpacing: 2, textTransform: 'uppercase', cursor: 'pointer',
@@ -416,7 +446,7 @@ export default function VotePage() {
                 color: filter === f ? '#FF6B00' : 'rgba(255,255,255,0.4)',
               }}
             >
-              {f === 'standard' ? 'Standard' : f === 'open' ? 'Open' : 'Exhibition'}
+              {f === 'standard' ? 'Standard' : f === 'open' ? 'Open' : f === 'exhibition' ? 'Exhibition' : 'Finals'}
             </button>
           ))}
         </div>
@@ -466,8 +496,38 @@ export default function VotePage() {
             )
         )}
 
+        {/* Finals Day: the whole card, in running order. Bidding is opened per
+            match by the admin, so an open one is a live Ring and a shut one is
+            the read-only preview card — no ring slots, no placeholders. */}
+        {!loading && !error && filter === 'finals' && (
+          finalsVisible.length > 0
+            ? finalsVisible.map(match => (
+                match.voting_open
+                  ? <Ring
+                      key={match.id}
+                      match={match}
+                      vote={votes[match.id] ?? null}
+                      standings={standings[match.id] ?? null}
+                      votingOpen={match.voting_open}
+                      onVote={side => handleVote(match.id, side, side === 'left' ? match.left_name : match.right_name, match.comp_type)}
+                      onUndo={() => handleUndo(match.id)}
+                      onTeamClick={name => handleTeamClick(name, match.comp_type)}
+                    />
+                  : <NextMatchCard
+                      key={match.id}
+                      match={match}
+                      onTeamClick={name => handleTeamClick(name, match.comp_type)}
+                    />
+              ))
+            : (
+              <div style={{ textAlign: 'center', padding: '48px 0', color: '#444', fontWeight: 900, fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: 3 }}>
+                Finals aren&apos;t set yet.
+              </div>
+            )
+        )}
+
         {/* Standard/Open: one ring per ring in the schedule, placeholders fill any empty slots */}
-        {!loading && !error && filter !== 'exhibition' && Array.from({ length: slotCount }, (_, i) => {
+        {!loading && !error && filter !== 'exhibition' && filter !== 'finals' && Array.from({ length: slotCount }, (_, i) => {
           const match = activeFiltered[i] ?? null
           return match
             ? <Ring

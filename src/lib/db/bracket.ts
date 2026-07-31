@@ -3,12 +3,12 @@ import { unstable_cache } from "next/cache";
 import supabase from "@/lib/supabase";
 import {
   type BracketMatch, type BracketSide, type Division, type MatchStatus, type TeamCount,
-  generateDoubleElimBracket, winner,
+  generateDoubleElimBracket, winner, isFinalsMatch,
 } from "@/lib/mock-data";
 import {
   type MatchSchedule, type ExhibitionSchedule, type FinalsSchedule,
   DEFAULT_MATCH_MINUTES, DEFAULT_GAP_MINUTES,
-  generateSchedule, applyScheduleStatus, applyFinalsScheduleStatus, rollSchedule,
+  generateSchedule, applyScheduleStatus, rollSchedule,
   rollExhibitionSchedule, rollFinalsSchedule, dueForNotify,
 } from "@/lib/schedule";
 import { toDbCategory, fromDbCategory } from "./division";
@@ -244,6 +244,30 @@ async function syncCompletedMatches(beforeStatusById: Map<string, MatchStatus>, 
  * Supabase dashboard — and should be swept up as stale exactly like any
  * other orphan, not silently left active forever.
  */
+/**
+ * Which bracket matches get a row on the public voting page.
+ *
+ * Ordinary bracket and exhibition matches: the one active and the one next per
+ * ring, as before — the ring position decides, and only those two are ever
+ * biddable.
+ *
+ * Finals Day matches: every one whose teams are decided, whatever its status.
+ * All eight (both divisions' semis, bronze matches and finals) share a single
+ * physical ring, so ring position would make at most one of them biddable at a
+ * time — but the point of Finals Day is that the crowd can back the whole card.
+ * Which of them actually take bids is the admin's call, one toggle per match
+ * (see the Finals tab in MatchesPanel); this only decides whether the match is
+ * ON the page at all. Undecided finals are left out: "TBD vs TBD" is nothing to
+ * bet on, and the row appears by itself as soon as the semi feeding it lands.
+ */
+function needsVotingRow(bm: BracketMatch): boolean {
+  if (isFinalsMatch(bm)) {
+    return bm.status !== "completed" && bm.status !== "skipped"
+      && !!bm.slotA.teamName && !!bm.slotB.teamName;
+  }
+  return bm.status === "active" || bm.status === "next";
+}
+
 async function reconcileVotingMatches(bracketMatchById: Map<string, BracketMatch>): Promise<void> {
   const { data: rows, error } = await supabase
     .from("matches")
@@ -258,18 +282,22 @@ async function reconcileVotingMatches(bracketMatchById: Map<string, BracketMatch
 
   for (const row of rows) {
     const bm = row.bracket_match_id ? bracketMatchById.get(row.bracket_match_id as string) : undefined;
-    if (bm?.status !== "active" && bm?.status !== "next") toDelete.push(row.id as string);
+    if (!bm || !needsVotingRow(bm)) toDelete.push(row.id as string);
   }
 
   for (const bm of bracketMatchById.values()) {
-    if (bm.status !== "active" && bm.status !== "next") continue;
+    if (!needsVotingRow(bm)) continue;
     const desired = {
       comp_type: toDbCategory(bm.division),
       is_active: bm.status === "active",
       // Active AND next matches can have voting opened — the admin can let
       // people bet on the upcoming match, not just the one currently live.
-      // Anything else (todo/completed/skipped) is always closed.
-      voting_open: (bm.status === "active" || bm.status === "next") ? (bm.votingOpen ?? false) : false,
+      // Anything else (todo/completed/skipped) is always closed. Finals are the
+      // exception: their bidding is opened per match by hand, independent of
+      // status, so whatever the admin set is what holds.
+      voting_open: isFinalsMatch(bm)
+        ? (bm.votingOpen ?? false)
+        : (bm.status === "active" || bm.status === "next") ? (bm.votingOpen ?? false) : false,
       is_exhibition: bm.side === "exhibition",
       left_name: bm.slotA.teamName || "TBD",
       right_name: bm.slotB.teamName || "TBD",
@@ -541,10 +569,10 @@ export async function saveBracketState(save: BracketSave): Promise<void> {
   for (const d of DIVISIONS) {
     effective = applyScheduleStatus(effective, fresh.schedules[d], d);
   }
-  // Finals matches are exempt from the per-division passes above (they're not in
-  // either division's rings) — their active/next comes from the one shared
-  // Finals Day ring instead, so the voting rows below cover finals day too.
-  effective = applyFinalsScheduleStatus(effective, fresh.finalsSchedule);
+  // Finals matches get no derived status at all — like exhibition matches,
+  // their status and their bidding toggle are entirely the admin's, so that the
+  // whole Finals Day card can be open for bidding at once rather than the one
+  // match the shared ring happens to have at its head (see needsVotingRow).
 
   try {
     await syncCompletedMatches(beforeStatusById, effective);

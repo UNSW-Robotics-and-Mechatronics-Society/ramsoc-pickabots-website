@@ -5,7 +5,7 @@ import {
   type BracketMatch, type Division,
   type MatchStatus, type Team, type TeamCount,
   wbRoundsFor, lbRoundsFor,
-  winner, applyStatusChange, isTeamSwapOnly, wildcardLbRound, computeSlotDefaults,
+  winner, applyStatusChange, isTeamSwapOnly, wildcardLbRound, computeSlotDefaults, isFinalsMatch,
 } from "@/lib/mock-data";
 import {
   type MatchSchedule,
@@ -138,7 +138,7 @@ function MatchCard({
         dimmed          && "opacity-30 grayscale-70",
       )}
     >
-      {(order !== undefined || match.status === 'active' || match.status === 'next') && (
+      {(order !== undefined || match.status === 'active' || match.status === 'next' || isFinalsMatch(match)) && (
         <div className="absolute right-1 top-1 z-20 flex items-center gap-1">
           {/* Play order — where this match sits in the running order. Subtle
               tint (orange for Standards, green for Open) so it's not obtrusive. */}
@@ -155,7 +155,9 @@ function MatchCard({
               {order}
             </span>
           )}
-          {(match.status === 'active' || match.status === 'next') && (
+          {/* Finals always get the toggle — same rule as the Finals tab in
+              MatchesPanel, so a finals card behaves the same in both editors. */}
+          {(match.status === 'active' || match.status === 'next' || isFinalsMatch(match)) && (
             <VotingToggle
               open={match.votingOpen}
               onToggle={() => onChange({ ...match, votingOpen: !match.votingOpen })}

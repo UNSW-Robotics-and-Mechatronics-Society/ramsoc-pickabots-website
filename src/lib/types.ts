@@ -22,6 +22,16 @@ export interface Match {
   // from elimination. Drives the halo over its robot on the bidding screen.
   left_wildcard?: boolean
   right_wildcard?: boolean
+  // Set by /api/matches from the bracket match's side — a Finals Day match.
+  // These get their own tab rather than mixing into Standard/Open: all eight
+  // (both divisions' semis, bronze matches and finals) run on one ring and can
+  // be open for bidding together, so they're shown as one card list, each
+  // labelled with its division and round.
+  is_finals?: boolean
+  /** "Semi 1" / "Bronze" / "Final" — finals rows only. */
+  finals_label?: string
+  /** Position in the Finals Day running order — finals rows only, for sorting. */
+  finals_order?: number
 }
 
 export interface Vote {
