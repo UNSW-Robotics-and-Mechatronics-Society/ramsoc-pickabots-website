@@ -4,6 +4,7 @@ import supabase from "@/lib/supabase";
 import { getBracketState } from "./bracket";
 import { fromDbCategory } from "./division";
 import { getVoteStatsByName, roundLabel } from "./teamLedger";
+import { getTeamStatusOverrides } from "./config";
 import { type BracketMatch, type Division, winner, stageRank, wildcardLbRound, wildcardTeamNames } from "@/lib/mock-data";
 import type { TeamLeaderboardEntry, TeamStatusKind } from "@/lib/types";
 
@@ -26,10 +27,13 @@ type EntryInput = {
   // stageRank of the round the wildcard feeds — a loss at or after it means the
   // second life is over and the team goes back to the knocked-out list.
   wildcardRank: number;
+  // Admin override (see getTeamStatusOverrides): true = eliminated, false =
+  // still in, null/undefined = derive from the bracket as usual.
+  override: boolean | null;
 };
 
 function buildEntry({
-  id, name, kind, division, category, tokens, votes, teamMatches, wildcard, wildcardRank,
+  id, name, kind, division, category, tokens, votes, teamMatches, wildcard, wildcardRank, override,
 }: EntryInput): TeamLeaderboardEntry {
   let wins = 0;
   let losses = 0;
@@ -104,20 +108,41 @@ function buildEntry({
     statusLabel = "Winners";
   }
 
+  // An admin override wins over everything derived above. Applied last, not as
+  // another branch, so it can keep the derived label where that label is still
+  // the truthful one: a team knocked out by hand because its eliminating loss
+  // was never recorded has no round to name, but one being forced out that the
+  // bracket already knocked out keeps its real round.
+  if (override === true) {
+    if (status !== "knocked-out") statusLabel = "Eliminated";
+    status = "knocked-out";
+  } else if (override === false && (status === "knocked-out" || status === "unentered")) {
+    // Forced back in. "Still In" rather than a bracket round, because the whole
+    // reason for the override is that the bracket can't say where they are.
+    status = "winners";
+    statusLabel = "Still In";
+  }
+
   return {
     id, name, kind, division, category, tokens, votes, wins, losses, winRate,
     status, statusLabel,
     eliminated: status === "knocked-out",
+    forcedAlive: override === false,
   };
 }
 
 async function computeTeamsLeaderboard(): Promise<TeamLeaderboardEntry[]> {
-  const [{ data: teamRows, error: tErr }, { data: specialRows, error: sErr }, statsByName, { matches, teamCounts }] =
-    await Promise.all([
+  const [
+    { data: teamRows, error: tErr }, { data: specialRows, error: sErr },
+    statsByName, { matches, teamCounts }, overrides,
+  ] = await Promise.all([
       supabase.from("teams").select("id, name, category"),
       supabase.from("special_teams").select("id, name, category"),
       getVoteStatsByName(),
       getBracketState(),
+      // Keyed by the teams/special_teams row id, NOT by the composite entry id
+      // below — the override has to survive a team being renamed.
+      getTeamStatusOverrides(),
     ]);
   if (tErr) throw new Error(`Failed to load teams: ${tErr.message}`);
   if (sErr) throw new Error(`Failed to load special teams: ${sErr.message}`);
@@ -157,6 +182,7 @@ async function computeTeamsLeaderboard(): Promise<TeamLeaderboardEntry[]> {
         m.division === division && (m.slotA.teamName === name || m.slotB.teamName === name)),
       wildcard: wildcardByDivision.get(division)?.has(name) ?? false,
       wildcardRank: wildcardRankByDivision.get(division) ?? Infinity,
+      override: overrides[t.id as string] ?? null,
     }));
   }
 
@@ -177,6 +203,7 @@ async function computeTeamsLeaderboard(): Promise<TeamLeaderboardEntry[]> {
       // Never in a bracket, so there's no wildcard round for them to be knocked
       // out after — Infinity leaves their status untouched by that rule.
       wildcardRank: Infinity,
+      override: overrides[t.id as string] ?? null,
     }));
   }
 
@@ -188,8 +215,14 @@ async function computeTeamsLeaderboard(): Promise<TeamLeaderboardEntry[]> {
   //      below even the knocked-out tail until their first vote lands, which
   //      promotes them into tier 1 or 2 on the next refresh.
   // Within every tier: most coins first, then alphabetical.
+  //
+  // A team an admin has marked still-in is exempt from tier 3 even on 0 votes:
+  // "they're still playing" is a stronger statement than "nobody has bet on
+  // them", and burying a live finalist under the un-voted-on tail reads as a bug.
+  // Keep this in step with TeamBoard's tierOf.
+  const unvoted = (e: TeamLeaderboardEntry) => e.votes === 0 && !e.forcedAlive;
   entries.sort((a, b) =>
-    Number(a.votes === 0) - Number(b.votes === 0) ||
+    Number(unvoted(a)) - Number(unvoted(b)) ||
     Number(a.eliminated) - Number(b.eliminated) ||
     b.tokens - a.tokens ||
     a.name.localeCompare(b.name));

@@ -12,6 +12,7 @@ const AUTO_SMS_KEY = "auto_sms_enabled";
 const SMS_SENDER_MODE_KEY = "sms_sender_mode";
 const SMS_SENDER_NUMBER_KEY = "sms_sender_number";
 const FINALS_DAY_KEY = "finals_day";
+const TEAM_STATUS_OVERRIDE_KEY = "team_status_overrides";
 
 /** Default: text captains when their team is this many matches from playing. */
 export const DEFAULT_NOTIFY_LEAD = 2;
@@ -170,4 +171,42 @@ export async function getSmsSenderNumber(): Promise<string> {
 
 export async function setSmsSenderNumber(value: string): Promise<void> {
   await setConfig(SMS_SENDER_NUMBER_KEY, value.trim());
+}
+
+/**
+ * Manual "is this team still in it?" overrides for the public teams leaderboard,
+ * keyed by `teams.id` → `true` = force eliminated, `false` = force still in.
+ * A team with no entry is untouched: its status stays derived from the bracket
+ * (see computeTeamsLeaderboard), which is the normal case.
+ *
+ * The escape hatch for a bracket whose recorded results can't support the
+ * derived two-loss rule — an unrecorded loss leaves a team reading as alive, a
+ * bogus one knocks out a team that's still playing. Stored here as one JSON blob
+ * rather than a column on pickabots_team_state purely because this table needs
+ * no migration; the shape is per-team so it can be lifted into a real column
+ * (and an admin toggle) later without changing the meaning.
+ */
+export type TeamStatusOverrides = Record<string, boolean>;
+
+export async function getTeamStatusOverrides(): Promise<TeamStatusOverrides> {
+  try {
+    const raw = await getConfig(TEAM_STATUS_OVERRIDE_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    // Keep only the boolean entries, so a hand-edited blob with junk in it
+    // degrades to "no override" per team instead of breaking the whole board.
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).filter(([, v]) => typeof v === "boolean"),
+    ) as TeamStatusOverrides;
+  } catch (err) {
+    // Never let a bad blob take down the leaderboard — fall back to the
+    // bracket-derived statuses.
+    console.error("[config] getTeamStatusOverrides failed, ignoring overrides:", err);
+    return {};
+  }
+}
+
+export async function setTeamStatusOverrides(value: TeamStatusOverrides): Promise<void> {
+  await setConfig(TEAM_STATUS_OVERRIDE_KEY, JSON.stringify(value));
 }

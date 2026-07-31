@@ -115,4 +115,8 @@ export interface TeamLeaderboardEntry {
   status: TeamStatusKind
   statusLabel: string
   eliminated: boolean                   // knocked out → greyed, sunk to the bottom
+  // An admin has marked this team still-in by hand (see getTeamStatusOverrides).
+  // Such a team ranks in the main list even on 0 votes — an explicit "they're
+  // still playing" outranks the "nobody has voted yet" tail.
+  forcedAlive: boolean
 }

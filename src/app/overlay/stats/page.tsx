@@ -104,7 +104,7 @@ export default async function StatsOverlay({ searchParams }: Props) {
               // Greyed on the same rule as the public board: knocked out, or
               // nobody has voted on them yet (those sort to the very bottom, so
               // they only reach this top-N slice on a quiet board).
-              const greyed = t.eliminated || t.votes === 0;
+              const greyed = t.eliminated || (t.votes === 0 && !t.forcedAlive);
               return (
                 <div key={t.id} style={{
                   display: "flex", alignItems: "center", gap: 14,
