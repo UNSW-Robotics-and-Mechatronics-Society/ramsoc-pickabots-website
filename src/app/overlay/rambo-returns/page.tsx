@@ -1,18 +1,23 @@
 import { GOLD, FONT_DISPLAY, FONT_BODY } from "@/components/obs/overlayTheme";
 import DoomsdayCountdown from "@/components/obs/DoomsdayCountdown";
+import DoomsdaySting from "@/components/obs/DoomsdaySting";
+import TitleBackground from "@/components/obs/TitleBackground";
 
 /**
- * Joke "will return" closing-credits card — full black screen, text fades
- * in staggered (Bond-style "James Bond will return"). Static, no data.
+ * Joke "will return" closing-credits card — animated shader-gradient
+ * background (same as the title card), text fades in staggered (Bond-style
+ * "James Bond will return"), original synthesized sting. Static data.
  *   /overlay/rambo-returns
  */
 export default function RamboReturnsOverlay() {
   return (
     <div style={{
-      position: "fixed", inset: 0, background: "#000",
+      position: "fixed", inset: 0,
       display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
       gap: "3vh", fontFamily: FONT_BODY,
     }}>
+      <TitleBackground />
+      <DoomsdaySting />
       <style>{`
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         .fade-1 { opacity: 0; animation: fadeIn 2s ease-out 0.5s forwards; }
