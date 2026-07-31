@@ -1,14 +1,15 @@
 import { getBracketState } from "@/lib/db/bracket";
 import { getWagerTotals } from "@/lib/db/overlayOdds";
-import { countsTowardTotals, estimatedFinishMinute, formatFinishTime } from "@/lib/schedule";
+import { isFinalsMatch } from "@/lib/mock-data";
 import OverlayRefresh from "@/components/obs/OverlayRefresh";
+import RamCoin from "@/components/RamCoin";
 import { GOLD, PLATE_BG, PLATE_BORDER, FONT_DISPLAY, FONT_BODY } from "@/components/obs/overlayTheme";
 
 export const dynamic = "force-dynamic";
 
 type Props = { searchParams: Promise<{ side?: string }> };
 
-type Kpi = { label: string; value: string; sub?: string; accent?: boolean };
+type Kpi = { label: string; value: React.ReactNode; sub?: string; accent?: boolean };
 
 /**
  * KPI side banner — day-at-a-glance numbers stacked down one edge, designed
@@ -17,9 +18,10 @@ type Kpi = { label: string; value: string; sub?: string; accent?: boolean };
  *   /overlay/kpi              (right edge)
  *   /overlay/kpi?side=left
  *
- * Matches played/remaining, estimated finish (last scheduled slot + one
- * match length), coins wagered and bettor count. Transparent like the other
- * overlays; hides itself entirely if the bracket is empty.
+ * Matches played/remaining (Finals Day matches only — the division prelim
+ * rounds are long done by the time this ships), coins wagered and bettor
+ * count. Transparent like the other overlays; hides itself entirely if
+ * there are no finals matches.
  */
 export default async function KpiOverlay({ searchParams }: Props) {
   const params = await searchParams;
@@ -27,31 +29,26 @@ export default async function KpiOverlay({ searchParams }: Props) {
 
   const [bracket, wagers] = await Promise.all([getBracketState(), getWagerTotals()]);
 
-  // One definition of "a match", shared with the admin KPI bar and
-  // /overlay/stats — see countsTowardTotals.
-  const countable = bracket.matches.filter(countsTowardTotals);
-  const played = countable.filter(m => m.status === "completed").length;
-  const remaining = countable.length - played;
+  // Finals Day: only the semis/bronze/final matches are still live — the
+  // division prelim rounds this also-counted before are done, and including
+  // them made "matches today" report a stale total.
+  const finalsMatches = bracket.matches.filter(isFinalsMatch);
+  const played = finalsMatches.filter(m => m.status === "completed").length;
+  const remaining = finalsMatches.length - played;
 
-  // Estimated finish: the latest slot still to be played across every ring —
-  // both divisions, the exhibition rings and Finals Day — plus one match
-  // length. Rolls forward live as the admin's schedule rolls, so it
-  // self-corrects when the day slips. Shares one implementation with the admin
-  // KPI bar (see estimatedFinishMinute); the two used to compute it separately
-  // and could disagree.
-  const finishMinute = estimatedFinishMinute(
-    [...Object.values(bracket.schedules), bracket.exhibitionSchedule, bracket.finalsSchedule],
-    bracket.matches,
-  );
-  const estFinish = finishMinute === null ? null : formatFinishTime(finishMinute);
-
-  if (countable.length === 0) return null;
+  if (finalsMatches.length === 0) return null;
 
   const kpis: Kpi[] = [
-    { label: "Matches today", value: `${played}`, sub: `of ${countable.length}` },
+    { label: "Matches today", value: `${played}`, sub: `of ${finalsMatches.length}` },
     { label: "Still to play", value: `${remaining}` },
-    ...(estFinish ? [{ label: "Est. finish", value: estFinish, accent: true }] : []),
-    { label: "Coins wagered", value: `${wagers.totalWagered.toLocaleString()} ⛁`, accent: true },
+    {
+      label: "Coins wagered", accent: true,
+      value: (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          {wagers.totalWagered.toLocaleString()} <RamCoin size={20} />
+        </span>
+      ),
+    },
     { label: "Players voting", value: `${wagers.bettors}` },
   ];
 
