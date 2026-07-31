@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth, currentUser } from '@clerk/nextjs/server'
 import supabase from '@/lib/supabase'
-import { getAllIn } from '@/lib/db/config'
+import { getAllIn, getFinalsDay } from '@/lib/db/config'
 
 export async function GET() {
   const { userId } = await auth()
@@ -10,6 +10,9 @@ export async function GET() {
   // ALL IN mode (admin toggle) lifts the 50%-of-balance vote cap. The client
   // uses this to size the vote slider; place_vote enforces it authoritatively.
   const allIn = await getAllIn()
+  // Finals Day (admin toggle) — the voting page is client-only, so it reads the
+  // flag here rather than via a server component like the other public pages.
+  const finalsDay = await getFinalsDay()
 
   // Try to fetch existing user (limit(1) tolerates duplicate rows)
   const { data: userRows, error: selectErr } = await supabase
@@ -18,7 +21,7 @@ export async function GET() {
 
   if (selectErr) {
     console.error('[GET /api/user] select failed:', selectErr)
-    return NextResponse.json({ tokens: 100, allIn, _supabaseError: selectErr.message })
+    return NextResponse.json({ tokens: 100, allIn, finalsDay, _supabaseError: selectErr.message })
   }
 
   if (!user) {
@@ -36,12 +39,12 @@ export async function GET() {
     }
     if (insertErr) {
       console.error('[GET /api/user] insert failed:', insertErr)
-      return NextResponse.json({ tokens: 100, allIn, _supabaseError: insertErr.message })
+      return NextResponse.json({ tokens: 100, allIn, finalsDay, _supabaseError: insertErr.message })
     }
-    return NextResponse.json({ tokens: 100, allIn })
+    return NextResponse.json({ tokens: 100, allIn, finalsDay })
   }
 
-  return NextResponse.json({ tokens: user.tokens, allIn })
+  return NextResponse.json({ tokens: user.tokens, allIn, finalsDay })
 }
 
 export async function PATCH(req: NextRequest) {

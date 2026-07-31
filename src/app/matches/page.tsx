@@ -1,12 +1,23 @@
 import { getBracketState } from '@/lib/db/bracket'
+import { getFinalsDay } from '@/lib/db/config'
 import MatchList from '@/components/MatchList'
 
 export const dynamic = 'force-dynamic'
 
 export default async function MatchesPage() {
-  const { matches, teamCounts, schedules, exhibitionSchedule } = await getBracketState()
+  const [{ matches, teamCounts, schedules, exhibitionSchedule, finalsSchedule }, finalsDay] =
+    await Promise.all([getBracketState(), getFinalsDay()])
   // Live updates are driven from inside MatchList via useRealtimeRefresh
   // (subscribed to the bracket tables). getBracketState is cached and
   // invalidated on save.
-  return <MatchList matches={matches} teamCounts={teamCounts} schedules={schedules} exhibitionSchedule={exhibitionSchedule} />
+  return (
+    <MatchList
+      matches={matches}
+      teamCounts={teamCounts}
+      schedules={schedules}
+      exhibitionSchedule={exhibitionSchedule}
+      finalsSchedule={finalsSchedule}
+      finalsDay={finalsDay}
+    />
+  )
 }

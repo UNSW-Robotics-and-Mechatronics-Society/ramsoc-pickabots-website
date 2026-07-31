@@ -13,14 +13,17 @@ export const STATUS_LABEL: Record<BracketMatch['status'], string> = {
   todo: '· · ·', next: 'NEXT', active: '● LIVE', completed: '✓ DONE', skipped: 'SKIP',
 }
 // active = green (in progress), completed = grey (done, faded out), skipped
-// = red, next = yellow (on deck), todo = neutral/dim (not yet reached).
+// = LIGHT red (never played — it holds a place in the tree but no result will
+// ever land in it), next = yellow (on deck), todo = neutral/dim (not yet
+// reached). The light tone is deliberate: a saturated red read as an alert on a
+// match that simply isn't happening.
 export const STATUS_COLOR: Record<BracketMatch['status'], string> = {
   todo: 'rgba(255,255,255,0.25)', next: '#FFD700', active: '#4ADE80',
-  completed: 'rgba(255,255,255,0.4)', skipped: 'rgba(255,80,80,0.7)',
+  completed: 'rgba(255,255,255,0.4)', skipped: 'rgba(252,165,165,0.9)',
 }
 export const STATUS_BORDER: Record<BracketMatch['status'], string> = {
   todo: 'rgba(255,255,255,0.14)', next: 'rgba(255,215,0,0.5)', active: 'rgba(74,222,128,0.7)',
-  completed: 'rgba(255,255,255,0.16)', skipped: 'rgba(255,80,80,0.6)',
+  completed: 'rgba(255,255,255,0.16)', skipped: 'rgba(252,165,165,0.55)',
 }
 
 export const GRAIN = `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)' opacity='1'/%3E%3C/svg%3E")`

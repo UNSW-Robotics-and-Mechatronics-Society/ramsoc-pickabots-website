@@ -14,6 +14,8 @@ import {
   setSmsSenderMode,
   getSmsSenderNumber,
   setSmsSenderNumber,
+  getFinalsDay,
+  setFinalsDay,
 } from "@/lib/db/config";
 import { DEFAULT_SMS_UP_NEXT } from "@/lib/sms-template";
 
@@ -22,7 +24,7 @@ export async function GET() {
   const user = await currentUser();
   if (!isAdminUser(user)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   try {
-    const [smsUpNextTemplate, smsNotifyLead, allIn, autoSmsEnabled, smsSenderMode, smsSenderNumber] =
+    const [smsUpNextTemplate, smsNotifyLead, allIn, autoSmsEnabled, smsSenderMode, smsSenderNumber, finalsDay] =
       await Promise.all([
         getSmsUpNextTemplate(),
         getNotifyLead(),
@@ -30,6 +32,7 @@ export async function GET() {
         getAutoSmsEnabled(),
         getSmsSenderMode(),
         getSmsSenderNumber(),
+        getFinalsDay(),
       ]);
     return NextResponse.json({
       smsUpNextTemplate,
@@ -39,6 +42,7 @@ export async function GET() {
       autoSmsEnabled,
       smsSenderMode,
       smsSenderNumber,
+      finalsDay,
     });
   } catch (err) {
     return NextResponse.json(
@@ -62,11 +66,12 @@ export async function PUT(req: NextRequest) {
   const hasAutoSms = typeof body?.autoSmsEnabled === "boolean";
   const hasSenderMode = body?.smsSenderMode === "senderid" || body?.smsSenderMode === "number";
   const hasSenderNumber = typeof body?.smsSenderNumber === "string";
-  if (!hasTemplate && !hasLead && !hasAllIn && !hasAutoSms && !hasSenderMode && !hasSenderNumber) {
+  const hasFinalsDay = typeof body?.finalsDay === "boolean";
+  if (!hasTemplate && !hasLead && !hasAllIn && !hasAutoSms && !hasSenderMode && !hasSenderNumber && !hasFinalsDay) {
     return NextResponse.json(
       {
         error:
-          "provide smsUpNextTemplate (string), smsNotifyLead (number), allIn (boolean), autoSmsEnabled (boolean), smsSenderMode (\"senderid\" | \"number\"), and/or smsSenderNumber (string)",
+          "provide smsUpNextTemplate (string), smsNotifyLead (number), allIn (boolean), autoSmsEnabled (boolean), smsSenderMode (\"senderid\" | \"number\"), smsSenderNumber (string), and/or finalsDay (boolean)",
       },
       { status: 400 },
     );
@@ -82,8 +87,9 @@ export async function PUT(req: NextRequest) {
     if (hasAutoSms) await setAutoSmsEnabled(body.autoSmsEnabled);
     if (hasSenderMode) await setSmsSenderMode(body.smsSenderMode);
     if (hasSenderNumber) await setSmsSenderNumber(body.smsSenderNumber);
+    if (hasFinalsDay) await setFinalsDay(body.finalsDay);
 
-    const [smsUpNextTemplate, smsNotifyLead, allIn, autoSmsEnabled, smsSenderMode, smsSenderNumber] =
+    const [smsUpNextTemplate, smsNotifyLead, allIn, autoSmsEnabled, smsSenderMode, smsSenderNumber, finalsDay] =
       await Promise.all([
         getSmsUpNextTemplate(),
         getNotifyLead(),
@@ -91,6 +97,7 @@ export async function PUT(req: NextRequest) {
         getAutoSmsEnabled(),
         getSmsSenderMode(),
         getSmsSenderNumber(),
+        getFinalsDay(),
       ]);
     return NextResponse.json({
       ok: true,
@@ -100,6 +107,7 @@ export async function PUT(req: NextRequest) {
       autoSmsEnabled,
       smsSenderMode,
       smsSenderNumber,
+      finalsDay,
     });
   } catch (err) {
     return NextResponse.json(

@@ -1,14 +1,18 @@
 'use client'
 
 import { Fragment, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { type BracketMatch, type Division, type TeamCount, findTeamTargetMatch, computeSlotDefaults } from '@/lib/mock-data'
-import { type MatchSchedule, type ExhibitionSchedule, formatTime, applyScheduleStatus } from '@/lib/schedule'
+import { type BracketMatch, type Division, type TeamCount, findTeamTargetMatch, computeSlotDefaults, isFinalsMatch } from '@/lib/mock-data'
+import {
+  type MatchSchedule, type ExhibitionSchedule, type FinalsSchedule,
+  formatTime, applyScheduleStatus, applyFinalsScheduleStatus,
+} from '@/lib/schedule'
 import { useTeamFilter, isMatchDimmed, isMatchSelected } from '@/lib/teamFilter'
 import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh'
 import { MATCH_H, ROUND_W, MatchCard } from './BracketMatchCard'
 import BracketZoomPan, { type BracketZoomPanHandle } from './BracketZoomPan'
 import TeamFilterBar from './TeamFilterBar'
 import TeamLedgerModal from './TeamLedgerModal'
+import FinalsDayBanner from './FinalsDayBanner'
 
 // Table geometry. Every ring is a TIME_W time column followed by a fixed-size
 // card column (one axis per ring, as in the admin panel) — the table is
@@ -35,7 +39,13 @@ function pillStyle(active: boolean): CSSProperties {
   }
 }
 
-type ViewMode = Division | 'exhibition'
+/**
+ * 'finals' is the shared Finals Day ring (both divisions' semis, bronze medals
+ * and finals on one ring — see FinalsSchedule). While the Finals Day setting is
+ * on it replaces the two division ladders and only Exhibition stays alongside
+ * it; the division views are for the earlier rounds, which are over by then.
+ */
+type ViewMode = Division | 'exhibition' | 'finals'
 
 type Props = {
   matches: BracketMatch[]
@@ -45,11 +55,20 @@ type Props = {
   // Shared across both divisions — not one copy per division. See
   // ExhibitionSchedule.
   exhibitionSchedule: ExhibitionSchedule
+  /** The single Finals Day ring — also shared across divisions. */
+  finalsSchedule: FinalsSchedule
+  /** Finals Day setting (see getFinalsDay). */
+  finalsDay?: boolean
 }
 
-export default function MatchList({ matches, teamCounts, schedules, exhibitionSchedule }: Props) {
+export default function MatchList({ matches, teamCounts, schedules, exhibitionSchedule, finalsSchedule, finalsDay = false }: Props) {
   useRealtimeRefresh(['bracket_matches', 'bracket_config', 'bracket_schedule'])
-  const [viewMode, setViewMode] = useState<ViewMode>('standards')
+  const [viewMode, setViewMode] = useState<ViewMode>(finalsDay ? 'finals' : 'standards')
+  // Finals Day narrows the tabs to the finals ring plus Exhibition; otherwise
+  // it's the usual two divisions plus Exhibition.
+  const VIEW_TABS: ViewMode[] = finalsDay
+    ? ['finals', 'exhibition']
+    : ['standards', 'open', 'exhibition']
   // Finished matches are hidden by default so the list opens on what's still
   // to come — the toggle brings the day's history back. Off = hidden, matching
   // the pill convention used by every other control in this header (lit = the
@@ -60,6 +79,7 @@ export default function MatchList({ matches, teamCounts, schedules, exhibitionSc
   const zoomPanRef = useRef<BracketZoomPanHandle>(null)
 
   const isExhibition = viewMode === 'exhibition'
+  const isFinals     = viewMode === 'finals'
 
   // Bracket-round view: ring-capped statuses (see applyScheduleStatus) — at
   // most one active + one next per ring, matching the bracket and admin
@@ -69,17 +89,27 @@ export default function MatchList({ matches, teamCounts, schedules, exhibitionSc
   // exemption) so it shows exactly what the admin set.
   const divMatches = useMemo(() => {
     if (isExhibition) return matches.filter(m => m.side === 'exhibition')
+    // Finals: cross-division, with active/next derived from the one finals ring
+    // (applyFinalsScheduleStatus) rather than either division's rings.
+    if (isFinals) return applyFinalsScheduleStatus(matches, finalsSchedule).filter(isFinalsMatch)
     const division = viewMode as Division
     return applyScheduleStatus(matches, schedules[division], division).filter(m => m.division === division)
-  }, [matches, schedules, viewMode, isExhibition])
+  }, [matches, schedules, finalsSchedule, viewMode, isExhibition, isFinals])
   const matchById = useMemo(() => new Map(divMatches.map(m => [m.id, m])), [divMatches])
   // Feeder placeholder text for empty slots — bracket-round only; exhibition
   // matches have no feeders.
   const slotDefaults = useMemo(
     () => isExhibition
       ? new Map<string, { a?: string; b?: string }>()
+      // Finals shows both divisions at once, so both divisions' feeder labels
+      // are merged — a per-division call would blank the other one's semis.
+      : isFinals
+      ? new Map([
+          ...computeSlotDefaults(matches, 'standards', teamCounts.standards),
+          ...computeSlotDefaults(matches, 'open', teamCounts.open),
+        ])
       : computeSlotDefaults(matches, viewMode as Division, teamCounts[viewMode as Division]),
-    [matches, teamCounts, viewMode, isExhibition],
+    [matches, teamCounts, viewMode, isExhibition, isFinals],
   )
 
   // Bracket view: this division's rings only, never exhibition ones (those
@@ -87,6 +117,9 @@ export default function MatchList({ matches, teamCounts, schedules, exhibitionSc
   // view: the single shared exhibition ring set.
   const allRingCols = isExhibition
     ? exhibitionSchedule.rings.map((ring, i) => ({ ring, label: `Exhibition ${i + 1}` }))
+    : isFinals
+    // Always exactly one ring on finals day.
+    ? finalsSchedule.rings.map(ring => ({ ring, label: 'Finals Day' }))
     : schedules[viewMode as Division].rings.map((ring, i) => ({ ring, label: `Ring ${i + 1}` }))
 
   // "Prev Matches" off (the default) drops finished matches from each ring's
@@ -213,11 +246,13 @@ export default function MatchList({ matches, teamCounts, schedules, exhibitionSc
           MATCH LIST
         </div>
 
+        {finalsDay && <FinalsDayBanner />}
+
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            {(['standards', 'open', 'exhibition'] as ViewMode[]).map(v => (
+            {VIEW_TABS.map(v => (
               <button key={v} onClick={() => setViewMode(v)} style={pillStyle(viewMode === v)}>
-                {v === 'standards' ? 'Standard' : v === 'open' ? 'Open' : 'Exhibition'}
+                {v === 'standards' ? 'Standard' : v === 'open' ? 'Open' : v === 'finals' ? 'Finals Day' : 'Exhibition'}
               </button>
             ))}
 
@@ -283,7 +318,7 @@ export default function MatchList({ matches, teamCounts, schedules, exhibitionSc
       </div>
 
       <TeamLedgerModal
-        target={selectedTeam ? { name: selectedTeam, division: isExhibition ? undefined : (viewMode as Division) } : null}
+        target={selectedTeam ? { name: selectedTeam, division: (isExhibition || isFinals) ? undefined : (viewMode as Division) } : null}
         onClose={() => setSelectedTeam(null)}
       />
     </div>

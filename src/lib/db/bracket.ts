@@ -6,9 +6,10 @@ import {
   generateDoubleElimBracket, winner,
 } from "@/lib/mock-data";
 import {
-  type MatchSchedule, type ExhibitionSchedule,
+  type MatchSchedule, type ExhibitionSchedule, type FinalsSchedule,
   DEFAULT_MATCH_MINUTES, DEFAULT_GAP_MINUTES,
-  generateSchedule, applyScheduleStatus, rollSchedule, rollExhibitionSchedule, dueForNotify,
+  generateSchedule, applyScheduleStatus, applyFinalsScheduleStatus, rollSchedule,
+  rollExhibitionSchedule, rollFinalsSchedule, dueForNotify,
 } from "@/lib/schedule";
 import { toDbCategory, fromDbCategory } from "./division";
 import { rewardWinners } from "./rewards";
@@ -79,6 +80,9 @@ export type BracketState = {
   // Shared across both divisions — not one copy per division. See
   // ExhibitionSchedule.
   exhibitionSchedule: ExhibitionSchedule;
+  // The single Finals Day ring, also shared across both divisions. See
+  // FinalsSchedule.
+  finalsSchedule: FinalsSchedule;
 };
 
 // The exhibition schedule has no dedicated table — it's persisted by
@@ -87,6 +91,11 @@ export type BracketState = {
 type StoredSchedule = {
   exhibition?: ExhibitionSchedule;
   exhibitionRings?: ExhibitionSchedule["rings"];
+  // Same mirrored-on-both-rows trick as `exhibition` above. Absent on every row
+  // written before Finals Day existed, which reads as an empty ring — and
+  // rollFinalsSchedule fills it from finalsRunningOrder on the first read, so no
+  // backfill or migration is needed.
+  finals?: FinalsSchedule;
 };
 
 function extractExhibitionSchedule(scheduleRows: { schedule: unknown }[]): ExhibitionSchedule {
@@ -104,6 +113,18 @@ function extractExhibitionSchedule(scheduleRows: { schedule: unknown }[]): Exhib
   // model (the very first save after this rewrites it into the new shape).
   const legacyRingLists = raw.map(r => r.exhibitionRings).filter((r): r is ExhibitionSchedule["rings"] => !!r);
   return { rings: legacyRingLists.flat(), matchMinutes: DEFAULT_MATCH_MINUTES, gapMinutes: DEFAULT_GAP_MINUTES };
+}
+
+/**
+ * The shared Finals Day ring, read from whichever row has it (identical copies
+ * live on both — see StoredSchedule). Falls back to one empty ring, which
+ * rollFinalsSchedule then populates from the fixed running order, so a bracket
+ * that predates Finals Day gets a correct ring on its very first read.
+ */
+function extractFinalsSchedule(scheduleRows: { schedule: unknown }[]): FinalsSchedule {
+  const stored = scheduleRows.map(r => r.schedule as StoredSchedule).find(r => r.finals)?.finals;
+  if (stored) return stored;
+  return { rings: [[]], matchMinutes: DEFAULT_MATCH_MINUTES, gapMinutes: DEFAULT_GAP_MINUTES };
 }
 
 async function computeBracketState(): Promise<BracketState> {
@@ -146,8 +167,9 @@ async function computeBracketState(): Promise<BracketState> {
   }
 
   const exhibitionSchedule = rollExhibitionSchedule(extractExhibitionSchedule(scheduleRows ?? []), matches);
+  const finalsSchedule = rollFinalsSchedule(extractFinalsSchedule(scheduleRows ?? []), matches);
 
-  return { matches, teamCounts, schedules, exhibitionSchedule };
+  return { matches, teamCounts, schedules, exhibitionSchedule, finalsSchedule };
 }
 
 // Public reads — the competition/matches pages and the team-ledger modal — go
@@ -361,6 +383,9 @@ export type BracketSave = {
   /** Both divisions at once — a schedule is one JSON blob per division. */
   schedules?: Record<Division, MatchSchedule>;
   exhibitionSchedule?: ExhibitionSchedule;
+  /** The shared Finals Day ring. Omitted on a partial save — see the fallback
+   *  read in saveBracketState, which keeps whatever is already stored. */
+  finalsSchedule?: FinalsSchedule;
   /**
    * Divisions whose per-match captain_notified flags should be reset. Sent by
    * auto-fill and reset-all: the flag dedupes the "up next" SMS per match, so
@@ -465,9 +490,11 @@ export async function saveBracketState(save: BracketSave): Promise<void> {
     // A caller that sends schedules without the exhibition copy would blank it,
     // so fall back to whatever is already stored rather than writing undefined.
     let exhibitionSchedule = save.exhibitionSchedule;
-    if (!exhibitionSchedule) {
+    let finalsSchedule = save.finalsSchedule;
+    if (!exhibitionSchedule || !finalsSchedule) {
       const { data: scheduleRows } = await supabase.from("bracket_schedule").select("schedule");
-      exhibitionSchedule = extractExhibitionSchedule(scheduleRows ?? []);
+      exhibitionSchedule = exhibitionSchedule ?? extractExhibitionSchedule(scheduleRows ?? []);
+      finalsSchedule = finalsSchedule ?? extractFinalsSchedule(scheduleRows ?? []);
     }
 
     const { error: schedErr } = await supabase
@@ -484,6 +511,8 @@ export async function saveBracketState(save: BracketSave): Promise<void> {
             // re-derive the play order from the default (middle-first) ordering.
             autoFillMode: schedules[d].autoFillMode ?? 'worst-plays-best',
             exhibition: exhibitionSchedule,
+            // Mirrored onto both rows, same as `exhibition` — see StoredSchedule.
+            finals: finalsSchedule,
           },
           updated_at: new Date().toISOString(),
         })),
@@ -512,6 +541,10 @@ export async function saveBracketState(save: BracketSave): Promise<void> {
   for (const d of DIVISIONS) {
     effective = applyScheduleStatus(effective, fresh.schedules[d], d);
   }
+  // Finals matches are exempt from the per-division passes above (they're not in
+  // either division's rings) — their active/next comes from the one shared
+  // Finals Day ring instead, so the voting rows below cover finals day too.
+  effective = applyFinalsScheduleStatus(effective, fresh.finalsSchedule);
 
   try {
     await syncCompletedMatches(beforeStatusById, effective);

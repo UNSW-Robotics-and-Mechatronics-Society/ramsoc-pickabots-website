@@ -8,6 +8,14 @@ export type LeaderboardEntry = {
   tokens: number;
   wins: number;
   losses: number;
+  /**
+   * Bets placed, all-time — counted whether or not the match has resolved, so
+   * this is "has this player joined in yet", which wins/losses can't answer (a
+   * player whose only bets are still riding has 0W-0L, same as someone who has
+   * never bet). 0 → greyed and sunk below the ranked list. Mirrors the teams
+   * board's `votes` (see TeamLeaderboardEntry).
+   */
+  votes: number;
 };
 
 async function computeLeaderboard(): Promise<LeaderboardEntry[]> {
@@ -33,15 +41,20 @@ async function computeLeaderboard(): Promise<LeaderboardEntry[]> {
   const winnerSideByMatch = new Map((matches ?? []).map(m => [m.id as string, m.winner_side as string | null]));
 
   const recordByUser = new Map<string, { wins: number; losses: number }>();
+  // Every bet counts here, resolved or not — see LeaderboardEntry.votes.
+  const voteCountByUser = new Map<string, number>();
   for (const v of votes ?? []) {
+    const uid = v.user_id as string;
+    voteCountByUser.set(uid, (voteCountByUser.get(uid) ?? 0) + 1);
+
     const winnerSide = winnerSideByMatch.get(v.match_id as string);
     if (!winnerSide) continue;
-    const rec = recordByUser.get(v.user_id as string) ?? { wins: 0, losses: 0 };
+    const rec = recordByUser.get(uid) ?? { wins: 0, losses: 0 };
     if (v.side === winnerSide) rec.wins++; else rec.losses++;
-    recordByUser.set(v.user_id as string, rec);
+    recordByUser.set(uid, rec);
   }
 
-  return (users ?? []).map((u): LeaderboardEntry => {
+  const entries = (users ?? []).map((u): LeaderboardEntry => {
     const rec = recordByUser.get(u.id as string) ?? { wins: 0, losses: 0 };
     return {
       id: u.id as string,
@@ -49,8 +62,26 @@ async function computeLeaderboard(): Promise<LeaderboardEntry[]> {
       tokens: u.tokens as number,
       wins: rec.wins,
       losses: rec.losses,
+      votes: voteCountByUser.get(u.id as string) ?? 0,
     };
   });
+
+  // Two tiers, the same shape the teams board uses (see computeTeamsLeaderboard):
+  //   1. players who have bet — the leaderboard proper
+  //   2. players who haven't — everyone still holding their untouched starting
+  //      balance, which is a coin count with no achievement behind it. They'd
+  //      otherwise rank above every player who has bet and lost, so they sit
+  //      below the board entirely until their first bet promotes them on the
+  //      next refresh.
+  // Within each tier: most coins first, then alphabetical so equal balances
+  // (very common at the start, when everyone is on the same starting stack)
+  // hold a stable order between refreshes instead of shuffling.
+  entries.sort((a, b) =>
+    Number(a.votes === 0) - Number(b.votes === 0) ||
+    b.tokens - a.tokens ||
+    a.name.localeCompare(b.name));
+
+  return entries;
 }
 
 // Cached so the burst of viewers who refresh right after a game resolves (all

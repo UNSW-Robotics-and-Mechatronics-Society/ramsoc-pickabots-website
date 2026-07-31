@@ -188,6 +188,16 @@ export function isWildcardBox(m: BracketMatch): boolean {
   return m.side === 'wildcard';
 }
 
+/**
+ * The Finals Day sides: both semis, the bronze-medal (3rd place) match and the
+ * grand final. These play on their own single ring shared by BOTH divisions
+ * (see FinalsSchedule) rather than in either division's bracket rings, so
+ * rollSchedule and defaultScheduleOrder deliberately exclude them.
+ */
+export function isFinalsMatch(m: { side: string }): boolean {
+  return m.side === 'finals-semi' || m.side === 'finals-third' || m.side === 'finals-final';
+}
+
 /** Light purple — marks everything to do with a wildcard, across every surface. */
 export const WILDCARD_PURPLE = '#D8B4FE';
 

@@ -101,7 +101,7 @@ export default async function LeaderboardOverlay({ searchParams }: Props) {
             background: "rgba(6,8,11,0.7)", border: `1px solid ${PLATE_BORDER}`,
             padding: "6px 16px", borderRadius: 999, alignSelf: "center",
           }}>
-            Bet your RAM coins at pickabots.ramsocunsw.org
+            Vote with your RAM coins at pickabots.ramsocunsw.org
           </div>
         </div>
       </div>

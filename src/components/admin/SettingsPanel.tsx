@@ -56,6 +56,7 @@ type ConfigResponse = {
   autoSmsEnabled?: boolean;
   smsSenderMode?: SmsSenderMode;
   smsSenderNumber?: string;
+  finalsDay?: boolean;
 };
 
 type ConfigPutResponse =
@@ -67,6 +68,7 @@ type ConfigPutResponse =
       autoSmsEnabled?: boolean;
       smsSenderMode?: SmsSenderMode;
       smsSenderNumber?: string;
+      finalsDay?: boolean;
     }
   | { error: string };
 
@@ -130,6 +132,8 @@ export default function SettingsPanel({
   // ── Team / Player / Reset sections ─────────────────────────────────────────
   const [allIn, setAllIn]           = useState(false);
   const [allInBusy, setAllInBusy]   = useState(false);
+  const [finalsDay, setFinalsDay]         = useState(false);
+  const [finalsDayBusy, setFinalsDayBusy] = useState(false);
   const [autoSmsEnabled, setAutoSmsEnabled] = useState(true);
   const [autoSmsBusy, setAutoSmsBusy]       = useState(false);
   const [senderMode, setSenderMode]         = useState<SmsSenderMode>("senderid");
@@ -202,6 +206,7 @@ export default function SettingsPanel({
       setNotifyLead(lead);
       setSavedNotifyLead(lead);
       setAllIn(data.allIn ?? false);
+      setFinalsDay(data.finalsDay ?? false);
       setAutoSmsEnabled(data.autoSmsEnabled ?? true);
       setSenderMode(data.smsSenderMode ?? "senderid");
       const number = data.smsSenderNumber ?? "";
@@ -333,6 +338,29 @@ export default function SettingsPanel({
       setAllIn(!next); // revert
     } finally {
       setAllInBusy(false);
+    }
+  }
+
+  // Finals Day is presentation only — it never moves a match (finals always live
+  // on their own ring; see FinalsSchedule), so flipping it is safe mid-event and
+  // instantly reversible.
+  async function toggleFinalsDay() {
+    const next = !finalsDay;
+    setFinalsDayBusy(true);
+    setFinalsDay(next); // optimistic
+    try {
+      const res = await fetch("/api/admin/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ finalsDay: next }),
+      });
+      const data = (await res.json()) as ConfigPutResponse;
+      if (!res.ok || "error" in data) throw new Error("error" in data ? data.error : `Save failed (${res.status})`);
+      setFinalsDay(data.finalsDay ?? next);
+    } catch {
+      setFinalsDay(!next); // revert
+    } finally {
+      setFinalsDayBusy(false);
     }
   }
 
@@ -1034,6 +1062,33 @@ export default function SettingsPanel({
                 </button>
               </div>
               {resetTokensMsg && <p className="mt-1.5 text-[0.65rem] text-foreground/50">{resetTokensMsg}</p>}
+
+              {/* Finals Day — an event-wide presentation switch, so it sits with
+                  ALL IN rather than in the schedule sections. It changes only what
+                  the PUBLIC pages show; the finals ring in the Matches panel is
+                  always there to build regardless of this. */}
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3">
+                <div className="min-w-0">
+                  <p className="text-xs text-foreground">Finals Day</p>
+                  <p className="text-[0.65rem] text-foreground/40">
+                    Switches the public site to the last day: the bracket opens on Finals, the
+                    match list shows the Finals Day ring, and every public page gets a gold banner.
+                    Doesn&rsquo;t move any match.
+                  </p>
+                </div>
+                <button
+                  disabled={finalsDayBusy}
+                  onClick={toggleFinalsDay}
+                  className={cn(
+                    "shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-40",
+                    finalsDay
+                      ? "border-[#FFD700]/60 bg-[#FFD700]/25 text-[#FFD700]"
+                      : "border-white/15 bg-white/5 text-foreground/50 hover:text-foreground/80",
+                  )}
+                >
+                  {finalsDay ? "FINALS DAY: ON" : "FINALS DAY: OFF"}
+                </button>
+              </div>
 
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3">
                 <div className="min-w-0">

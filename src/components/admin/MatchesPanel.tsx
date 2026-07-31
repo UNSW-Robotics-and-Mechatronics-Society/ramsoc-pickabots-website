@@ -3,12 +3,13 @@
 import { useState } from "react";
 import {
   type BracketMatch, type Division, type MatchStatus, type Team, type TeamCount,
-  winner, applyStatusChange, isTeamSwapOnly, computeSlotDefaults,
+  winner, applyStatusChange, isTeamSwapOnly, computeSlotDefaults, isFinalsMatch,
   wbRoundsFor, lbRoundsFor, wbRoundLabel, lbRoundLabel,
 } from "@/lib/mock-data";
 import {
-  type MatchSchedule, type ExhibitionSchedule, type ConcurrentRings, type RingMatch,
-  changeTimings, changeExhibitionTimings, swapMatchIds, editMatchTime, resetMatchTime, rollSchedule,
+  type MatchSchedule, type ExhibitionSchedule, type FinalsSchedule, type ConcurrentRings, type RingMatch,
+  changeTimings, changeExhibitionTimings, changeFinalsTimings,
+  swapMatchIds, editMatchTime, resetMatchTime, rollSchedule,
   addExhibitionRing, removeExhibitionRing, addMatchToExhibitionRing, rollExhibitionSchedule,
 } from "@/lib/schedule";
 import { cn } from "@/lib/cn";
@@ -24,7 +25,7 @@ const STATUS_LABEL: Record<MatchStatus, string> = {
 };
 const STATUS_TEXT: Record<MatchStatus, string> = {
   todo: 'text-foreground', next: 'text-yellow-400', active: 'text-green-400',
-  completed: 'text-white/50', skipped: 'text-red-400',
+  completed: 'text-white/50', skipped: 'text-red-300',
 };
 
 // ── layout constants ─────────────────────────────────────────────────────────
@@ -37,10 +38,15 @@ const BOX_GAP   = 12;  // vertical gap between consecutive boxes, independent of
  * this, so at least one ring is always fully visible. */
 export const MIN_MATCH_LIST_W = RING_W;
 
+// Finals cards always name their division: they share one ring across BOTH
+// divisions (see FinalsSchedule), so "Semi 1" alone wouldn't say whose.
+const DIV_SHORT: Record<Division, string> = { standards: 'STD', open: 'OPEN' };
+
 function matchLabel(m: BracketMatch, teamCount: TeamCount): string {
-  if (m.side === 'finals-semi')  return `Finals Semi ${m.matchNumber}`;
-  if (m.side === 'finals-third') return '3rd Place';
-  if (m.side === 'finals-final') return 'Finals';
+  const div = DIV_SHORT[m.division];
+  if (m.side === 'finals-semi')  return `${div} Semi ${m.matchNumber}`;
+  if (m.side === 'finals-third') return `${div} Bronze`;
+  if (m.side === 'finals-final') return `${div} Final`;
   if (m.side === 'exhibition')   return 'Exhibition';
   const total = m.side === 'winners' ? wbRoundsFor(teamCount) : lbRoundsFor(teamCount);
   return m.side === 'winners'
@@ -121,7 +127,7 @@ function MatchCard({
   const [confirmRemove, setConfirmRemove] = useState(false);
 
   const w = winner(match);
-  const isFinals = match.side === 'finals-semi' || match.side === 'finals-third' || match.side === 'finals-final';
+  const isFinals = isFinalsMatch(match);
   // Only ad-hoc exhibition matches are deletable — real bracket matches are
   // structural (deleting one would leave a hole in the tree); use "Skip" for those.
   const removable = match.side === 'exhibition' && !!onRemove;
@@ -130,7 +136,8 @@ function MatchCard({
     match.status === 'active'    ? 'border-green-400 shadow-[0_0_12px_rgba(74,222,128,0.5)] bg-green-400/10' :
     match.status === 'next'      ? 'border-yellow-400 shadow-[0_0_10px_rgba(250,204,21,0.45)] bg-yellow-400/10' :
     match.status === 'completed' ? 'border-white/25 opacity-70' :
-    match.status === 'skipped'   ? 'border-red-400 shadow-[0_0_10px_rgba(248,113,113,0.45)]' :
+    // Light red — a match that will never be played, not an error condition.
+    match.status === 'skipped'   ? 'border-red-300 bg-red-300/[0.07] shadow-[0_0_10px_rgba(252,165,165,0.3)] opacity-80' :
     'border-white/[0.28]';
 
   // Todo/completed/skipped matches can be scored at any time. For ACTIVE and
@@ -275,7 +282,7 @@ function MatchCard({
 
       {/* Bottom bar — label + status + Win, mirroring the bracket card */}
       <div className="flex items-center justify-between border-t border-white/[0.14] px-1.5 py-1.5">
-        <span className="w-14 shrink-0 truncate text-[0.5rem] uppercase tracking-wider text-foreground/50">
+        <span className="w-[4.5rem] shrink-0 truncate text-[0.5rem] uppercase tracking-wider text-foreground/50">
           {matchLabel(match, teamCount)}{!isFinals && `·M${match.matchNumber}`}
         </span>
         <select
@@ -321,23 +328,39 @@ type SpecialTeam = { id: string; name: string };
 type Props = {
   matches:          BracketMatch[];
   division:         Division;
+  /** The ACTIVE division's bracket size. */
   teamCount:        TeamCount;
+  /** Both divisions' sizes — needed by the Finals Day ring, which shows matches
+   *  from both at once and so can't assume the active division's size. */
+  teamCounts:       Record<Division, TeamCount>;
   schedule:         MatchSchedule;
   /** Shared across both divisions — not one copy per division. See
    * ExhibitionSchedule and MatchesMode below. */
   exhibitionSchedule: ExhibitionSchedule;
+  /** The single Finals Day ring, also shared across both divisions — see
+   * FinalsSchedule. Its contents are fixed (the two brackets' finals), but its
+   * order is only seeded from the format and is reorderable here by drag. */
+  finalsSchedule: FinalsSchedule;
   teams:            Team[];
   specialTeams:     SpecialTeam[];
   onScheduleChange: (s: MatchSchedule) => void;
   onExhibitionScheduleChange: (s: ExhibitionSchedule) => void;
+  onFinalsScheduleChange: (s: FinalsSchedule) => void;
   onMatchesChange:  (matches: BracketMatch[]) => void;
 };
 
-type MatchesMode = 'bracket' | 'exhibition';
+/**
+ * Which set of rings the panel is showing. 'finals' is the shared Finals Day
+ * ring — one ring holding both divisions' semis, bronze-medal matches and finals
+ * (see FinalsSchedule). It's a local view switch, independent of the Finals Day
+ * SETTING (which only changes the public pages), so the ring can be laid out
+ * before the event flips over.
+ */
+type MatchesMode = 'bracket' | 'exhibition' | 'finals';
 
 export default function MatchesPanel({
-  matches, division, teamCount, schedule, exhibitionSchedule, teams, specialTeams,
-  onScheduleChange, onExhibitionScheduleChange, onMatchesChange,
+  matches, division, teamCount, teamCounts, schedule, exhibitionSchedule, finalsSchedule, teams, specialTeams,
+  onScheduleChange, onExhibitionScheduleChange, onFinalsScheduleChange, onMatchesChange,
 }: Props) {
   // Bracket-round matches and exhibition (ad-hoc) matches show in separate
   // tabs — mirrors the public voting page/match list split, so exhibition
@@ -350,15 +373,26 @@ export default function MatchesPanel({
   const [showPrevMatches, setShowPrevMatches] = useState(false);
   // Exhibition mode shows the one shared list regardless of which division
   // is globally selected; bracket mode stays scoped to just that division.
-  const divMatches = mode === 'exhibition'
-    ? matches.filter(m => m.side === 'exhibition')
-    : matches.filter(m => m.division === division);
+  // Finals mode is cross-division by design — the one ring holds BOTH divisions'
+  // semis, bronze medals and finals — so it ignores the global division toggle
+  // exactly as exhibition mode does.
+  const divMatches =
+    mode === 'exhibition' ? matches.filter(m => m.side === 'exhibition') :
+    mode === 'finals'     ? matches.filter(isFinalsMatch) :
+    matches.filter(m => m.division === division);
   // Global (not division-scoped) so an exhibition ring can look up its cards
   // regardless of their (vestigial — see ExhibitionSchedule) division field.
   const matchById = new Map(matches.map(m => [m.id, m]));
   // Feeder placeholder text for empty slots ("Winner of R64 M3", etc) —
-  // bracket-round only; exhibition matches have no feeders.
-  const slotDefaults = computeSlotDefaults(matches, division, teamCount);
+  // exhibition matches have no feeders. Finals mode shows both divisions at
+  // once, so it needs both divisions' feeder labels merged; the per-division
+  // call would leave the other division's semis with blank placeholders.
+  const slotDefaults = mode === 'finals'
+    ? new Map([
+        ...computeSlotDefaults(matches, 'standards', teamCounts.standards),
+        ...computeSlotDefaults(matches, 'open', teamCounts.open),
+      ])
+    : computeSlotDefaults(matches, division, teamCount);
 
   // Uniform zoom for the whole list (scales rings + cards + axis together).
   // Uses CSS `zoom` (not transform) so the sticky ring headers keep working.
@@ -380,15 +414,21 @@ export default function MatchesPanel({
     : () => true;
 
   // Time-edit/reset/swap act on whichever schedule the active mode owns.
-  const onEditTime = mode === 'exhibition'
-    ? (matchId: string, minute: number) => onExhibitionScheduleChange(editMatchTime(exhibitionSchedule, matches, matchId, minute))
-    : (matchId: string, minute: number) => onScheduleChange(editMatchTime(schedule, matches, matchId, minute));
-  const onResetTime = mode === 'exhibition'
-    ? (matchId: string) => onExhibitionScheduleChange(resetMatchTime(exhibitionSchedule, matches, matchId))
-    : (matchId: string) => onScheduleChange(resetMatchTime(schedule, matches, matchId));
-  const onSwap = mode === 'exhibition'
-    ? (srcId: string, dstId: string) => onExhibitionScheduleChange(swapMatchIds(exhibitionSchedule, srcId, dstId))
-    : (srcId: string, dstId: string) => onScheduleChange(swapMatchIds(schedule, srcId, dstId));
+  const onEditTime =
+    mode === 'exhibition' ? (matchId: string, minute: number) => onExhibitionScheduleChange(editMatchTime(exhibitionSchedule, matches, matchId, minute)) :
+    mode === 'finals'     ? (matchId: string, minute: number) => onFinalsScheduleChange(editMatchTime(finalsSchedule, matches, matchId, minute)) :
+    (matchId: string, minute: number) => onScheduleChange(editMatchTime(schedule, matches, matchId, minute));
+  const onResetTime =
+    mode === 'exhibition' ? (matchId: string) => onExhibitionScheduleChange(resetMatchTime(exhibitionSchedule, matches, matchId)) :
+    mode === 'finals'     ? (matchId: string) => onFinalsScheduleChange(resetMatchTime(finalsSchedule, matches, matchId)) :
+    (matchId: string) => onScheduleChange(resetMatchTime(schedule, matches, matchId));
+  // Drag-to-reorder works in every mode, the finals ring included: its running
+  // order is only SEEDED from finalsRunningOrder, and rollFinalsSchedule keeps
+  // whatever order is stored (so a reorder survives the read-time roll).
+  const onSwap =
+    mode === 'exhibition' ? (srcId: string, dstId: string) => onExhibitionScheduleChange(swapMatchIds(exhibitionSchedule, srcId, dstId)) :
+    mode === 'finals'     ? (srcId: string, dstId: string) => onFinalsScheduleChange(swapMatchIds(finalsSchedule, srcId, dstId)) :
+    (srcId: string, dstId: string) => onScheduleChange(swapMatchIds(schedule, srcId, dstId));
 
   // Same single path as the bracket editor's handleChange — applyStatusChange
   // against the ORIGINAL array on every edit, so advancement is both written and
@@ -476,7 +516,10 @@ export default function MatchesPanel({
   // time, and the gap between two cards no longer varies with gap minutes.
   // Only the rings for the active mode are shown — bracket-round and exhibition
   // matches no longer share one combined view.
-  const shownEntries = mode === 'exhibition' ? exhibitionSchedule.rings.flat() : schedule.rings.flat();
+  const shownEntries =
+    mode === 'exhibition' ? exhibitionSchedule.rings.flat() :
+    mode === 'finals'     ? finalsSchedule.rings.flat() :
+    schedule.rings.flat();
   // Show the ring area if there are any matches OR (in exhibition mode) any
   // exhibition rings at all — even empty ones, so you can add matches to a
   // freshly-created exhibition ring.
@@ -495,8 +538,14 @@ export default function MatchesPanel({
   const hiddenCount = shownEntries.filter(e => isDone(e.matchId)).length;
   // Still needed by the Match/Gap inputs below (they rewrite the schedule's
   // times) — they just no longer drive any pixel geometry.
-  const activeMatchMinutes = mode === 'exhibition' ? exhibitionSchedule.matchMinutes : schedule.matchMinutes;
-  const activeGapMinutes   = mode === 'exhibition' ? exhibitionSchedule.gapMinutes   : schedule.gapMinutes;
+  const activeMatchMinutes =
+    mode === 'exhibition' ? exhibitionSchedule.matchMinutes :
+    mode === 'finals'     ? finalsSchedule.matchMinutes :
+    schedule.matchMinutes;
+  const activeGapMinutes =
+    mode === 'exhibition' ? exhibitionSchedule.gapMinutes :
+    mode === 'finals'     ? finalsSchedule.gapMinutes :
+    schedule.gapMinutes;
 
   // One ring column (used for both bracket rings and exhibition rings). Bracket
   // rings just show a label; exhibition rings also get an add-match "+" and a
@@ -505,7 +554,7 @@ export default function MatchesPanel({
     ring: RingMatch[],
     key: string,
     label: string,
-    opts?: { onAddMatch?: () => void; onRemoveRing?: () => void; accent?: boolean },
+    opts?: { onAddMatch?: () => void; onRemoveRing?: () => void; accent?: boolean; gold?: boolean },
   ) {
     // Sorted by start time, then filtered — a flex column, so dropping a
     // finished match just closes the gap; nothing to compact by hand.
@@ -522,6 +571,7 @@ export default function MatchesPanel({
         <div
           className={cn(
             "sticky top-0 z-10 flex items-center justify-center border bg-black/85 text-[0.8rem] font-bold uppercase tracking-widest text-white backdrop-blur-sm",
+            opts?.gold ? "border-[#FFD700]/60 text-[#FFD700]" :
             opts?.accent ? "border-violet-400/60" : "border-white/30",
           )}
           style={{ height: HEADER_H, width: RING_W }}
@@ -559,7 +609,7 @@ export default function MatchesPanel({
               <div key={match.id} className="shrink-0" style={{ height: CARD_H }}>
                 <MatchCard
                   match={match}
-                  teamCount={teamCount}
+                  teamCount={teamCounts[match.division]}
                   onDrop={srcId => onSwap(srcId, match.id)}
                   onChange={handleMatchChange}
                   datalistId={match.side === 'exhibition' ? exhibitionDatalistId : datalistId}
@@ -623,7 +673,7 @@ export default function MatchesPanel({
           always stays. */}
       <div className="flex shrink-0 flex-nowrap items-center gap-x-3 gap-y-1 overflow-hidden border-b border-white/10 px-3 py-2">
         <div className="flex shrink-0 items-center gap-1">
-          {(['bracket', 'exhibition'] as MatchesMode[]).map(m => (
+          {(['bracket', 'exhibition', 'finals'] as MatchesMode[]).map(m => (
             <button
               key={m}
               type="button"
@@ -633,7 +683,7 @@ export default function MatchesPanel({
                 mode === m ? "bg-white/20 text-foreground" : "text-foreground/40 hover:text-foreground/70",
               )}
             >
-              {m === 'bracket' ? 'Bracket Matches' : 'Exhibition Matches'}
+              {m === 'bracket' ? 'Bracket Matches' : m === 'exhibition' ? 'Exhibition Matches' : 'Finals Day'}
             </button>
           ))}
         </div>
@@ -701,9 +751,10 @@ export default function MatchesPanel({
           <span className="text-[0.55rem] uppercase tracking-widest text-foreground/40">Match</span>
           <NumInput
             value={activeMatchMinutes}
-            onChange={v => mode === 'exhibition'
-              ? onExhibitionScheduleChange(changeExhibitionTimings(exhibitionSchedule, matches, v, activeGapMinutes))
-              : onScheduleChange(changeTimings(schedule, matches, v, activeGapMinutes))}
+            onChange={v =>
+              mode === 'exhibition' ? onExhibitionScheduleChange(changeExhibitionTimings(exhibitionSchedule, matches, v, activeGapMinutes)) :
+              mode === 'finals'     ? onFinalsScheduleChange(changeFinalsTimings(finalsSchedule, matches, v, activeGapMinutes)) :
+              onScheduleChange(changeTimings(schedule, matches, v, activeGapMinutes))}
           />
           <span className="text-[0.55rem] text-foreground/30">min</span>
         </div>
@@ -712,9 +763,10 @@ export default function MatchesPanel({
           <span className="text-[0.55rem] uppercase tracking-widest text-foreground/40">Gap</span>
           <NumInput
             value={activeGapMinutes}
-            onChange={v => mode === 'exhibition'
-              ? onExhibitionScheduleChange(changeExhibitionTimings(exhibitionSchedule, matches, activeMatchMinutes, v))
-              : onScheduleChange(changeTimings(schedule, matches, activeMatchMinutes, v))}
+            onChange={v =>
+              mode === 'exhibition' ? onExhibitionScheduleChange(changeExhibitionTimings(exhibitionSchedule, matches, activeMatchMinutes, v)) :
+              mode === 'finals'     ? onFinalsScheduleChange(changeFinalsTimings(finalsSchedule, matches, activeMatchMinutes, v)) :
+              onScheduleChange(changeTimings(schedule, matches, activeMatchMinutes, v))}
           />
           <span className="text-[0.55rem] text-foreground/30">min</span>
         </div>
@@ -759,6 +811,10 @@ export default function MatchesPanel({
           <div className="flex items-start" style={{ zoom: scale }}>
             {mode === 'bracket'
               ? schedule.rings.map((ring, ri) => renderRingColumn(ring, `b${ri}`, `Ring ${ri + 1}`))
+              : mode === 'finals'
+              // Always exactly one ring — both divisions' last eight matches run
+              // back to back on it (see FinalsSchedule).
+              ? finalsSchedule.rings.map((ring, fi) => renderRingColumn(ring, `f${fi}`, 'Finals Day', { gold: true }))
               : exhibitionSchedule.rings.map((ring, ei) => renderRingColumn(ring, `e${ei}`, `Exhibition ${ei + 1}`, {
                   onAddMatch: () => addExhibitionMatch(ei),
                   onRemoveRing: () => handleRemoveExhibitionRing(ei),

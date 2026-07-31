@@ -4,6 +4,7 @@ import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh'
 import PlayerBoard, { type LeaderboardEntry } from './PlayerBoard'
 import TeamBoard from './TeamBoard'
 import type { TeamLeaderboardEntry } from '@/lib/types'
+import FinalsDayBanner from './FinalsDayBanner'
 
 type Mode = 'players' | 'teams'
 
@@ -14,12 +15,17 @@ const MODE_TABS: { key: Mode; label: string }[] = [
 
 const SUBTITLE: Record<Mode, string> = {
   players: 'Sorted by Top RamCoin Hustler',
-  teams:   'Sorted by ramcoins bet on',
+  teams:   'Sorted by ramcoins voted on',
 }
 
-type Props = { players: LeaderboardEntry[]; teams: TeamLeaderboardEntry[] }
+type Props = {
+  players: LeaderboardEntry[]
+  teams: TeamLeaderboardEntry[]
+  /** Finals Day setting (see getFinalsDay) — shows the gold banner. */
+  finalsDay?: boolean
+}
 
-export default function LeaderboardPage({ players, teams }: Props) {
+export default function LeaderboardPage({ players, teams, finalsDay = false }: Props) {
   // Subscribe to `matches` (a game resolving → matches.winner_side changes),
   // `bracket_matches` (the same save's W/L and knocked-out status, which the
   // teams board reads) and `leaderboard_signal` (bumped on the non-game balance
@@ -62,6 +68,8 @@ export default function LeaderboardPage({ players, teams }: Props) {
         }}>
           {SUBTITLE[mode]}
         </div>
+
+        {finalsDay && <FinalsDayBanner />}
       </div>
 
       {/* Players / Teams toggle */}
