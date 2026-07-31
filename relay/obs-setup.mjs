@@ -116,7 +116,7 @@ for (const name of PHONE_CAMS) {
 }
 
 // IT Cam gets a small corner badge identifying the feed (see /overlay/cam-label).
-await browserSource("IT Cam", "overlay-camlabel-it", `${BASE}/overlay/cam-label?name=IT`);
+await browserSource("IT Cam", "overlay-camlabel-it", `${BASE}/overlay/cam-label?name=${encodeURIComponent("IT (The Goats)")}`);
 
 // Commentary: the phone camera full-frame + the KPI side banner on top.
 await mediaSource("Commentary", "feed-phone", "rtmp://localhost:1935/phone");
