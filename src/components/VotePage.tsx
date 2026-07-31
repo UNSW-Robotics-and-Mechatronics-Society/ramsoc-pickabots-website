@@ -91,14 +91,25 @@ export default function VotePage() {
   useEffect(() => { votesRef.current = votes },          [votes])
   useEffect(() => { showWinLossRef.current = showWinLoss }, [showWinLoss])
 
-  // Finals Day opens the page on the Finals tab: the division ladders are
-  // finished by then, so landing on Standard would show nothing but TBD
-  // placeholders. The other tabs stay available — this only moves someone who
-  // hasn't chosen one yet, so switching back sticks. It can't be an initial
-  // state value: the flag arrives with the /api/user fetch, after first paint.
+  // Finals Day drops the Standard and Open tabs entirely: both division ladders
+  // are finished by then, so those tabs hold nothing but TBD placeholders. Only
+  // Finals and Exhibition remain — exhibition matches can still run alongside
+  // the finals.
+  const COMP_TABS: CompFilter[] = finalsDay
+    ? ['finals', 'exhibition']
+    : ['standard', 'open', 'exhibition', 'finals']
+
+  // Keep `filter` on a tab that still exists. This can't be an initial state
+  // value: the flag arrives with the /api/user fetch, after first paint — and
+  // it can also flip mid-session (the admin toggles it live), which would
+  // otherwise strand a player on a tab that's no longer rendered, showing an
+  // empty page with no way back. Their own pick is respected while it's still
+  // a visible option.
   useEffect(() => {
-    if (finalsDay && !pickedTabRef.current) setFilter('finals')
-  }, [finalsDay])
+    if (!finalsDay) return
+    if (!pickedTabRef.current || !COMP_TABS.includes(filter)) setFilter('finals')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finalsDay, filter])
 
   // Beg eligibility (remaining begs + cooldown) for the "Down bad?" banner.
   const refreshBeg = useCallback(async () => {
@@ -432,9 +443,9 @@ export default function VotePage() {
           )
         })()}
 
-        {/* Standard / Open / Exhibition / Finals tab */}
+        {/* Comp-type tabs — Standard and Open drop out on Finals Day (see COMP_TABS) */}
         <div style={{ display: 'flex', gap: 6 }}>
-          {(['standard', 'open', 'exhibition', 'finals'] as CompFilter[]).map(f => (
+          {COMP_TABS.map(f => (
             <button
               key={f}
               onClick={() => { pickedTabRef.current = true; setFilter(f) }}
