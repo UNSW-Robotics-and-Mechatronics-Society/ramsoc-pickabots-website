@@ -22,6 +22,7 @@ const SCENES = [
   "Sumobots", "Intermission", "Bracket", "Finals", "Standings", "Leaderboard",
   "Results", "All Rings", "Vote", "Commentary", "Standby", "Blank",
   "Victor Cam", "Arjun Cam", "Nirvan Cam", "Dash Cam", "IT Cam",
+  "Rambo Returns",
 ];
 
 // Operator phone cams: full-frame scene per phone, fed by the MediaMTX path
@@ -110,6 +111,7 @@ await browserSource("Standings", "overlay-stats", `${BASE}/overlay/stats?top=8`)
 await browserSource("Leaderboard", "overlay-leaderboard", `${BASE}/overlay/leaderboard?top=10`);
 await browserSource("Results", "overlay-results", `${BASE}/overlay/results`);
 await browserSource("Vote", "overlay-vote", `${BASE}/overlay/vote`);
+await browserSource("Rambo Returns", "overlay-rambo-returns", `${BASE}/overlay/rambo-returns`);
 
 for (const name of PHONE_CAMS) {
   await mediaSource(`${name} Cam`, `feed-${name.toLowerCase()}`, `rtmp://localhost:1935/${name.toLowerCase()}`);
