@@ -17,6 +17,7 @@ export default function RamboReturnsOverlay() {
         .fade-1 { opacity: 0; animation: fadeIn 2s ease-out 0.5s forwards; }
         .fade-2 { opacity: 0; animation: fadeIn 2s ease-out 2.2s forwards; }
         .fade-3 { opacity: 0; animation: fadeIn 2s ease-out 3.9s forwards; }
+        .fade-4 { opacity: 0; animation: fadeIn 2s ease-out 5.6s forwards; }
       `}</style>
       <div className="fade-1" style={{
         fontFamily: FONT_DISPLAY, fontSize: "5vw", letterSpacing: "0.15em",
@@ -37,6 +38,36 @@ export default function RamboReturnsOverlay() {
         textShadow: "0 0 40px rgba(255,215,0,0.35)",
       }}>
         Avengers: Doomsday
+      </div>
+      <div className="fade-4" style={{
+        display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+      }}>
+        {/* Doomsday Clock — hands fixed at 11:57, the real clock's closest-ever setting. */}
+        <svg width="72" height="72" viewBox="0 0 100 100">
+          <circle cx="50" cy="50" r="46" fill="none" stroke={GOLD} strokeWidth="3" opacity="0.85" />
+          {Array.from({ length: 12 }, (_, i) => {
+            const a = (i * 30 * Math.PI) / 180;
+            const r1 = 38, r2 = 44;
+            return (
+              <line key={i}
+                x1={50 + r1 * Math.sin(a)} y1={50 - r1 * Math.cos(a)}
+                x2={50 + r2 * Math.sin(a)} y2={50 - r2 * Math.cos(a)}
+                stroke={GOLD} strokeWidth="2" opacity="0.7"
+              />
+            );
+          })}
+          {/* Minute hand: 57 min -> 342deg. Hour hand: just shy of 12. */}
+          <line x1="50" y1="50" x2={50 + 32 * Math.sin((342 * Math.PI) / 180)} y2={50 - 32 * Math.cos((342 * Math.PI) / 180)} stroke="#f4f7fb" strokeWidth="2.5" strokeLinecap="round" />
+          <line x1="50" y1="50" x2={50 + 20 * Math.sin((357 * Math.PI) / 180)} y2={50 - 20 * Math.cos((357 * Math.PI) / 180)} stroke="#f4f7fb" strokeWidth="3" strokeLinecap="round" />
+          <circle cx="50" cy="50" r="3" fill={GOLD} />
+        </svg>
+        <div style={{
+          fontSize: "0.75vw", letterSpacing: "0.35em",
+          color: "rgba(244,247,251,0.6)", textTransform: "uppercase",
+          paddingLeft: "0.35em",
+        }}>
+          3 Minutes To Midnight
+        </div>
       </div>
     </div>
   );
