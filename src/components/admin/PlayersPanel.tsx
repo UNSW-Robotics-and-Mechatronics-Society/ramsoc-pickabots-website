@@ -88,6 +88,9 @@ export default function PlayersPanel() {
   const [boostAmounts, setBoostAmounts] = useState<Record<string, string>>({});
   const [busyId, setBusyId]     = useState<string | null>(null);
   const [kickTarget, setKickTarget] = useState<Player | null>(null);
+  const [boostAllText, setBoostAllText] = useState("500");
+  const [boostAllBusy, setBoostAllBusy] = useState(false);
+  const [boostAllConfirm, setBoostAllConfirm] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -185,6 +188,32 @@ export default function PlayersPanel() {
     downloadCsv(csv, "pickabots-players.csv");
   }
 
+  async function handleBoostAll() {
+    const amount = Math.trunc(Number(boostAllText));
+    if (!Number.isFinite(amount) || amount === 0) return;
+    setBoostAllBusy(true);
+    try {
+      const res = await fetch("/api/admin/players/boost-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ boost: amount }),
+      });
+      const data = (await res.json()) as { ok: true } | { error: string };
+      if (!res.ok || "error" in data) {
+        throw new Error("error" in data ? data.error : `Boost all failed (${res.status})`);
+      }
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Boost all failed");
+    } finally {
+      setBoostAllBusy(false);
+      setBoostAllConfirm(false);
+    }
+  }
+
+  const boostAllAmount = Math.trunc(Number(boostAllText));
+  const boostAllDeduct = boostAllAmount < 0;
+
   return (
     <div className="@container flex h-full flex-col">
       {/* search / filter / export toolbar */}
@@ -225,6 +254,27 @@ export default function PlayersPanel() {
               {o.label}
             </button>
           ))}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="shrink-0 text-[0.55rem] text-foreground/50">All players</span>
+          <input
+            type="text"
+            inputMode="numeric"
+            value={boostAllText}
+            onChange={e => {
+              const v = e.target.value;
+              if (v === "" || v === "-" || /^-?\d+$/.test(v)) setBoostAllText(v);
+            }}
+            className="w-16 rounded-lg border border-white/10 bg-white/8 px-2 py-1 text-xs tabular-nums outline-none focus:border-white/30"
+          />
+          <button
+            disabled={boostAllBusy || !Number.isFinite(boostAllAmount) || boostAllAmount === 0}
+            onClick={() => setBoostAllConfirm(true)}
+            className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/8 px-2 py-1 text-[0.65rem] text-foreground/70 transition-colors hover:text-foreground/95 disabled:opacity-40"
+          >
+            {boostAllDeduct ? <Minus size={11} strokeWidth={2} /> : <Plus size={11} strokeWidth={2} />}
+            {boostAllDeduct ? "Deduct all" : "Boost all"}
+          </button>
         </div>
       </div>
 
@@ -400,6 +450,16 @@ export default function PlayersPanel() {
           confirmLabel="Kick"
           onConfirm={() => handleKick(kickTarget.id)}
           onCancel={() => setKickTarget(null)}
+        />
+      )}
+
+      {boostAllConfirm && (
+        <ConfirmDialog
+          title={`${boostAllDeduct ? "Deduct" : "Add"} ${Math.abs(boostAllAmount)} tokens ${boostAllDeduct ? "from" : "to"} every player?`}
+          message="This adjusts every player's balance at once. Balances are clamped at 0."
+          confirmLabel={boostAllDeduct ? "Deduct all" : "Boost all"}
+          onConfirm={handleBoostAll}
+          onCancel={() => setBoostAllConfirm(false)}
         />
       )}
     </div>

@@ -124,6 +124,13 @@ export async function boostPlayer(clerkUserId: string, amount: number): Promise<
   return next;
 }
 
+/** Add `amount` tokens to every player at once (may be negative to deduct).
+ *  Balances are clamped at 0, same as boostPlayer(). */
+export async function bulkBoostAllPlayers(amount: number): Promise<void> {
+  const { error } = await supabase.rpc("bulk_boost_tokens", { p_amount: amount });
+  if (error) throw new Error(`Failed to boost all players: ${error.message}`);
+}
+
 /**
  * Kick a player from pickabots: deletes their pickabots-local `users` row
  * (which cascades to their bets/votes via FK). This does NOT touch the shared
