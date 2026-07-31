@@ -195,50 +195,14 @@ export function applyScheduleStatus(
   });
 }
 
-/**
- * The Finals Day counterpart of applyScheduleStatus: the same
- * first/second-ready-pending rule, applied to the one shared finals ring. At
- * most one finals match is active and one is next across BOTH divisions, since
- * they all run on the same physical ring.
- *
- * Only finals matches are touched; everything else is returned untouched so
- * this can be composed with the per-division passes in any order.
- */
-export function applyFinalsScheduleStatus(
-  matches: BracketMatch[],
-  schedule: FinalsSchedule,
-): BracketMatch[] {
-  const byId = new Map(matches.map(m => [m.id, m]));
-
-  const readyPending = schedule.rings.flat()
-    .map(e => e.matchId)
-    .filter(id => {
-      const m = byId.get(id);
-      // Same readiness rule as applyScheduleStatus — a finals match whose
-      // semi-finalists aren't decided yet holds its slot but stays 'todo'.
-      return m && m.status !== 'completed' && m.status !== 'skipped'
-        && !!m.slotA.teamName && !!m.slotB.teamName;
-    });
-  const activeId = readyPending[0];
-  const nextId   = readyPending[1];
-
-  return matches.map(m => {
-    if (!isFinalsMatch(m)) return m;
-    if (m.status === 'completed' || m.status === 'skipped') return m;
-
-    const newStatus: MatchStatus =
-      m.id === activeId ? 'active' :
-      m.id === nextId   ? 'next'   :
-      'todo';
-
-    // Same rule as applyScheduleStatus: becoming active always starts with
-    // voting closed, so the admin opens it deliberately.
-    if (newStatus === 'active' && m.status !== 'active') {
-      return { ...m, status: 'active', votingOpen: false };
-    }
-    return m.status === newStatus ? m : { ...m, status: newStatus };
-  });
-}
+// Finals Day has no status-deriving pass of its own, deliberately. All eight
+// matches (both divisions' semis, bronze matches and finals) share one physical
+// ring, so a ring-position rule would mark exactly one active and one next —
+// and since only those two would be biddable, the crowd could never back the
+// rest of the card. Finals are therefore admin-controlled end to end, exactly
+// like exhibition matches: the status dropdown and a per-match bidding toggle
+// in the admin's Finals tab decide everything. The ring still orders and TIMES
+// them (see rollFinalsSchedule); it just doesn't drive status.
 
 /**
  * Per-ring live view: which match is currently ON each ring and which is up

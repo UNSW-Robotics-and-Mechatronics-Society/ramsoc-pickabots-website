@@ -43,7 +43,8 @@ export default function NextMatchCard({ match, onTeamClick }: { match: Match; on
         flexShrink: 0, fontSize: '0.42rem', fontWeight: 900,
         textTransform: 'uppercase', letterSpacing: 2, color: meta.color,
       }}>
-        {meta.label}
+        {/* Round included for finals — same reason as Ring's badge. */}
+        {match.finals_label ? `${meta.label} · ${match.finals_label}` : meta.label}
       </div>
     </div>
   )

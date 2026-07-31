@@ -249,7 +249,11 @@ function MatchCard({
           <span />
         )}
 
-        {(match.status === 'active' || match.status === 'next') ? (
+        {/* Finals carry a bidding toggle whatever their status: all eight share
+            one ring, so ring position never makes more than one of them active,
+            and the whole Finals Day card is meant to be biddable at once (see
+            needsVotingRow). Everything else keeps the active/next rule. */}
+        {(match.status === 'active' || match.status === 'next' || isFinals) ? (
           <VotingToggle
             open={match.votingOpen}
             onToggle={() => onChange({ ...match, votingOpen: !match.votingOpen })}

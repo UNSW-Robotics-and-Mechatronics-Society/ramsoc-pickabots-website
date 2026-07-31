@@ -132,7 +132,10 @@ export default function Ring({ match, vote, standings, votingOpen = true, onVote
         textTransform: 'uppercase', letterSpacing: 3,
         color: meta.color, pointerEvents: 'none',
       }}>
-        {meta.label}
+        {/* Finals cards name their round too: all eight list together in the
+            Finals tab, so "OPEN" alone wouldn't say whether this is a semi,
+            the bronze match or the final itself. */}
+        {match.finals_label ? `${meta.label} · ${match.finals_label}` : meta.label}
       </div>
 
       {/* Voted overlay */}

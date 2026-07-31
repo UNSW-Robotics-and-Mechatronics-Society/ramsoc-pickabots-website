@@ -25,6 +25,32 @@ const STATUS_STYLE: Record<TeamStatusKind, { color: string; bg: string }> = {
 // and the halo over its robot on the bidding screen.
 const WILDCARD_PURPLE = '#D8B4FE'
 
+// Blend an accent with transparency, or with the row plate — same helper the
+// team ledger modal uses.
+const tint = (color: string, pct: number, over = 'transparent') =>
+  `color-mix(in srgb, ${color} ${pct}%, ${over})`
+
+// The unlit row background, kept as a named value so a division tint can be
+// mixed OVER it rather than replacing it (a bare translucent accent would drop
+// the dark plate and let the page show through).
+const ROW_PLATE = 'rgba(6,3,16,0.82)'
+
+// Division accent: Open green, Standards orange — the same pair the admin
+// bracket uses for its division badges. (The OBS overlays use a punchier green
+// tuned for camera legibility; this one matches the app's own palette, and is
+// already the green of the "Winners" status pill above.)
+//
+// Special/boss teams are in no bracket and so belong to no division — they get
+// no accent and keep the neutral plate.
+const DIVISION_ACCENT: Record<'standards' | 'open', string> = {
+  standards: '#FF6B00',
+  open:      '#4ADE80',
+}
+const DIVISION_SHORT: Record<'standards' | 'open', string> = {
+  standards: 'Standards',
+  open:      'Open',
+}
+
 // 'all' is the only view special/boss teams appear in — they're in no bracket,
 // so they belong to neither division.
 type DivisionView = 'standards' | 'open' | 'all'
@@ -154,6 +180,10 @@ export default function TeamBoard({ teams }: { teams: TeamLeaderboardEntry[] }) 
           const greyed = tier !== 'ranked'
           const isTop3 = t.rank <= 3 && !greyed
           const st = STATUS_STYLE[t.status]
+          // Division colour drives the row's accent stripe, tint and glow. Null
+          // for special/boss teams, which fall back to the previous neutral row
+          // with the orange top-3 treatment.
+          const accent = t.kind === 'regular' && t.division ? DIVISION_ACCENT[t.division] : null
           // Each tail's header, shown once at the row the tier changes on — so a
           // filtered view that opens mid-tail still gets its label.
           const divider = tier !== (i > 0 ? tierOf(visible[i - 1]) : 'ranked')
@@ -181,12 +211,25 @@ export default function TeamBoard({ teams }: { teams: TeamLeaderboardEntry[] }) 
                   display: 'flex', alignItems: 'center',
                   width: '100%', textAlign: 'left', cursor: 'pointer', font: 'inherit',
                   padding: '13px 12px',
-                  background: isTop3 ? 'rgba(255,107,0,0.1)' : 'rgba(6,3,16,0.82)',
+                  // Top-3 emphasis is now expressed IN the division colour rather
+                  // than always-orange — otherwise every podium row read as
+                  // Standards once orange became a division signal.
+                  background: accent
+                    ? tint(accent, isTop3 ? 14 : 5, ROW_PLATE)
+                    : isTop3 ? 'rgba(255,107,0,0.1)' : ROW_PLATE,
                   backdropFilter: 'blur(16px)',
                   WebkitBackdropFilter: 'blur(16px)',
-                  border: `1px solid ${isTop3 ? 'rgba(255,107,0,0.28)' : 'rgba(255,255,255,0.07)'}`,
+                  border: `1px solid ${accent
+                    ? tint(accent, isTop3 ? 42 : 20)
+                    : isTop3 ? 'rgba(255,107,0,0.28)' : 'rgba(255,255,255,0.07)'}`,
+                  // Solid stripe down the leading edge — the division read at a
+                  // glance while scanning the column, and the same idiom the
+                  // upcoming-matches overlay uses. Set after `border` so it wins.
+                  ...(accent ? { borderLeft: `3px solid ${accent}` } : {}),
                   borderRadius: 10,
-                  boxShadow: isTop3 ? '0 0 20px rgba(255,107,0,0.1)' : '0 2px 12px rgba(0,0,0,0.5)',
+                  boxShadow: accent
+                    ? (isTop3 ? `0 0 20px ${tint(accent, 14)}` : '0 2px 12px rgba(0,0,0,0.5)')
+                    : isTop3 ? '0 0 20px rgba(255,107,0,0.1)' : '0 2px 12px rgba(0,0,0,0.5)',
                   opacity: greyed ? 0.45 : 1,
                 }}
               >
@@ -216,12 +259,26 @@ export default function TeamBoard({ teams }: { teams: TeamLeaderboardEntry[] }) 
                   }}>
                     {t.name}
                   </div>
-                  <span style={{
-                    display: 'inline-block', padding: '2px 7px', borderRadius: 999,
-                    fontSize: '0.4rem', fontWeight: 900, letterSpacing: 1.5, textTransform: 'uppercase',
-                    color: st.color, background: st.bg,
-                  }}>
-                    {t.statusLabel}
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                    <span style={{
+                      display: 'inline-block', padding: '2px 7px', borderRadius: 999,
+                      fontSize: '0.4rem', fontWeight: 900, letterSpacing: 1.5, textTransform: 'uppercase',
+                      color: st.color, background: st.bg,
+                    }}>
+                      {t.statusLabel}
+                    </span>
+                    {/* Names the division in words as well as colour — the stripe
+                        alone is invisible to a colour-blind reader, and in the
+                        All tab there's otherwise nothing to tell the two apart. */}
+                    {accent && t.division && (
+                      <span style={{
+                        display: 'inline-block', padding: '2px 7px', borderRadius: 999,
+                        fontSize: '0.4rem', fontWeight: 900, letterSpacing: 1.5, textTransform: 'uppercase',
+                        color: accent, background: tint(accent, 14),
+                      }}>
+                        {DIVISION_SHORT[t.division]}
+                      </span>
+                    )}
                   </span>
                 </div>
 
