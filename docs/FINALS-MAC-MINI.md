@@ -84,39 +84,34 @@ cd relay
 node obs-setup.mjs
 ```
 
-Idempotent — safe to re-run. It creates all **17 scenes** the control panel
+Idempotent — safe to re-run. It creates all **12 scenes** the control panel
 targets, with every overlay browser source wired:
 
-- `Ring 1` … `Ring 6` — one per physical ring, each with its
-  `now-battling` lower-third overlay (rings 4–6 use the **open division**
-  URLs, i.e. open rings 1–3; flip URLs in OBS if the floor plan differs)
-- `Sumobots` (title card), `Intermission`, `Bracket`, `Standings`,
+- `Ring 1` — the event's one physical ring, with the `now-battling`
+  lower-third overlay
+- `Sumobots` (title card), `Intermission`, `Bracket`, `Finals`, `Standings`,
   `Leaderboard`, `Results`, `Vote` — full-frame info boards
 - `All Rings` — 2×2 multiview; the info board is auto-placed bottom-right,
-  the three camera quadrants are added by hand (step 5)
+  the camera quadrant is added by hand (step 5)
 - `Commentary` — phone feed + KPI banner
 - `Standby` — local text/image, works with zero internet (the panic button)
 - `Blank` — empty, pure black
 
 **Scene names must never be edited** — the panel targets them by exact name.
 
-### Finals day: only one or two physical rings
+### Finals day: one ring, both divisions
 
-The script still builds all six ring scenes — the unused ones are harmless,
-just ignore them. What matters is the **division mapping**: the overlay's ring
-number is the ring column in the `/admin` schedule *for that division*, not
-the physical ring.
+There's only one physical ring now (`MAX_RINGS` in `src/lib/schedule.ts`), so
+there's no per-division ring mapping to worry about: `Ring 1`'s lower-third
+(`/overlay/now-battling?ring=1`) automatically shows whichever finals match —
+standard or open — the admin has marked **active** in the Finals tab
+(falling back to whichever is marked **next**), no `division` param needed.
+Just put the main ring's camera in `Ring 1` and cut to it for every finals
+bout, both divisions.
 
-- `Ring 1` = standard division ring 1 → put the main ring's camera here and
-  cut to it for **standard** finals matches
-- `Ring 4` = **open** division ring 1 → add the *same camera source* (Add
-  Existing) to this scene too, and cut to it for **open** finals matches —
-  same picture, but the lower-third shows the open-division bout
-- Second physical ring (if any): its camera goes in `Ring 2` (standard) and
-  `Ring 5` (open ring 2), same trick
-
-So even with one ring, scene switching between `Ring 1`/`Ring 4` is how the
-stream flips between the two divisions' lower-thirds.
+For the full day's running order (both divisions' semis, bronze bouts and
+finals, in play order) as its own full-screen board, cut to `Finals`
+(`/overlay/finals`) between bouts or on a second monitor.
 
 Overlays update live via Supabase Realtime; add once, never touch. If a
 browser source ever shows the wrong page, *rewrite its URL with `?v=2`
@@ -163,7 +158,7 @@ Skip all of this if every camera is plugged directly into the Mini.
 ## 7. What the control panel gives us
 
 `https://pickabots.ramsocunsw.org/control` on any phone — sign in with an
-admin Clerk account or the admin access code. One-tap scene switching (all 17
+admin Clerk account or the admin access code. One-tap scene switching (all 12
 scenes), Go Live / Stop, Record, Save Instant Replay, a "Now Battling"
 lower-third override, plus Relay/OBS/feed health lights. Buttons queue
 commands; the highlight moves only once OBS confirms — trust the highlight.

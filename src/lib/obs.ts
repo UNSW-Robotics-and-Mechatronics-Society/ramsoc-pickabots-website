@@ -12,8 +12,9 @@ export type ObsAction =
 
 /**
  * The OBS scene-name convention the control panel targets: one scene per
- * physical ring, named exactly "Ring 1" … "Ring 6". The scenes are created by
- * hand in OBS (docs/OBS.md) — this just has to match what was typed there.
+ * physical ring, named exactly "Ring 1" (the event now runs a single ring —
+ * see MAX_RINGS in src/lib/schedule.ts). The scene is created by hand in OBS
+ * (docs/OBS.md) — this just has to match what was typed there.
  */
 export function ringSceneName(ring: number): string {
   return `Ring ${ring}`;
@@ -34,7 +35,7 @@ export function ringSceneName(ring: number): string {
 // "Commentary" is the phone-camera scene (Larix → MediaMTX `phone` path) +
 // the KPI banner. "Blank" is an intentionally empty scene — pure black
 // output for a hard visual reset (or the safest hold while rearranging).
-export const SCREEN_SCENES = ["Sumobots", "Intermission", "Bracket", "Standings", "Leaderboard", "Results", "All Rings", "Vote", "Commentary", "Standby", "Blank"] as const;
+export const SCREEN_SCENES = ["Sumobots", "Intermission", "Bracket", "Finals", "Standings", "Leaderboard", "Results", "All Rings", "Vote", "Commentary", "Standby", "Blank"] as const;
 export const INTERMISSION_SCENE = SCREEN_SCENES[0];
 
 /**

@@ -3,10 +3,13 @@ import { type AutoFillMode } from "@/lib/seeds";
 
 // Widened from 4 to 6 for the live-streamed format — one OBS scene per ring
 // (see /control and /overlay/*), with up to six rings running concurrently.
+// Narrowed back down to 1 now that the event only has a single physical ring
+// (see MAX_RINGS) — the wider type is kept so schedules saved while more
+// rings existed still deserialize without a migration.
 export type ConcurrentRings = 1 | 2 | 3 | 4 | 5 | 6;
 
 /** Highest ring count the admin UI and OBS companion expose. */
-export const MAX_RINGS = 6;
+export const MAX_RINGS = 1;
 
 export const DEFAULT_MATCH_MINUTES = 5;
 export const DEFAULT_GAP_MINUTES   = 5;

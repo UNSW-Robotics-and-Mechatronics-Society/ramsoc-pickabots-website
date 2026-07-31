@@ -1,5 +1,5 @@
 // One-shot OBS scene-collection scaffold for the Sumobots stream.
-// Creates the 12 scenes + all overlay browser sources + MediaMTX media
+// Creates the scenes + all overlay browser sources + MediaMTX media
 // sources via obs-websocket. Idempotent: skips anything that already exists.
 // Cameras, stream key, and output settings stay manual (physical devices +
 // Settings dialog aren't scriptable).
@@ -14,9 +14,12 @@ const { currentSceneCollectionName } = await obs.call("GetSceneCollectionList");
 console.log("scene collection:", currentSceneCollectionName);
 
 // Every scene the control panel can target (SCREEN_SCENES in src/lib/obs.ts).
+// Only one ring scene now — the event runs a single physical ring (see
+// MAX_RINGS in src/lib/schedule.ts); Ring 2-6 from the prelim-round,
+// multi-ring setup no longer apply.
 const SCENES = [
-  "Ring 1", "Ring 2", "Ring 3", "Ring 4", "Ring 5", "Ring 6",
-  "Sumobots", "Intermission", "Bracket", "Standings", "Leaderboard",
+  "Ring 1",
+  "Sumobots", "Intermission", "Bracket", "Finals", "Standings", "Leaderboard",
   "Results", "All Rings", "Vote", "Commentary", "Standby", "Blank",
 ];
 
@@ -77,24 +80,16 @@ async function mediaSource(sceneName, inputName, rtmpUrl) {
   console.log("media source:", inputName, "->", rtmpUrl);
 }
 
-// Ring scenes: lower-third overlay each (division/ring mapping is a guess of
-// rings 1-3 standard, 4-6 open — flip the URLs in OBS if the floor plan
-// differs). Remote feeds parked in Ring 4/5/6 as a starting point.
-for (let r = 1; r <= 6; r++) {
-  const scene = `Ring ${r}`;
-  const url = r <= 3
-    ? `${BASE}/overlay/now-battling?ring=${r}`
-    : `${BASE}/overlay/now-battling?ring=${r - 3}&division=open`;
-  await browserSource(scene, `overlay-nowbattling-ring${r}`, url);
-}
-await mediaSource("Ring 4", "feed-room2", "rtmp://localhost:1935/room2");
-await mediaSource("Ring 5", "feed-room3", "rtmp://localhost:1935/room3");
-await mediaSource("Ring 6", "feed-phone", "rtmp://localhost:1935/phone");
+// Ring 1: the lower-third auto-picks whichever finals match the admin has
+// marked active/next (see /overlay/now-battling), so no division param or
+// per-ring mapping is needed any more — one ring, one URL.
+await browserSource("Ring 1", "overlay-nowbattling-ring1", `${BASE}/overlay/now-battling?ring=1`);
 
 // Screen scenes
 await browserSource("Sumobots", "overlay-title", `${BASE}/overlay/title`);
 await browserSource("Intermission", "overlay-upcoming", `${BASE}/overlay/upcoming?count=5`);
 await browserSource("Bracket", "overlay-bracket", `${BASE}/overlay/bracket`);
+await browserSource("Finals", "overlay-finals", `${BASE}/overlay/finals`);
 await browserSource("Standings", "overlay-stats", `${BASE}/overlay/stats?top=8`);
 await browserSource("Leaderboard", "overlay-leaderboard", `${BASE}/overlay/leaderboard?top=10`);
 await browserSource("Results", "overlay-results", `${BASE}/overlay/results`);

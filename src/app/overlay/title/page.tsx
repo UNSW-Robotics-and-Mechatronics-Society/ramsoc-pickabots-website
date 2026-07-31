@@ -2,12 +2,16 @@
 import TitleBackground from "@/components/obs/TitleBackground";
 import { GOLD, PLATE_BORDER, FONT_DISPLAY, FONT_BODY, DIVISION_META } from "@/components/obs/overlayTheme";
 
-type Props = { searchParams: Promise<{ year?: string }> };
+type Props = { searchParams: Promise<{ year?: string; final?: string }> };
 
 /**
  * Title card — the "just sumobots" screen: RAMSoc logo + SUMOBOTS <year>.
- *   /overlay/title            (SUMOBOTS 2026)
+ *   /overlay/title            (SUMOBOTS 2026 FINAL)
  *   /overlay/title?year=2027
+ *   /overlay/title?final=0    (drop the FINAL line)
+ *
+ * Defaults to showing "FINAL" under the year since this is the Finals Day
+ * title card; pass ?final=0 to fall back to the plain year-only card.
  *
  * Unlike the other overlays this paints its own full frame — it IS the
  * whole picture (scene "Sumobots"), not a layer over a camera. It brings
@@ -18,6 +22,7 @@ type Props = { searchParams: Promise<{ year?: string }> };
 export default async function TitleOverlay({ searchParams }: Props) {
   const params = await searchParams;
   const year = /^\d{4}$/.test(params.year ?? "") ? params.year : "2026";
+  const isFinal = params.final !== "0";
 
   return (
     <div style={{
@@ -51,6 +56,15 @@ export default async function TitleOverlay({ searchParams }: Props) {
         }}>
           {year}
         </div>
+        {isFinal && (
+          <div style={{
+            fontFamily: FONT_DISPLAY, fontSize: "1.5vw", letterSpacing: "0.7em",
+            color: "#f4f7fb", paddingLeft: "0.7em", // re-centres the tracked-out text
+            textShadow: "0 0 30px rgba(255,107,0,0.4), 0 2px 12px rgba(0,0,0,0.8)",
+          }}>
+            FINAL
+          </div>
+        )}
       </div>
       <div style={{
         display: "flex", alignItems: "center", gap: "1.4vw",
