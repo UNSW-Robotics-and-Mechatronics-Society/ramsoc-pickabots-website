@@ -40,3 +40,6 @@ paths:
   arjun:
   nirvan:
   dash:
+  # IT operator's camera — full-frame on the "IT Cam" scene (CAMERA_SCENES
+  # in src/lib/obs.ts, scene built by obs-setup.mjs).
+  it:

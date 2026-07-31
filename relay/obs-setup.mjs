@@ -18,15 +18,15 @@ console.log("scene collection:", currentSceneCollectionName);
 // MAX_RINGS in src/lib/schedule.ts); Ring 2-6 from the prelim-round,
 // multi-ring setup no longer apply.
 const SCENES = [
-  "Ring 1",
+  "Ring 1", "Timeout",
   "Sumobots", "Intermission", "Bracket", "Finals", "Standings", "Leaderboard",
   "Results", "All Rings", "Vote", "Commentary", "Standby", "Blank",
-  "Victor Cam", "Arjun Cam", "Nirvan Cam", "Dash Cam",
+  "Victor Cam", "Arjun Cam", "Nirvan Cam", "Dash Cam", "IT Cam",
 ];
 
 // Operator phone cams: full-frame scene per phone, fed by the MediaMTX path
 // of the owner's lowercase first name (paths declared in mediamtx.yml).
-const PHONE_CAMS = ["Victor", "Arjun", "Nirvan", "Dash"];
+const PHONE_CAMS = ["Victor", "Arjun", "Nirvan", "Dash", "IT"];
 
 const existing = new Set((await obs.call("GetSceneList")).scenes.map(s => s.sceneName));
 for (const sceneName of SCENES) {
@@ -89,6 +89,17 @@ async function mediaSource(sceneName, inputName, rtmpUrl) {
 // marked active/next (see /overlay/now-battling), so no division param or
 // per-ring mapping is needed any more — one ring, one URL.
 await browserSource("Ring 1", "overlay-nowbattling-ring1", `${BASE}/overlay/now-battling?ring=1`);
+
+// Timeout: same physical camera as Ring 1 (added by reference, not duplicated)
+// with the timeout lower-third banner on top — camera stays visible, same as
+// Ring 1's now-battling overlay.
+{
+  const items = await obs.call("GetSceneItemList", { sceneName: "Timeout" }).catch(() => ({ sceneItems: [] }));
+  if (!items.sceneItems.some(i => i.sourceName === "Capture Card Device")) {
+    await obs.call("CreateSceneItem", { sceneName: "Timeout", sourceName: "Capture Card Device" }).catch(() => {});
+  }
+}
+await browserSource("Timeout", "overlay-timeout", `${BASE}/overlay/timeout`);
 
 // Screen scenes
 await browserSource("Sumobots", "overlay-title", `${BASE}/overlay/title`);

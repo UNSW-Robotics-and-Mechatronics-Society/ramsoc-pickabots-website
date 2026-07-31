@@ -35,7 +35,7 @@ export function ringSceneName(ring: number): string {
 // "Commentary" is the phone-camera scene (Larix → MediaMTX `phone` path) +
 // the KPI banner. "Blank" is an intentionally empty scene — pure black
 // output for a hard visual reset (or the safest hold while rearranging).
-export const SCREEN_SCENES = ["Sumobots", "Intermission", "Bracket", "Finals", "Standings", "Leaderboard", "Results", "All Rings", "Vote", "Commentary", "Standby", "Blank"] as const;
+export const SCREEN_SCENES = ["Sumobots", "Intermission", "Bracket", "Finals", "Standings", "Leaderboard", "Results", "All Rings", "Vote", "Commentary", "Timeout", "Standby", "Blank"] as const;
 export const INTERMISSION_SCENE = SCREEN_SCENES[0];
 
 /**
@@ -44,7 +44,7 @@ export const INTERMISSION_SCENE = SCREEN_SCENES[0];
  * phone → rtmp://<obs-host>:1935/victor — and the scene shows that feed
  * full-frame. Created by relay/obs-setup.mjs; names must match OBS exactly.
  */
-export const CAMERA_SCENES = ["Victor Cam", "Arjun Cam", "Nirvan Cam", "Dash Cam"] as const;
+export const CAMERA_SCENES = ["Victor Cam", "Arjun Cam", "Nirvan Cam", "Dash Cam", "IT Cam"] as const;
 
 /**
  * How stale relay_seen_at may be before the panel calls the relay dead.
